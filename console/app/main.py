@@ -164,6 +164,7 @@ from app.domains.decisions.access import (
     is_decision_workspace_admin as _dec_is_workspace_admin_impl,
 )
 from app.domains.decisions.council_protection import (
+    COUNCIL_DELETE_PROTECTION as _COUNCIL_DELETE_PROTECTION,
     PROTECTED_DECISION_MESSAGE as _PROTECTED_DECISION_MESSAGE,
     protected_decision_ids as _protected_decision_ids,
 )
@@ -7284,11 +7285,16 @@ async def api_decisions_delete(
             conn, workspace_id=existing["workspace_id"], decision_ids=[decision_id]
         ):
             raise HTTPException(409, _PROTECTED_DECISION_MESSAGE)
-        await conn.execute(
-            "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
-            decision_id,
-            existing["workspace_id"],
-        )
+        try:
+            await conn.execute(
+                "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
+                decision_id,
+                existing["workspace_id"],
+            )
+        except _asyncpg_dec.ForeignKeyViolationError as exc:
+            if getattr(exc, "constraint_name", None) != _COUNCIL_DELETE_PROTECTION:
+                raise
+            raise HTTPException(409, _PROTECTED_DECISION_MESSAGE) from None
     return {"deleted": True, "id": decision_id}
 
 

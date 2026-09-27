@@ -1619,6 +1619,13 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
     return _dec_row_to_dict(row)
 
 
+_COUNCIL_DELETE_PROTECTION = "decisions_council_delete_protection"
+_PROTECTED_DECISION_MESSAGE = (
+    "Esta decisión está ligada al Control Room o al Consejo de Acciones; "
+    "ciérrala en lugar de eliminarla."
+)
+
+
 @app.delete(
     "/api/decisions/{decision_id}",
     dependencies=[
@@ -1639,11 +1646,16 @@ async def api_decisions_delete(request: Request, decision_id: int):
             raise HTTPException(404, f"Decision {decision_id} not found")
         if not _dec_can_delete(existing, user):
             raise HTTPException(403, "only the creator or an admin can delete a decision")
-        await conn.execute(
-            "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
-            decision_id,
-            existing["workspace_id"],
-        )
+        try:
+            await conn.execute(
+                "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
+                decision_id,
+                existing["workspace_id"],
+            )
+        except asyncpg.ForeignKeyViolationError as exc:
+            if getattr(exc, "constraint_name", None) != _COUNCIL_DELETE_PROTECTION:
+                raise
+            raise HTTPException(409, _PROTECTED_DECISION_MESSAGE) from None
     return {"deleted": True, "id": decision_id}
 
 

@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+COUNCIL_DELETE_PROTECTION = "decisions_council_delete_protection"
 COUNCIL_ACTION_PATTERNS = (
     "Aprobacion en el Consejo de Acciones: %",
+    "Aprobación en el Consejo de Acciones: %",
     "Seguimiento operativo Control Room: %",
     "Propuesta descartada en el Consejo: %",
 )
@@ -48,6 +50,7 @@ async def protected_decision_ids(
 
 __all__ = (
     "COUNCIL_ACTION_PATTERNS",
+    "COUNCIL_DELETE_PROTECTION",
     "PROTECTED_DECISIONS_SQL",
     "PROTECTED_DECISION_MESSAGE",
     "protected_decision_ids",
