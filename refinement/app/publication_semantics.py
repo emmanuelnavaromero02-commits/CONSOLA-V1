@@ -35,13 +35,16 @@ def _examples(value: object) -> list[object]:
 
 def _column(row: dict[str, Any]) -> dict[str, Any]:
     tags = [str(tag) for tag in list(row.get("tags") or [])[:16]]
-    if _INFERRED_TAG_MARKERS & set(tags):
+    # A row written by the template enrichment carries inferred tags and
+    # flags; none of that inference may enter attested evidence.
+    inferred = bool(_INFERRED_TAG_MARKERS & set(tags))
+    if inferred:
         tags = []
     return {
         "description": _text(row.get("description")),
         "tags": [tag for tag in tags if _TAG.fullmatch(tag)],
-        "is_key": bool(row.get("is_key")),
-        "is_metric": bool(row.get("is_metric")),
+        "is_key": bool(row.get("is_key")) and not inferred,
+        "is_metric": bool(row.get("is_metric")) and not inferred,
         "example_values": _examples(row.get("example_values")),
     }
 

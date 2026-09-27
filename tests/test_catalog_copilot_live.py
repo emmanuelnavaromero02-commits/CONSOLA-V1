@@ -469,15 +469,15 @@ def test_copilot_inference_stays_out_of_the_evidence_snapshot(
         admin,
         sec,
         """INSERT INTO data_catalog(dataset,layer,cartridge,column_name,data_type,
-               description,description_origin,tags,copilot_evidence,classifications,
-               classification_origin,tenant_id,workspace_id,scope_status)
+               description,description_origin,tags,is_key,is_metric,copilot_evidence,
+               classifications,classification_origin,tenant_id,workspace_id,scope_status)
            VALUES
            ('semantic_copilot','gold','acceptance','value','INTEGER','Texto inferido',
-            'copilot',ARRAY['auto_described','semantic_enrichment'],
+            'copilot',ARRAY['auto_described','semantic_enrichment'],TRUE,TRUE,
             '{"basis":["name:salary"]}'::jsonb,ARRAY['financial','confidential'],
             'copilot',%s,%s,'scoped'),
            ('semantic_copilot','gold','acceptance','label','VARCHAR','Etiqueta autorizada',
-            'manual',ARRAY['finance'],'{}'::jsonb,'{}','manual',%s,%s,'scoped')""",
+            'manual',ARRAY['finance'],FALSE,FALSE,'{}'::jsonb,'{}','manual',%s,%s,'scoped')""",
         (sec["tenant_id"], sec["workspace_id"]) * 2,
     )
     _scoped(
@@ -504,6 +504,8 @@ def test_copilot_inference_stays_out_of_the_evidence_snapshot(
     )
     assert semantics["columns"]["value"]["description"] == ""
     assert semantics["columns"]["value"]["tags"] == []
+    assert semantics["columns"]["value"]["is_key"] is False
+    assert semantics["columns"]["value"]["is_metric"] is False
     assert "classifications" not in semantics["columns"]["value"]
     assert semantics["columns"]["label"]["description"] == "Etiqueta autorizada"
     assert semantics["columns"]["label"]["tags"] == ["finance"]
