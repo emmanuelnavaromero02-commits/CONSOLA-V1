@@ -2962,12 +2962,16 @@
       "sha256": "1aebb498b99a08556d75bb84e3eec1d0fcae5cfaf11e689bfcaf0fde2408bef4"
     },
     {
+      "path": "console/tests/test_egress_error_mapping.py",
+      "sha256": "b504da0d41dfbaea9ec4a65919749d06396f78ee7afb31195fe9999f0773e367"
+    },
+    {
       "path": "console/tests/test_egress_guard.py",
       "sha256": "be9593d4f35e771675862be5f78519c0dcc5b9b0977701166a3c948573a6299f"
     },
     {
       "path": "console/tests/test_egress_guard_http_framing.py",
-      "sha256": "05989e5c6e7fbc0e5dbed0a412a69e9d7f019d2f5bca27cf5f3462cb0edec815"
+      "sha256": "689f1274fdb1373ff3ff5e629d6a6ba170b67991de08889dc30198c16bf2c1dd"
     },
     {
       "path": "console/tests/test_email_service.py",
@@ -4071,7 +4075,7 @@
     },
     {
       "path": "tests/test_airflow_trigger_conf_ownership.py",
-      "sha256": "051ceee51f687768a62e3bd9d3ac2cdc50817748018bf1e65c1b51c8880911b3"
+      "sha256": "f8495d29d5148b7f7740be49557b3e095d88c083fea4c430cec58c3eca8923ed"
     },
     {
       "path": "tests/test_airflow_version.py",
@@ -4739,7 +4743,7 @@
     },
     {
       "path": "tests/test_dag_conf_is_not_authority.py",
-      "sha256": "99585d0a4b47b3c761d99a5c857bc52bf922738e7c9cc0def6ee5ab85b27ab6b"
+      "sha256": "2e740fbeacf805411483506ff1aaf3d4db20466f06ab3b890b6efd2810b9f96a"
     },
     {
       "path": "tests/test_dag_ports.py",
@@ -5367,7 +5371,7 @@
     },
     {
       "path": "tests/test_operational_truth_e2e_gate_contract.py",
-      "sha256": "4d1e304e78705c343d63f6238b87ccf9bf41cddc580037cdcecf09eade5dacfd"
+      "sha256": "abb9a61587bf3940b1dfcba49cf8a999311c2b65c3ff2a7d3809966ba0c5f8c2"
     },
     {
       "path": "tests/test_operational_truth_mcp_final_red.py",
