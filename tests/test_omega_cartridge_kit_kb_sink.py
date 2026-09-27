@@ -298,7 +298,8 @@ def test_replicon_non_managed_kb_writes_go_through_the_kit(monkeypatch):
 
 # Live PostgreSQL: the real init schema, the real Replicon role, FORCE RLS.
 
-sqlalchemy = pytest.importorskip("sqlalchemy")
+import sqlalchemy  # noqa: E402
+
 from tests.test_operational_rls_console_refinement import (  # noqa: E402
     postgres_with_real_init_schema,
 )

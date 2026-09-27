@@ -58,7 +58,8 @@ def test_platform_audit_requires_no_workspace_and_the_explicit_flag():
 
 # Live PostgreSQL with the real init schema and the real console role.
 
-asyncpg = pytest.importorskip("asyncpg")
+import asyncpg  # noqa: E402
+
 from tests.test_operational_rls_console_refinement import (  # noqa: E402
     OMEGA_CONSOLE_PASSWORD,
     postgres_with_real_init_schema,
