@@ -2319,7 +2319,11 @@
     },
     {
       "path": "console/tests/test_control_room_direct_action_contract.py",
-      "sha256": "67fa05a0c143569a248417c6efbd24e071b2e6296fac454c73ea86ff5e15d43d"
+      "sha256": "05b9685fcc015738861682cbb311f1e77851c19f20e61ef08d25cf13b10cb44e"
+    },
+    {
+      "path": "console/tests/test_control_room_direct_action_issuance.py",
+      "sha256": "0905b9a3517368ef086baae3949d4e70cbdf58683fbab7c9744d3136e4b6567f"
     },
     {
       "path": "console/tests/test_control_room_direct_actions_routes.py",
@@ -2351,7 +2355,7 @@
     },
     {
       "path": "console/tests/test_control_room_exception_approval.py",
-      "sha256": "b254ae50ac931fe718047d22c1d18063930d79051f513a709c51fde1b0e2f72e"
+      "sha256": "86f8a053cb2ad771608c38dbcb6c2a1c4bfcbc7a7aead54c2cacb58be364e581"
     },
     {
       "path": "console/tests/test_control_room_execute_live_followup.py",
@@ -2419,7 +2423,7 @@
     },
     {
       "path": "console/tests/test_control_room_experience_exceptions.py",
-      "sha256": "137495a068718a08b51dea3810c10db6a0a553cae3e94285c4acdb6b68cae92a"
+      "sha256": "dd3bfcaae4d8b9fb78ade6e7a2b9954f95834d1c2ade817c84b7ab2526f35039"
     },
     {
       "path": "console/tests/test_control_room_experience_hardening.py",
@@ -2491,7 +2495,7 @@
     },
     {
       "path": "console/tests/test_control_room_get_purity.py",
-      "sha256": "64b6dd460f80c96b342ef35971a6c71cebe8c15e2651557bc13365ab7b2a274f"
+      "sha256": "469cd0a305d4c78935a6aacd0ae43927cdad17f20c4806d79bc6c45dfe90f83f"
     },
     {
       "path": "console/tests/test_control_room_get_sentinel.py",
@@ -2583,7 +2587,7 @@
     },
     {
       "path": "console/tests/test_control_room_mutation_projection_contracts.py",
-      "sha256": "f17731bb1a83c9a4cb7f497c7cc9f83018324c4f81d8ac500114f69128c703fd"
+      "sha256": "e715808fd6edbb685db621f8bf57570a00f1d3429655b73506f1393bb9f806fc"
     },
     {
       "path": "console/tests/test_control_room_observation_evidence_hardening.py",
@@ -2800,6 +2804,10 @@
     {
       "path": "console/tests/test_control_room_stale_refresh_guard.py",
       "sha256": "513faa872426dc56944b99c434e88b49998784f9cd142c90d311cc2b9be716ae"
+    },
+    {
+      "path": "console/tests/test_control_room_state_refresh.py",
+      "sha256": "b55b4dcbaedf1a120cb90b106b8d2a1bb24b65b1c2ab4f2a54e6e10b244d6785"
     },
     {
       "path": "console/tests/test_control_room_successfactors_business_labels.py",
@@ -3795,7 +3803,7 @@
     },
     {
       "path": "tests-e2e/specs/12-control-room.spec.ts",
-      "sha256": "c026afa917bde8b35bca1bf2ede77691412e55e71260e959ca17560117b1e856"
+      "sha256": "97d08cc97890ce2c33abbb6af20dee2fd680963d2c02325874096d0cf96353e3"
     },
     {
       "path": "tests-e2e/specs/13-control-room-talent-action-boundary.spec.ts",
@@ -3807,7 +3815,7 @@
     },
     {
       "path": "tests-e2e/specs/helpers/control-room-experience.ts",
-      "sha256": "a72fa84c24c834377e79bc31c8764017db75356896373b71877c9ac892fc4c07"
+      "sha256": "9a382ea1bd365c8110d2a522f192d4b3c7b873538414b72899d65b37c402b7cc"
     },
     {
       "path": "tests/__init__.py",
@@ -4495,7 +4503,7 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_direct_actions.py",
-      "sha256": "ca4ae4fecbd2d69681bdb5115a8d618d6cf0cd9288014cf45206a261db2fc341"
+      "sha256": "70860885aa3e5cdcc2ed9d06ee717b730096ee1671f5e1360657664a2e7ccf61"
     },
     {
       "path": "tests/test_control_room_live_postgres_dismiss_reopen_audit.py",
