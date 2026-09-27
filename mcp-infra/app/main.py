@@ -1296,36 +1296,49 @@ def _airflow_run_allowed(ctx: dict[str, Any], run: dict[str, Any]) -> bool:
         return True
     conf = run.get("conf") if isinstance(run, dict) else {}
     conf = conf if isinstance(conf, dict) else {}
-    tenant_id = str(conf.get("tenant_id") or "").strip()
-    workspace_id = str(conf.get("workspace_id") or "").strip()
+    tenant_id = str(conf.get("tenant_id") or "").strip().lower()
+    workspace_id = str(conf.get("workspace_id") or "").strip().lower()
     cartridge_id = str(conf.get("cartridge_id") or "").strip()
-    if tenant_id and tenant_id != str(ctx.get("tenant_id") or ""):
+    # A run is visible only when it names the caller's own tenant AND workspace.
+    if not tenant_id or tenant_id != str(ctx.get("tenant_id") or "").strip().lower():
         return False
-    if workspace_id and workspace_id != str(ctx.get("workspace_id") or ""):
+    if not workspace_id or workspace_id != str(ctx.get("workspace_id") or "").strip().lower():
         return False
     if cartridge_id:
         try:
             _require_cartridge_scope(ctx, cartridge_id)
         except HTTPException:
             return False
-    return bool(tenant_id or workspace_id or cartridge_id)
+    return True
+
+
+def _run_without_authority(run: Any) -> Any:
+    if not isinstance(run, dict) or not isinstance(run.get("conf"), dict):
+        return run
+    conf = {key: value for key, value in run["conf"].items() if key != "security_context"}
+    return {**run, "conf": conf}
 
 
 def _filter_airflow_payload(tool: str, payload: Any, ctx: dict[str, Any]) -> Any:
-    if not isinstance(payload, dict) or _is_unscoped_admin_context(ctx):
+    if not isinstance(payload, dict):
         return payload
     out = dict(payload)
-    if tool == "airflow_list_dags" and isinstance(out.get("dags"), list):
+    if tool == "airflow_list_dag_runs" and isinstance(out.get("runs"), list):
+        runs = out["runs"]
+        if not _is_unscoped_admin_context(ctx):
+            runs = [run for run in runs if _airflow_run_allowed(ctx, run)]
+        out["runs"] = [_run_without_authority(run) for run in runs]
+    elif (
+        tool == "airflow_list_dags"
+        and isinstance(out.get("dags"), list)
+        and not _is_unscoped_admin_context(ctx)
+    ):
         out["dags"] = [
             dag
             for dag in out["dags"]
             if isinstance(dag, dict)
             and _dag_allowed_for_context(ctx, str(dag.get("dag_id") or ""))
         ]
-    elif tool == "airflow_list_dag_runs" and isinstance(out.get("runs"), list):
-        dag_id = str(out.get("dag_id") or "")
-        if dag_id in _SHARED_PLATFORM_DAGS:
-            out["runs"] = [run for run in out["runs"] if _airflow_run_allowed(ctx, run)]
     return out
 
 
