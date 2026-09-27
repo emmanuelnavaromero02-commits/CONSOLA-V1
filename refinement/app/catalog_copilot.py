@@ -330,7 +330,16 @@ class AutonomousCatalogWorker:
             ):
                 remaining.append(subject)
                 continue
-            outcome = self.profile_and_link(sec, subject)
+            try:
+                outcome = self.profile_and_link(sec, subject)
+            except Exception:
+                # One broken subject must not hide the rest of the catalog.
+                logger.warning(
+                    "catalog copilot profile failed kind=%s",
+                    subject.get("kind"),
+                    exc_info=True,
+                )
+                continue
             if outcome.get("processed"):
                 processed += 1
             elif outcome.get("reason") == "busy":

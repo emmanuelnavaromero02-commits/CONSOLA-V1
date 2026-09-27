@@ -340,3 +340,20 @@ def test_invisible_dataset_is_never_profiled(env):
         "processed": False,
         "reason": "scope",
     }
+
+
+def test_catch_up_keeps_going_when_one_subject_breaks(env, monkeypatch):
+    local, host, store = env
+    worker = _worker(local, host, store)
+    original = worker._profile_dataset
+
+    def flaky(sec, name):
+        if name == EMPLOYEES:
+            raise RuntimeError("storage hiccup")
+        return original(sec, name)
+
+    monkeypatch.setattr(worker, "_profile_dataset", flaky)
+    status = worker.catch_up(SEC)
+    assert status.processed == 1
+    assert ("dataset", DEPARTMENTS) in store.states
+    assert ("dataset", EMPLOYEES) not in store.states
