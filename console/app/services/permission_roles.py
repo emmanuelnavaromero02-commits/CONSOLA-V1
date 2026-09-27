@@ -5,6 +5,16 @@ from app.services.permission_catalog import PERMISSION_KEYS
 
 _AUTHORITY_PERMISSIONS = {"control_room.approve"}
 
+# Single source of truth for platform-level roles. mcp-infra, refinement and vault
+# keep literal copies (separate services); tests assert they stay equal to these.
+PLATFORM_ADMIN_ROLES = frozenset({"owner", "super_admin", "admin"})
+GLOBAL_ROLES = frozenset({*PLATFORM_ADMIN_ROLES, "security_admin", "auditor"})
+PLATFORM_ROLE_GRANTORS = frozenset({"owner", "super_admin"})
+
+
+def is_platform_admin_role(role: object) -> bool:
+    return str(role or "").strip() in PLATFORM_ADMIN_ROLES
+
 # fmt: off
 ROLE_DEFINITIONS = {
     "owner": {"label": "Owner", "description": "Platform administration without maker-separated Control Room approval.", "assignable": True, "builtin": True, "legacy": False},

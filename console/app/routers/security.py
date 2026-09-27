@@ -16,11 +16,12 @@ from app.services.permissions import (
     require_permission,
     roles_payload,
 )
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 router = APIRouter(prefix="/security", tags=["Security Center"])
 
 
-_PLATFORM_ROLES = {"owner", "super_admin", "admin"}
+_PLATFORM_ROLES = PLATFORM_ADMIN_ROLES
 _TENANT_ASSIGNABLE_ROLES = {"tenant_admin", "analyst", "viewer", "workspace_user", "user"}
 
 

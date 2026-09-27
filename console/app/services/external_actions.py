@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from app.services import audit_service, auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.permissions import has_permission, user_role
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 ACTION_STATUSES = {
@@ -44,7 +45,7 @@ DEFAULT_TTL_SECONDS = int(
 GLOBAL_WRITEBACK_FLAG = "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK"
 SANDBOX_FLAG = "EXTERNAL_ACTION_SANDBOX_ENABLED"
 SANDBOX_ADAPTER = "sandbox"
-ADMIN_SELF_APPROVAL_ROLES = {"admin", "owner", "super_admin"}
+ADMIN_SELF_APPROVAL_ROLES = PLATFORM_ADMIN_ROLES
 
 
 def _truthy(value: Any, *, default: bool = False) -> bool:

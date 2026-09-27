@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.dependencies import ROLE_ADMIN
 from app.services.security_context import build_security_context
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 OPERATIONAL_CARTRIDGES = {
@@ -27,7 +28,7 @@ TECHNICAL_SOURCE_PREFIXES = ("raw/", "silver/", "gold/", "uploads/", "cartridges
 
 def is_security_admin_context(ctx: dict) -> bool:
     role = str(ctx.get("role") or "").lower()
-    if not (bool(ctx.get("trusted")) and role in {ROLE_ADMIN, "owner", "super_admin"}):
+    if not (bool(ctx.get("trusted")) and role in PLATFORM_ADMIN_ROLES):
         return False
     if ctx.get("tenant_id") or ctx.get("workspace_id"):
         return False
@@ -45,7 +46,7 @@ def allowed_cartridges_for_user(user: dict | None) -> set[str] | None:
         return (
             None
             if str((user or {}).get("role") or "").lower()
-            in {"owner", "super_admin", ROLE_ADMIN}
+            in PLATFORM_ADMIN_ROLES
             else set()
         )
     return allowed
@@ -69,7 +70,7 @@ def user_allowed_cartridges(user: dict | None) -> set[str] | None:
     if is_security_admin_context(ctx):
         return None
     role = str(ctx.get("role") or (user or {}).get("role") or "").strip().lower()
-    if role in {"owner", "super_admin", ROLE_ADMIN}:
+    if role in PLATFORM_ADMIN_ROLES:
         return None
     allowed = {
         str(c).strip()
@@ -93,7 +94,7 @@ def context_visible_cartridges(user: dict | None) -> set[str] | None:
     if is_workspace_scoped_user(user):
         return set()
     role = str(ctx.get("role") or (user or {}).get("role") or "").strip().lower()
-    if role in {"owner", "super_admin", ROLE_ADMIN}:
+    if role in PLATFORM_ADMIN_ROLES:
         return None
     return set()
 

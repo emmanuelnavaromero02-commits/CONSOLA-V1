@@ -43,7 +43,11 @@ def test_freshness_analyzer_uses_correct_column():
     body = block.group(0)
     assert "MAX(finished_at)" in body
     assert "status = 'success'" in body
-    assert "FROM extraction_runs" in body
+    assert "FROM pipeline_runs" in body
+    assert "{CONSOLE_SCOPE_PREDICATE}" in body
+    assert "scoped_db_for_user(" in body
+    assert "FROM extraction_runs" not in body
+    assert "pool.fetch(" not in body
 
 
 def test_volume_analyzer_uses_records_extracted():
@@ -53,7 +57,9 @@ def test_volume_analyzer_uses_records_extracted():
         src, re.DOTALL | re.MULTILINE,
     )
     body = block.group(0) if block else ""
-    assert "records_extracted" in body
+    assert "SUM(COALESCE(record_count, 0))" in body
+    assert "{CONSOLE_SCOPE_PREDICATE}" in body
+    assert "records_extracted" not in body and "extraction_runs" not in body
     assert "_VOLUME_DELTA_PCT" in src
     assert "30" in src
 

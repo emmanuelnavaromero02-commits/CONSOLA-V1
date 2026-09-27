@@ -15,6 +15,7 @@ from app.security import get_internal_api_key
 from app.middleware.request_id import request_id_var
 from app.services import egress_guard
 from app.services.security_context import build_security_context
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 _pool: asyncpg.Pool | None = None
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -32,7 +33,7 @@ ALLOWED_MCP_HOSTS = {
     "refinement",
 }
 _BLOCKED_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
-_ADMIN_ROLES = {"admin", "owner", "super_admin"}
+_ADMIN_ROLES = PLATFORM_ADMIN_ROLES
 _CARTRIDGE_READ_TOOLS = {
     "list_entities",
     "get_schema",

@@ -38,6 +38,7 @@ from app.services import (
 from app.services.csrf import require_csrf
 from app.services import permissions
 from app.services.permissions import require_permission
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 logger = logging.getLogger(__name__)
@@ -348,11 +349,7 @@ def _validate_lesson_scope(scope: str, user: dict[str, Any]) -> str:
         )
     if scope in ("workspace", "workspace_global", "tenant_global") and not _has_admin(user):
         raise HTTPException(403, "workspace lessons require admin")
-    if scope == "platform_global" and str(user.get("role") or "").lower() not in {
-        "owner",
-        "super_admin",
-        "admin",
-    }:
+    if scope == "platform_global" and str(user.get("role") or "").lower() not in PLATFORM_ADMIN_ROLES:
         raise HTTPException(403, "platform_global lessons require platform admin")
     return scope
 

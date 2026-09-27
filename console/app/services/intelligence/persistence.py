@@ -24,6 +24,7 @@ from app.services.intelligence.control_room_observation import (
 )
 from app.services.intelligence.outcome_writer import record_server_owned_outcome
 from app.services.intelligence.signal_metadata import durable_signal_metadata
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 def _actor_id(value: Any) -> int | None:
@@ -41,7 +42,7 @@ def _actor_id(value: Any) -> int | None:
 def _can_read_workspace_wide(user: dict) -> bool:
     role = permissions.user_role(user)
     scoped = permissions.workspace_role(user)
-    return role in {"admin", "owner", "super_admin"} or scoped in {
+    return role in PLATFORM_ADMIN_ROLES or scoped in {
         "workspace_admin",
         "tenant_admin",
     }

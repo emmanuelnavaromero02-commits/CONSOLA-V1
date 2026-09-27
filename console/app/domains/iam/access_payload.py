@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
-PLATFORM_ADMIN_ROLES = {"owner", "super_admin", "admin"}
+
 WORKSPACE_ADMIN_ROLES = {"workspace_admin", "tenant_admin"}
 
 

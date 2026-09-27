@@ -24,18 +24,42 @@ def metrics_module():
     return mod
 
 
-def _make_app(mod, fetchval_seq, fetch_rows):
-    seq = list(fetchval_seq)
+TENANT = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+WORKSPACE = "11111111-1111-1111-1111-111111111111"
+SCOPED_ADMIN = {
+    "id": 1,
+    "email": "admin@example.com",
+    "role": "admin",
+    "active_tenant_id": TENANT,
+    "active_workspace_id": WORKSPACE,
+}
 
-    class _FakeConn:
-        async def fetchval(self, *_a, **_kw):
-            return seq.pop(0) if seq else None
-        async def fetch(self, *_a, **_kw):
-            return fetch_rows
 
+class _Tx:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+
+class _ScopedConn:
+    def __init__(self):
+        self.executed: list[tuple] = []
+        self.queries: list[tuple] = []
+
+    def transaction(self):
+        return _Tx()
+
+    async def execute(self, *args):
+        self.executed.append(args)
+
+
+def _pool_for(conn):
     class _Acquire:
         async def __aenter__(self):
-            return _FakeConn()
+            return conn
+
         async def __aexit__(self, *_):
             return False
 
@@ -43,13 +67,29 @@ def _make_app(mod, fetchval_seq, fetch_rows):
         def acquire(self):
             return _Acquire()
 
-    mod.auth.pool = AsyncMock(return_value=_FakePool())
+    return _FakePool()
+
+
+def _make_app(mod, fetchval_seq, fetch_rows, *, user=None, conn_log=None):
+    seq = list(fetchval_seq)
+
+    class _FakeConn(_ScopedConn):
+        async def fetchval(self, *args, **_kw):
+            self.queries.append(args)
+            return seq.pop(0) if seq else None
+
+        async def fetch(self, *args, **_kw):
+            self.queries.append(args)
+            return fetch_rows
+
+    conn = _FakeConn()
+    if conn_log is not None:
+        conn_log.append(conn)
+    mod.auth.pool = AsyncMock(return_value=_pool_for(conn))
 
     api = FastAPI()
     api.include_router(mod.router)
-    api.dependency_overrides[mod.require_operations_read] = lambda: {
-        "id": 1, "email": "admin@example.com", "role": "admin",
-    }
+    api.dependency_overrides[mod.require_operations_read] = lambda: dict(user or SCOPED_ADMIN)
     return api
 
 
@@ -138,32 +178,17 @@ def test_metrics_requires_operations_read_permission(metrics_module):
 
 def test_failed_query_reports_unavailable_never_zero(metrics_module):
 
-    class _ExplodingConn:
+    class _ExplodingConn(_ScopedConn):
         async def fetchval(self, *_a, **_kw):
             raise RuntimeError("relation does not exist")
 
         async def fetch(self, *_a, **_kw):
             raise RuntimeError("relation does not exist")
 
-    class _Acquire:
-        async def __aenter__(self):
-            return _ExplodingConn()
-
-        async def __aexit__(self, *_):
-            return False
-
-    class _FakePool:
-        def acquire(self):
-            return _Acquire()
-
-    metrics_module.auth.pool = AsyncMock(return_value=_FakePool())
+    metrics_module.auth.pool = AsyncMock(return_value=_pool_for(_ExplodingConn()))
     api = FastAPI()
     api.include_router(metrics_module.router)
-    api.dependency_overrides[metrics_module.require_operations_read] = lambda: {
-        "id": 1,
-        "email": "admin@example.com",
-        "role": "admin",
-    }
+    api.dependency_overrides[metrics_module.require_operations_read] = lambda: dict(SCOPED_ADMIN)
     r = TestClient(api).get("/api/metrics/operational")
     assert r.status_code == 200
     body = r.json()
@@ -185,3 +210,33 @@ def test_healthy_queries_still_report_real_zero(metrics_module):
     assert body["errors_24h"] == 0
     assert body["status"] == "ok"
     assert body["degraded_metrics"] == []
+
+
+def test_platform_admin_metrics_are_read_inside_the_active_workspace(metrics_module):
+    conns: list = []
+    app = _make_app(metrics_module, [0] * 30, [], conn_log=conns)
+    r = TestClient(app).get("/api/metrics/operational")
+    assert r.status_code == 200
+    conn = conns[0]
+    assert conn.executed and conn.executed[0][1:] == (TENANT, WORKSPACE)
+    extraction_queries = [q for q in conn.queries if "FROM extraction_runs" in q[0]]
+    assert extraction_queries
+    for query in extraction_queries:
+        assert "workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)" in query[0]
+        assert query[1:] == (WORKSPACE, TENANT)
+    for query in conn.queries:
+        assert "workspace_id" in query[0] or "FALSE" in query[0], query[0]
+
+
+def test_platform_admin_without_an_active_workspace_gets_no_cross_tenant_metrics(metrics_module):
+    conns: list = []
+    app = _make_app(
+        metrics_module,
+        [0] * 30,
+        [],
+        user={"id": 1, "email": "admin@example.com", "role": "super_admin"},
+        conn_log=conns,
+    )
+    r = TestClient(app).get("/api/metrics/operational")
+    assert r.status_code == 403
+    assert conns[0].queries == []

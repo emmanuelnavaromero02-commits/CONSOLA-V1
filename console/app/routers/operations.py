@@ -16,23 +16,20 @@ from app.services.auth import verify_internal_api_key
 from app.services.intelligence import narrative_job
 from app.services.permissions import canonical_role, require_permission
 from app.services.security_context import build_security_context
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 async def _require_admin(
     user: dict = Depends(require_permission("operations.read")),
 ) -> dict:
     role = (user or {}).get("role") or (user or {}).get("workspace_role")
-    if role not in {ROLE_ADMIN, "owner", "super_admin"}:
+    if role not in PLATFORM_ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="admin role required")
     return user
 
 
 def _is_platform_admin(user: dict | None) -> bool:
-    return canonical_role((user or {}).get("role")) in {
-        "owner",
-        "super_admin",
-        ROLE_ADMIN,
-    }
+    return canonical_role((user or {}).get("role")) in PLATFORM_ADMIN_ROLES
 
 
 _OPERATIONAL_CARTRIDGES = {

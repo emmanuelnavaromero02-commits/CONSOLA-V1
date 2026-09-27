@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
-DEFAULT_STUDIO_OPS_WRITE_ROLES = {"owner", "super_admin", "admin"}
+
+DEFAULT_STUDIO_OPS_WRITE_ROLES = PLATFORM_ADMIN_ROLES
 
 
 def cartridge_visible_for_context(ctx: dict[str, Any], cartridge_id: str) -> bool:

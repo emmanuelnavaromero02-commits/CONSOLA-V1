@@ -347,6 +347,7 @@ from app.domains.security.cors import (
     allowed_origins as _allowed_origins_impl,
 )
 from app.domains.security.redirects import safe_login_next
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 from app.domains.system.runtime import (
     healthz_payload as _healthz_payload,
     runtime_config_payload as _runtime_config_payload,
@@ -1501,7 +1502,7 @@ def require_user(request: Request) -> dict:
 
 def require_admin(request: Request) -> dict:
     u = require_user(request)
-    if u.get("role") not in {"admin", "owner", "super_admin"}:
+    if u.get("role") not in PLATFORM_ADMIN_ROLES:
         raise HTTPException(403, "admin role required")
     return u
 
@@ -6572,7 +6573,7 @@ def _role_name(user: dict) -> str:
 def _require_studio_ops_write_role(user: dict) -> None:
     if not _has_studio_ops_write_role_impl(
         user,
-        write_roles={"owner", "super_admin", ROLE_ADMIN},
+        write_roles=PLATFORM_ADMIN_ROLES,
     ):
         raise HTTPException(403, "global admin role required")
 

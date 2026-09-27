@@ -9,6 +9,7 @@ from typing import Any, AsyncIterator
 import asyncpg
 
 from app.services.db_scope import SET_SCOPE_SQL
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 async def _pg():
@@ -88,7 +89,7 @@ async def _has_scope_columns(conn: asyncpg.Connection) -> bool:
 
 
 def _is_platform_admin(user_context: dict | None) -> bool:
-    return (user_context or {}).get("role") in {"owner", "super_admin", "admin"}
+    return (user_context or {}).get("role") in PLATFORM_ADMIN_ROLES
 
 
 def _tenant_workspace(user_context: dict | None) -> tuple[str | None, str | None]:

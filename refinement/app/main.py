@@ -820,10 +820,10 @@ def _dataset_allowed(sec: dict, ds: dict) -> bool:
     )
 
 
-def _dataset_store_scope(sec: dict) -> dict[str, str | None]:
+def _dataset_store_scope(sec: dict) -> dict[str, str | bool | None]:
     workspace_id = str(sec.get("workspace_id") or "").strip()
     if not workspace_id:
-        return {}
+        return {"platform_admin": True} if _is_unscoped_admin_security_context(sec) else {}
     tenant_id = str(sec.get("tenant_id") or "").strip() or None
     return {"tenant_id": tenant_id, "workspace_id": workspace_id}
 
@@ -2525,6 +2525,8 @@ def _pg_set_scope(cur, security_context: dict | None) -> None:
         "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
         (tenant_id, workspace_id),
     )
+    if _is_unscoped_admin_security_context(security_context):
+        cur.execute("SELECT set_config('app.platform_admin', 'true', true)")
 
 
 def _pg_exec(
@@ -3262,6 +3264,8 @@ def _annotate_staleness(datasets: list[dict], sec: dict | None = None) -> None:
                     "SELECT set_config('app.workspace_id', %s, true)",
                     (sec.get("workspace_id") or "",),
                 )
+                if _is_unscoped_admin_security_context(sec):
+                    cur.execute("SELECT set_config('app.platform_admin', 'true', true)")
             cur.execute(
                 "SELECT cartridge_id, entity, MAX(finished_at) "
                 "FROM pipeline_runs WHERE status='success' "

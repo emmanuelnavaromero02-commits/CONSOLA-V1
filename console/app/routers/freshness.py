@@ -7,6 +7,7 @@ from app.services import auth
 from app.services.db_scope import scoped_db_for_user, workspace_scope_from_user
 from app.services.permissions import require_permission
 from app.services.security_context import build_security_context
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 _KNOWN_CARTRIDGES = frozenset({
@@ -31,7 +32,7 @@ def _allowed_cartridges(user: dict | None) -> set[str] | None:
         for item in (ctx.get("allowed_cartridges") or [])
         if str(item).strip()
     }
-    if role in {"admin", "owner", "super_admin"} and not (tenant_id or workspace_id) and "*" in allowed:
+    if role in PLATFORM_ADMIN_ROLES and not (tenant_id or workspace_id) and "*" in allowed:
         return None
     return {item for item in allowed if item != "*"}
 

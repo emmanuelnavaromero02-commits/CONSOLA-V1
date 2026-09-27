@@ -19,6 +19,7 @@ from app.services.intelligence.utils import (
     workspace_scope,
 )
 from app.version import app_version
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 RUN_MODES = {"manual", "scheduled", "backtest", "smoke", "gold_refresh"}
@@ -67,7 +68,7 @@ def _owner_user_id(user: dict) -> int | None:
 def _can_read_workspace_wide(user: dict) -> bool:
     role = permissions.user_role(user)
     scoped = permissions.workspace_role(user)
-    return role in {"admin", "owner", "super_admin"} or scoped in {
+    return role in PLATFORM_ADMIN_ROLES or scoped in {
         "workspace_admin",
         "tenant_admin",
     }

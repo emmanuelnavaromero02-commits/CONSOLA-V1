@@ -6,13 +6,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
-GLOBAL_ASSIGNABLE_ROLES = {
-    "owner",
-    "super_admin",
-    "admin",
-    "security_admin",
-    "auditor",
-}
+from app.services.permission_roles import (
+    GLOBAL_ROLES,
+    PLATFORM_ADMIN_ROLES,
+    PLATFORM_ROLE_GRANTORS,
+)
+
+GLOBAL_ASSIGNABLE_ROLES = GLOBAL_ROLES
 
 WORKSPACE_ASSIGNABLE_ROLES = {
     "tenant_admin",
@@ -94,7 +94,12 @@ def assignable_role(
     if not info or not info.get("assignable"):
         return "user"
     if is_global_iam_admin(actor_user, role_admin=role_admin):
-        if _role_rank(role) > _role_rank((actor_user or {}).get("role")):
+        actor_role = (actor_user or {}).get("role")
+        if role in PLATFORM_ADMIN_ROLES and actor_role not in PLATFORM_ROLE_GRANTORS:
+            raise HTTPException(
+                403, "platform roles can only be granted by an owner or super admin"
+            )
+        if _role_rank(role) > _role_rank(actor_role):
             raise HTTPException(
                 403, "cannot assign a role higher than your own"
             )

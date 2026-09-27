@@ -1,15 +1,30 @@
 from __future__ import annotations
 
+import logging
+import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from fastapi import HTTPException
 
+from app.services.permission_roles import is_platform_admin_role
+
+
+logger = logging.getLogger(__name__)
 
 SET_SCOPE_SQL = (
     "SELECT set_config('app.tenant_id', $1, true), "
     "set_config('app.workspace_id', $2, true)"
 )
+# Platform context: no tenant/workspace plus an explicit platform_admin marker, so
+# RLS policies that require it (and those that only check the empty workspace)
+# both recognise the connection as a platform one.
+SET_PLATFORM_SCOPE_SQL = (
+    "SELECT set_config('app.tenant_id', '', true), "
+    "set_config('app.workspace_id', '', true), "
+    "set_config('app.platform_admin', 'true', true)"
+)
+_PURPOSE_RE = re.compile(r"[a-z][a-z0-9_.:-]{2,63}")
 
 
 def workspace_scope_from_user(user: dict | None) -> tuple[str | None, str]:
@@ -105,6 +120,38 @@ async def _assert_scheduled_effect_authority(
         if getattr(exc, "sqlstate", None) == "40001":
             raise HTTPException(409, "scheduled effect authority is stale") from None
         raise
+
+
+@asynccontextmanager
+async def _platform_db(pool: Any) -> AsyncIterator[Any]:
+    if _looks_like_asyncpg_pool(pool):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(SET_PLATFORM_SCOPE_SQL)
+                yield conn
+        return
+    async with pool.transaction():
+        await pool.execute(SET_PLATFORM_SCOPE_SQL)
+        yield pool
+
+
+@asynccontextmanager
+async def platform_admin_db(pool: Any, user: dict | None) -> AsyncIterator[Any]:
+    """Cross-workspace reads for a platform admin; never for workspace-scoped roles."""
+    if not user or not is_platform_admin_role(user.get("role")):
+        raise HTTPException(403, "platform administrator required")
+    async with _platform_db(pool) as conn:
+        yield conn
+
+
+@asynccontextmanager
+async def system_platform_db(pool: Any, *, purpose: str) -> AsyncIterator[Any]:
+    """Platform context for bootstrap work that runs without a user (startup seeders)."""
+    if not _PURPOSE_RE.fullmatch(str(purpose or "")):
+        raise ValueError("system platform access needs a purpose")
+    logger.debug("system platform db scope: %s", purpose)
+    async with _platform_db(pool) as conn:
+        yield conn
 
 
 async def run_with_db_scope(

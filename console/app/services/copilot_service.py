@@ -14,6 +14,7 @@ from app.services.db_scope import scoped_db_for_user
 from app.services import memory_service
 from app.services import lessons_service
 from app.services import tool_manifest, tool_policy
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 SYSTEM_PROMPT = (
@@ -398,7 +399,7 @@ def _is_admin_or_owner(conv_user_id: int, user: dict) -> bool:
     if user.get("id") == conv_user_id:
         return True
     role = (user.get("role") or "").lower()
-    return role in {"admin", "owner", "super_admin"}
+    return role in PLATFORM_ADMIN_ROLES
 
 
 def _approval_key(server_id: str, bare_name: str, args: dict) -> str:

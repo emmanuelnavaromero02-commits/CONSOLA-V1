@@ -33,13 +33,26 @@ def test_admin_cannot_assign_higher_role(higher):
 
 
 def test_legit_assignments_still_work():
-    assert _assignable("admin", "admin") == "admin"
+    with pytest.raises(HTTPException) as denied:
+        _assignable("admin", "admin")
+    assert denied.value.status_code == 403
     assert _assignable("analyst", "admin") == "analyst"
+    assert _assignable("security_admin", "admin") == "security_admin"
+    assert _assignable("auditor", "admin") == "auditor"
     assert _assignable("owner", "owner") == "owner"
     assert _assignable("admin", "owner") == "admin"
     assert _assignable("admin", "super_admin") == "admin"
+    assert _assignable("super_admin", "super_admin") == "super_admin"
     with pytest.raises(HTTPException):
         _assignable("owner", "super_admin")
+
+
+@pytest.mark.parametrize("platform_role", ["owner", "super_admin", "admin"])
+@pytest.mark.parametrize("actor", ["admin", "security_admin", "auditor", "tenant_admin", "workspace_admin", "user"])
+def test_platform_roles_are_granted_only_by_owner_or_super_admin(platform_role, actor):
+    with pytest.raises(HTTPException) as denied:
+        _assignable(platform_role, actor)
+    assert denied.value.status_code == 403
 
 
 def test_iam_admin_workspace_ids_filters_by_role():
