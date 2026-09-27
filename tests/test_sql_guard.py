@@ -6,12 +6,13 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SUCCESSFACTORS_ROOT = REPO_ROOT / "cartridges" / "sap_successfactors"
 
 
 def _load_successfactors_sql_guard():
-    module_path = SUCCESSFACTORS_ROOT / "app" / "core" / "sql_guard.py"
-    spec = importlib.util.spec_from_file_location("sap_successfactors_sql_guard_under_test", module_path)
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.append(str(REPO_ROOT))
+    module_path = REPO_ROOT / "omega_cartridge_kit" / "sql_guard.py"
+    spec = importlib.util.spec_from_file_location("omega_cartridge_kit_sql_guard_under_test", module_path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

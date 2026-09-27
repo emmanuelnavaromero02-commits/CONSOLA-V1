@@ -11,6 +11,9 @@ import duckdb
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+from omega_cartridge_kit.kb_sink import write_scoped_kb_table
+from omega_lakehouse.storage_scope import has_exact_storage_scope
+
 from app.core.config import settings
 from app.core.minio_client import upload_file_to_minio
 from app.core.request_context import (
@@ -35,14 +38,6 @@ _REMOTE_SOURCE_UNAVAILABLE = "DuckDB remote source unavailable"
 
 class DuckDBHTTPFSUnavailable(RuntimeError):
     pass
-
-
-def _path_has_scope(path: str, scope: str) -> bool:
-    parts = [part for part in path.strip("/").split("/") if part]
-    scope_parts = [part for part in scope.strip("/").split("/") if part]
-    return any(
-        parts[idx : idx + len(scope_parts)] == scope_parts for idx in range(len(parts))
-    )
 
 
 def _sql_text(value: object) -> str:
@@ -239,7 +234,8 @@ def write_kb_parquet(
     load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     scope = scoped_prefix(security_context)
     if "tenant_id=" in output_path or "workspace_id=" in output_path:
-        if not _path_has_scope(output_path, scope):
+        tenant, workspace = scope_values(security_context)
+        if not has_exact_storage_scope(output_path, tenant, workspace):
             raise SecurityContextError(
                 "KB output path is outside the active tenant/workspace scope"
             )
@@ -351,50 +347,12 @@ def write_kb_to_postgres(
                     )
                 )
             return
-        if tenant and workspace:
-            scoped_df = df.copy()
-            scoped_df["tenant_id"] = tenant
-            scoped_df["workspace_id"] = workspace
-            table_name = f'knowledge_bits."{pg_table}"'
-            with engine.begin() as conn:
-                conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
-                exists = conn.execute(
-                    text("SELECT to_regclass(:table_name)"),
-                    {"table_name": f"knowledge_bits.{pg_table}"},
-                ).scalar()
-                if exists:
-                    conn.execute(
-                        text(
-                            f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS tenant_id TEXT"
-                        )
-                    )
-                    conn.execute(
-                        text(
-                            f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS workspace_id TEXT"
-                        )
-                    )
-                    conn.execute(
-                        text(
-                            f"DELETE FROM {table_name} WHERE tenant_id=:tenant_id AND workspace_id=:workspace_id"
-                        ),
-                        {"tenant_id": tenant, "workspace_id": workspace},
-                    )
-            scoped_df.to_sql(
-                name=pg_table,
-                con=engine,
-                schema="knowledge_bits",
-                if_exists="append",
-                index=False,
-            )
-        else:
-            with engine.begin() as conn:
-                conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
-            df.to_sql(
-                name=pg_table,
-                con=engine,
-                schema="knowledge_bits",
-                if_exists="replace",
-                index=False,
-            )
+        write_scoped_kb_table(
+            engine,
+            table=pg_table,
+            df=df,
+            tenant_id=tenant,
+            workspace_id=workspace,
+        )
     finally:
         engine.dispose()

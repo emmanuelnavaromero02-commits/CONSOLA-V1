@@ -19,6 +19,7 @@ from sqlglot import exp as _sqlglot_exp
 
 from omega_lakehouse import ObjectAlreadyExists, storage_from_env
 from omega_lakehouse.checksums import sha256_file
+from omega_lakehouse.storage_scope import has_exact_storage_scope
 
 try:
     import app.partitioned_parquet as partitioned_parquet
@@ -34,7 +35,6 @@ try:
     )
     from app.security_scope import is_unscoped_admin_user_context
     from app.sql_table_function_policy import validate_table_function_query
-    from app.storage_scope_policy import has_exact_storage_scope
 except ModuleNotFoundError:
     import refinement.app.partitioned_parquet as partitioned_parquet
     from refinement.app.duckdb_runtime import (
@@ -49,7 +49,6 @@ except ModuleNotFoundError:
     )
     from refinement.app.security_scope import is_unscoped_admin_user_context
     from refinement.app.sql_table_function_policy import validate_table_function_query
-    from refinement.app.storage_scope_policy import has_exact_storage_scope
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")

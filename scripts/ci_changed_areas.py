@@ -49,6 +49,37 @@ CARTRIDGE_ROOT_TEST_PREFIXES = {
     "sap_b1": "sap_b1",
 }
 
+KIT_CARTRIDGES = (
+    "hubspot",
+    "replicon",
+    "salesforce",
+    "sap_b1",
+    "sap_hcm",
+    "sap_s4hana",
+    "sap_successfactors",
+)
+LAKEHOUSE_CARTRIDGES = ("banxico", "inegi", "sec_edgar", *KIT_CARTRIDGES)
+# Shared packages copied into images built from the repository root.
+SHARED_RUNTIME_CONSUMERS = {
+    "omega_lakehouse/": frozenset({"console", "refinement", "mcp-infra", *LAKEHOUSE_CARTRIDGES}),
+    "omega_cartridge_kit/": frozenset(KIT_CARTRIDGES),
+}
+SHARED_RUNTIME_ROOT_TESTS = {
+    "omega_lakehouse/": (
+        "tests/lakehouse",
+        "tests/test_omega_lakehouse_storage_scope.py",
+        "tests/test_omega_cartridge_kit_sql_guard.py",
+        "tests/test_cartridge_kb_scope_20c.py",
+        "tests/test_cartridge_scope_propagation.py",
+    ),
+    "omega_cartridge_kit/": (
+        "tests/test_omega_cartridge_kit_sql_guard.py",
+        "tests/test_omega_cartridge_kit_kb_sink.py",
+        "tests/test_cartridge_sql_guard_paths.py",
+        "tests/test_cartridge_query_kb_sql_guard.py",
+    ),
+}
+
 PY_RUNTIME_ROOTS = (
     "console/app/",
     "workspace/app/",
@@ -56,6 +87,7 @@ PY_RUNTIME_ROOTS = (
     "refinement/app/",
     "mcp-infra/app/",
     "omega_lakehouse/",
+    "omega_cartridge_kit/",
     "cartridges/",
     "airflow/",
     "infra/airflow/",
@@ -153,11 +185,17 @@ def _all_true_for_schedule(flags: dict[str, bool]) -> None:
             flags[key] = True
 
 
+def _shared_runtime_consumers(files: list[str]) -> set[str]:
+    consumers: set[str] = set()
+    for prefix, services in SHARED_RUNTIME_CONSUMERS.items():
+        if any(path.startswith(prefix) for path in files):
+            consumers.update(services)
+    return consumers
+
+
 def _service_changed(files: list[str], service: str, context: str) -> bool:
     root = context.removeprefix("./") + "/"
-    if service in {"console", "refinement", "mcp-infra"} and any(
-        path.startswith("omega_lakehouse/") for path in files
-    ):
+    if service in _shared_runtime_consumers(files):
         return True
     if service == "airflow":
         return _any(files, r"^infra/airflow/", r"^airflow/", r"^infra/docker-compose")
@@ -239,6 +277,14 @@ def _root_test_targets(files: list[str]) -> str:
         },
         "console/app/services/s3_client.py": {
             "console/tests/test_console_s3_iam_client.py",
+        },
+        "console/app/services/request_rate_limits.py": {
+            "tests/test_request_rate_limits.py",
+            "tests/test_workspace_client_ip_parity.py",
+        },
+        "workspace/app/services/client_ip.py": {
+            "tests/test_request_rate_limits.py",
+            "tests/test_workspace_client_ip_parity.py",
         },
         "console/app/services/cartridge_service.py": {
             "console/tests/test_cartridge_service_storage_provider.py",
@@ -408,8 +454,9 @@ def _root_test_targets(files: list[str]) -> str:
             for target in {"tests/test_sap_b1_hints.py"}
             if Path(target).exists()
         )
-    if any(path.startswith("omega_lakehouse/") for path in files):
-        targets.add("tests/lakehouse")
+    for prefix, shared_targets in SHARED_RUNTIME_ROOT_TESTS.items():
+        if any(path.startswith(prefix) for path in files):
+            targets.update(target for target in shared_targets if Path(target).exists())
     for cartridge in _changed_cartridges(files):
         prefix = CARTRIDGE_ROOT_TEST_PREFIXES.get(cartridge)
         if not prefix:
@@ -425,8 +472,20 @@ def _root_test_targets(files: list[str]) -> str:
     return _space_join(targets)
 
 
+def _shared_consumer_cartridges(files: list[str]) -> set[str]:
+    return {
+        service
+        for service in _shared_runtime_consumers(files)
+        if (Path("cartridges") / service).is_dir()
+    }
+
+
 def _cartridge_test_targets(files: list[str]) -> str:
     targets = set()
+    for cartridge in _shared_consumer_cartridges(files) - _changed_cartridges(files):
+        tests_dir = Path("cartridges") / cartridge / "tests"
+        if tests_dir.exists():
+            targets.add(str(tests_dir))
     for cartridge in _changed_cartridges(files):
         tests_dir = Path("cartridges") / cartridge / "tests"
         if _cartridge_dataset_only(files, cartridge):
@@ -440,7 +499,7 @@ def _cartridge_test_targets(files: list[str]) -> str:
 
 def _cartridge_requirement_paths(files: list[str]) -> str:
     paths = set()
-    for cartridge in _changed_cartridges(files):
+    for cartridge in _changed_cartridges(files) | _shared_consumer_cartridges(files):
         req = Path("cartridges") / cartridge / "requirements.txt"
         if req.exists():
             paths.add(str(req))
@@ -498,6 +557,8 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         r"^workspace/(app|Dockerfile)",
         r"^mcp-infra/(app|Dockerfile)",
         r"^cartridges/[^/]+/(app|dags|Dockerfile)",
+        r"^omega_lakehouse/",
+        r"^omega_cartridge_kit/",
         r"^infra/airflow/",
         r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
         r"^scripts/gcp/(?:gcp-canonical-deploy(?:-remote)?\.sh|render_gcp_compose_override\.py)$",
@@ -517,8 +578,8 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         "node_deps": deps_node,
         "e2e": e2e,
         "compose": compose,
-        "console_tests": _any(files, r"^console/(app|tests)/"),
-        "refinement_tests": _any(files, r"^refinement/(app|tests)/"),
+        "console_tests": _any(files, r"^console/(app|tests)/", r"^omega_lakehouse/"),
+        "refinement_tests": _any(files, r"^refinement/(app|tests)/", r"^omega_lakehouse/"),
         "vault_tests": _any(files, r"^vault/(app|tests)/"),
         "workspace_tests": _any(files, r"^workspace/(app|tests)/"),
         "root_tests": bool(root_test_targets),

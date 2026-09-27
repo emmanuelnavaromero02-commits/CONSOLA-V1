@@ -276,7 +276,7 @@ def test_control_room_gate_builds_and_smokes_real_replicon_image() -> None:
     script = (ROOT / "scripts/ci_replicon_minio_smoke.sh").read_text(encoding="utf-8")
     contract = workflow + script
     required = (
-        "docker build cartridges/replicon",
+        "docker build . \\\n            --file cartridges/replicon/Dockerfile",
         "--network none",
         "--read-only",
         "--user appuser",

@@ -233,7 +233,8 @@ def test_run_knowledge_bit_passes_valid_sql(monkeypatch):
         "app.services.kb_service.write_kb_parquet",
         lambda *a, **kw: "s3://lakehouse/silver/salesforce/kb_test/data.parquet",
     )
-    monkeypatch.setattr("app.services.kb_service.write_kb_to_postgres", lambda *a, **kw: None)
+    # pg_table stays catalog metadata: the S3 parquet is the only KB sink.
+    assert not hasattr(kb_service, "write_kb_to_postgres")
     monkeypatch.setattr("app.services.kb_service._finish_kb_run", lambda *a, **kw: None)
 
     monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")

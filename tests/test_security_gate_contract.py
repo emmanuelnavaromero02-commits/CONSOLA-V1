@@ -25,12 +25,23 @@ ENV_BINDINGS = {
     "NO_SECURITY_SCAN_NEEDED_RESULT": (
         "${{ needs['no-security-scan-needed'].result }}"
     ),
+    "EVENT_NAME": "${{ github.event_name }}",
+    "GITLEAKS_TREE_RESULT": "${{ needs['gitleaks-tree'].result }}",
+    "GITLEAKS_PR_RANGE_RESULT": "${{ needs['gitleaks-pr-range'].result }}",
 }
 JOB = load_job("security.yml", "security-gate")
 SCRIPT = assert_gate_shape(
     JOB,
     name="security-gate",
-    needs=["changes", "bandit", "pip-audit", "npm-audit", "no-security-scan-needed"],
+    needs=[
+        "changes",
+        "bandit",
+        "pip-audit",
+        "npm-audit",
+        "no-security-scan-needed",
+        "gitleaks-tree",
+        "gitleaks-pr-range",
+    ],
     env=ENV_BINDINGS,
 )
 FLAGS = ("PYTHON_RUNTIME", "PYTHON_DEPS", "NODE_DEPS", "INFRA")
@@ -63,6 +74,9 @@ def _env(
         "PIP_AUDIT_RESULT": pip_audit,
         "NPM_AUDIT_RESULT": npm_audit,
         "NO_SECURITY_SCAN_NEEDED_RESULT": no_security,
+        "EVENT_NAME": "pull_request",
+        "GITLEAKS_TREE_RESULT": "success",
+        "GITLEAKS_PR_RANGE_RESULT": "success",
     }
 
 
@@ -311,3 +325,42 @@ def test_security_gate_uses_real_detector_outputs(
     outputs = detector_outputs(changed_file)
     for name in ("python_runtime", "python_deps", "node_deps", "infra"):
         assert outputs[name] == expected.get(name, "false")
+
+
+@pytest.mark.parametrize("event", ["push", "schedule"])
+def test_security_gate_accepts_skipped_pr_range_outside_pull_requests(
+    event: str,
+    tmp_path: Path,
+) -> None:
+    env = {**NOOP, "EVENT_NAME": event, "GITLEAKS_PR_RANGE_RESULT": "skipped"}
+    result = run_gate(SCRIPT, env, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("overrides"),
+    [
+        {"GITLEAKS_TREE_RESULT": "failure"},
+        {"GITLEAKS_TREE_RESULT": "skipped"},
+        {"GITLEAKS_TREE_RESULT": "cancelled"},
+        {"GITLEAKS_PR_RANGE_RESULT": "failure"},
+        {"GITLEAKS_PR_RANGE_RESULT": "skipped"},
+        {"GITLEAKS_PR_RANGE_RESULT": "cancelled"},
+        {"EVENT_NAME": "push", "GITLEAKS_PR_RANGE_RESULT": "failure"},
+        {"EVENT_NAME": "push", "GITLEAKS_TREE_RESULT": "failure", "GITLEAKS_PR_RANGE_RESULT": "skipped"},
+        {"EVENT_NAME": ""},
+    ],
+)
+def test_security_gate_rejects_failed_or_missing_secret_scans(
+    overrides: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    env = {**BANDIT_ONLY, **overrides}
+    assert_gate_rejects(run_gate(SCRIPT, env, tmp_path))
+
+
+@pytest.mark.parametrize("job", ["GITLEAKS_TREE_RESULT", "GITLEAKS_PR_RANGE_RESULT", "EVENT_NAME"])
+def test_security_gate_rejects_missing_secret_scan_results(job: str, tmp_path: Path) -> None:
+    env = NOOP.copy()
+    env.pop(job)
+    assert_gate_rejects(run_gate(SCRIPT, env, tmp_path))

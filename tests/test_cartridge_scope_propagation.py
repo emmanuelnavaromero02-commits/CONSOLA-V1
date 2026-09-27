@@ -206,16 +206,19 @@ def test_knowledge_bits_read_write_under_forwarded_workspace_scope():
             assert "storage_uri = write_kb_parquet(" in kb_service
             assert "security_context," in kb_service
             assert "write_kb_to_postgres(" in kb_service
+            assert "write_scoped_kb_table(" in duckdb_service
+            assert 'if_exists="replace"' not in duckdb_service
         else:
             assert (
                 "write_kb_parquet(df, output_path, kb_id, run_id, security_context)"
                 in kb_service
             )
-            assert "write_kb_to_postgres(df, pg_table, security_context)" in kb_service
+            assert "write_kb_to_postgres" not in kb_service
+            assert "knowledge_bits." not in duckdb_service
         if cartridge != "salesforce":
             assert "require_tenant_workspace_scope(security_context)" in duckdb_service
-            assert "_path_has_scope(output_path, scope)" in duckdb_service
-        assert "tenant_id=:tenant_id AND workspace_id=:workspace_id" in duckdb_service
+            assert "has_exact_storage_scope(output_path, tenant, workspace)" in duckdb_service
+            assert "_path_has_scope" not in duckdb_service
 
 
 def test_mcp_infra_injects_trusted_scope_before_cartridge_execution():

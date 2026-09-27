@@ -13,12 +13,11 @@ from app.core.request_context import (
     require_tenant_workspace_scope,
     scoped_prefix,
 )
-from app.core.sql_guard import validate_kb_sql
+from omega_cartridge_kit.sql_guard import validate_kb_sql
 from app.services.catalog_service import get_all_kbs, get_kb_config
 from app.services.duckdb_service import (
     run_kb_sql,
     write_kb_parquet,
-    write_kb_to_postgres,
 )
 
 CARTRIDGE_ID = "hubspot"
@@ -137,7 +136,6 @@ def run_knowledge_bit(
 
     sql = config.get("sql", "")
     output_path = config.get("output_path", "")
-    pg_table = config.get("pg_table")
 
     if not sql:
         return {"status": "error", "error": f"KB {kb_id} has no SQL defined"}
@@ -164,9 +162,6 @@ def run_knowledge_bit(
         df = run_kb_sql(resolved_sql)
 
         storage_uri = write_kb_parquet(df, output_path, kb_id, run_id, security_context)
-
-        if pg_table:
-            write_kb_to_postgres(df, pg_table, security_context)
 
         finished_at = datetime.now(timezone.utc)
         _finish_kb_run(run_id, len(df), storage_uri, finished_at)

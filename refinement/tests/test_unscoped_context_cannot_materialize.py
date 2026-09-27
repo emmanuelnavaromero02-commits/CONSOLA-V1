@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -102,7 +103,7 @@ def test_engine_user_context_marks_only_verified_wildcard_admins(monkeypatch):
 
 
 def test_airflow_materialize_context_is_bounded_by_exact_storage_scope(monkeypatch):
-    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "refinement-materialize-scope-test-key-000001")
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", secrets.token_urlsafe(32))
     monkeypatch.syspath_prepend(str(REPO_ROOT / "airflow" / "dags"))
     sys.modules.pop("runtime_security_context", None)
     from runtime_security_context import build_materialize_context

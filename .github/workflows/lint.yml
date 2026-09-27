@@ -39,14 +39,14 @@ jobs:
         run: |
           ruff check \
             --output-format=github \
-            console workspace vault refinement mcp-infra cartridges airflow \
+            console workspace vault refinement mcp-infra cartridges airflow omega_lakehouse omega_cartridge_kit \
             scripts/reconcile_pipeline_runs.py
 
       - name: ruff format --check (advisory)
         continue-on-error: true
         run: |
           ruff format --check \
-            console workspace vault refinement mcp-infra cartridges airflow \
+            console workspace vault refinement mcp-infra cartridges airflow omega_lakehouse omega_cartridge_kit \
             scripts/reconcile_pipeline_runs.py
 
   console-next:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -109,12 +110,11 @@ def test_public_alb_target_groups_only_use_internal_service_ports():
         r'resource "aws_lb_target_group" "workspace" \{[\s\S]*?port\s*=\s*8001[\s\S]*?path\s*=\s*"/healthz"',
         alb,
     )
-    assert re.search(
-        r'resource "aws_lb_target_group" "airflow" \{[\s\S]*?port\s*=\s*8082[\s\S]*?path\s*=\s*"/airflow/health"',
-        alb,
-    )
-    assert 'resource "aws_lb_listener_rule" "airflow_path"' in alb
-    assert 'values = ["/airflow", "/airflow/*"]' in alb
+    assert 'resource "aws_lb_target_group" "airflow"' not in alb
+    assert 'resource "aws_lb_target_group_attachment" "airflow"' not in alb
+    assert 'resource "aws_lb_listener_rule" "airflow_path"' not in alb
+    assert "/airflow" not in alb
+    assert not re.search(r"port\s*=\s*\"?8082\b", alb)
     for port in ("8081", "8088"):
         assert not re.search(rf'resource "aws_lb_target_group" "[^"]+" \{{[\s\S]*?port\s*=\s*{port}\b', alb)
         assert not re.search(rf'resource "aws_lb_listener" "[^"]+" \{{[\s\S]*?port\s*=\s*"{port}"', alb)
@@ -217,7 +217,8 @@ def test_aws_deploy_env_documents_https_public_urls():
     assert "ALLOWED_ORIGINS=https://console.example.com,https://workspace.example.com" in env
     assert "CONSOLE_URL=https://console.example.com" in env
     assert "WORKSPACE_PUBLIC_URL=https://workspace.example.com" in env
-    assert "AIRFLOW_PUBLIC_URL=https://console.example.com/airflow" in env
+    assert "AIRFLOW_PUBLIC_URL=http://localhost:8082/airflow" in env
+    assert "AIRFLOW_PUBLIC_URL=https://console.example.com/airflow" not in env
     assert "CONSOLE_URL=http://10.0.2.X:8000" not in env
     assert "WORKSPACE_PUBLIC_URL=http://10.0.2.X:8001" not in env
     assert "AIRFLOW_PUBLIC_URL=http://10.0.2.X:8082" not in env
@@ -245,3 +246,54 @@ def test_partial_dataset_badges_are_visible_in_catalog_ui():
     assert "datasetReadiness" in inventory_page
     assert "Parcial" in inventory_page
     assert "AlertTriangle" in inventory_page
+
+
+def test_airflow_is_served_only_on_the_host_loopback():
+    sg = _read(TF / "security_groups.tf")
+    user_data = _read(TF / "user_data/app.sh.tpl")
+    compose = _read(DEPLOY / "docker-compose.aws.yml")
+    entrypoint = _read(REPO / "scripts/aws-entrypoint.sh")
+    gcp_lb = _read(REPO / "infra/terraform-gcp/lb.tf")
+    gcp_compute = _read(REPO / "infra/terraform-gcp/compute.tf")
+    gcp_network = _read(REPO / "infra/terraform-gcp/network.tf")
+
+    assert "8082" not in sg
+    assert "Airflow" not in sg
+    assert "AIRFLOW_PUBLIC_URL=http://localhost:8082/airflow" in user_data
+    assert "/airflow" not in user_data.replace("AIRFLOW_PUBLIC_URL=http://localhost:8082/airflow", "")
+    airflow = compose.split("\n  airflow:\n", 1)[1].split("\n  airflow-scheduler:", 1)[0]
+    assert '      - "127.0.0.1:8082:8080"' in airflow
+    assert re.findall(r'^\s+- "[^"]*8082[^"]*"$', compose, re.M) == ['      - "127.0.0.1:8082:8080"']
+    assert 'AIRFLOW__WEBSERVER__BASE_URL:         "${AIRFLOW_PUBLIC_URL:-http://airflow:8080}"' in compose
+    assert "AIRFLOW_URL:                          http://airflow:8080/airflow" in compose
+    assert 'AIRFLOW_HEALTH_PATH:                  "${AIRFLOW_HEALTH_PATH:-/airflow/health}"' in compose
+    assert re.findall(r"(?m)^\s*AIRFLOW_PUBLIC_URL=.*$", entrypoint) == [
+        'AIRFLOW_PUBLIC_URL="http://localhost:8082/airflow"'
+    ]
+    localhost_guard = entrypoint.split("must not point to localhost in production", 1)[0].rsplit("for url_var in", 1)[1]
+    assert "AIRFLOW_PUBLIC_URL" not in localhost_guard.split(";", 1)[0]
+    assert "/airflow" not in gcp_lb
+    assert "airflow" not in gcp_lb
+    assert '"8082"' not in gcp_network
+    assert 'name = "airflow"' not in gcp_compute
+
+
+def test_entrypoint_ignores_a_public_airflow_url_left_in_the_host_config(tmp_path: Path):
+    entrypoint = _read(REPO / "scripts/aws-entrypoint.sh")
+    source_at = entrypoint.index('source "$ENV_CONFIG"')
+    assign_at = entrypoint.index('AIRFLOW_PUBLIC_URL="http://localhost:8082/airflow"')
+    write_at = entrypoint.index('write_env "$config_name" "${!config_name}"')
+    assert source_at < assign_at < write_at
+    writes = entrypoint[entrypoint.rindex("for config_name in", 0, write_at) : write_at]
+    assert "AIRFLOW_PUBLIC_URL" in writes
+
+    config = tmp_path / "aws-entrypoint.env"
+    config.write_text("AIRFLOW_PUBLIC_URL=https://console.example.com/airflow\n", encoding="utf-8")
+    assignment = entrypoint[assign_at : entrypoint.index("\n", assign_at)]
+    result = subprocess.run(
+        ["bash", "-c", f'source "$1"; {assignment}; printf %s "$AIRFLOW_PUBLIC_URL"', "probe", str(config)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == "http://localhost:8082/airflow"

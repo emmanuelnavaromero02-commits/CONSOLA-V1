@@ -9,7 +9,8 @@ from typing import Any
 
 import duckdb
 import pandas as pd
-from sqlalchemy import create_engine, text
+
+from omega_lakehouse.storage_scope import has_exact_storage_scope
 
 from app.core.config import settings
 from app.core.minio_client import (
@@ -24,16 +25,6 @@ from app.core.request_context import (
     scoped_prefix,
     scope_values,
 )
-
-_SAFE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
-
-
-def _path_has_scope(path: str, scope: str) -> bool:
-    parts = [part for part in path.strip("/").split("/") if part]
-    scope_parts = [part for part in scope.strip("/").split("/") if part]
-    return any(
-        parts[idx : idx + len(scope_parts)] == scope_parts for idx in range(len(parts))
-    )
 
 
 def _sql_text(value: object) -> str:
@@ -215,7 +206,8 @@ def write_kb_parquet(
     load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     scope = scoped_prefix(security_context)
     if "tenant_id=" in output_path or "workspace_id=" in output_path:
-        if not _path_has_scope(output_path, scope):
+        tenant, workspace = scope_values(security_context)
+        if not has_exact_storage_scope(output_path, tenant, workspace):
             raise SecurityContextError(
                 "KB output path is outside the active tenant/workspace scope"
             )
@@ -230,63 +222,3 @@ def write_kb_parquet(
         upload_file_to_minio(local_path=str(local_path), object_name=object_name)
 
     return f"s3://{active_storage_bucket()}/{object_name}"
-
-
-def write_kb_to_postgres(
-    df: pd.DataFrame,
-    pg_table: str,
-    security_context: dict[str, Any] | None = None,
-) -> None:
-    security_context = require_tenant_workspace_scope(security_context)
-    if not _SAFE_IDENT_RE.match(pg_table):
-        raise ValueError(f"Unsafe pg_table identifier: {pg_table!r}")
-    tenant, workspace = scope_values(security_context)
-    engine = create_engine(settings.database_url)
-    try:
-        if tenant and workspace:
-            scoped_df = df.copy()
-            scoped_df["tenant_id"] = tenant
-            scoped_df["workspace_id"] = workspace
-            table_name = f'knowledge_bits."{pg_table}"'
-            with engine.begin() as conn:
-                conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
-                exists = conn.execute(
-                    text("SELECT to_regclass(:table_name)"),
-                    {"table_name": f"knowledge_bits.{pg_table}"},
-                ).scalar()
-                if exists:
-                    conn.execute(
-                        text(
-                            f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS tenant_id TEXT"
-                        )
-                    )
-                    conn.execute(
-                        text(
-                            f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS workspace_id TEXT"
-                        )
-                    )
-                    conn.execute(
-                        text(
-                            f"DELETE FROM {table_name} WHERE tenant_id=:tenant_id AND workspace_id=:workspace_id"
-                        ),
-                        {"tenant_id": tenant, "workspace_id": workspace},
-                    )
-            scoped_df.to_sql(
-                name=pg_table,
-                con=engine,
-                schema="knowledge_bits",
-                if_exists="append",
-                index=False,
-            )
-        else:
-            with engine.begin() as conn:
-                conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
-            df.to_sql(
-                name=pg_table,
-                con=engine,
-                schema="knowledge_bits",
-                if_exists="replace",
-                index=False,
-            )
-    finally:
-        engine.dispose()

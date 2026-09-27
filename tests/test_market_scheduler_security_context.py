@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import secrets
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,7 +17,7 @@ from airflow.dags.runtime_security_context import build_scheduled_run_context
 REPO = Path(__file__).resolve().parents[1]
 TENANT_ID = "d5d95d5e-0326-4f36-b04f-2a3b77ed61d2"
 WORKSPACE_ID = "4a6e9743-d54e-46ff-a023-111f06572c42"
-SIGNING_KEY = "market-scheduler-test-signing-key-distinct-123456789"
+SIGNING_KEY = secrets.token_urlsafe(32)
 
 
 def _canonical(context: dict) -> bytes:

@@ -97,9 +97,4 @@ resource "google_compute_instance_group" "app" {
     name = "workspace"
     port = 8001
   }
-
-  named_port {
-    name = "airflow"
-    port = 8082
-  }
 }

@@ -62,7 +62,7 @@ def test_redact_token_kv(logging_config):
 
 
 def test_redact_enterprise_secret_shapes(logging_config):
-    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.VeryLongSignature12345"
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.VeryLongSignature12345"  # gitleaks:allow
     sample = (
         f"Authorization: Bearer live-token refresh_token=refresh-123 "
         f"INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA=pair-key "

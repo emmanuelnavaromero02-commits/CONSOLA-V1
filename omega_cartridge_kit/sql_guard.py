@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import unquote
+
+from omega_lakehouse.storage_scope import (
+    ReaderUriError,
+    parse_required_scope,
+    require_scoped_reader_uri,
+)
 
 
 _MAX_LIMIT = 5000
@@ -50,34 +55,37 @@ def _prefixes(allowed_bucket_prefix: str | tuple[str, ...] | list[str]) -> tuple
     return tuple(p.rstrip("/") + "/" for p in allowed)
 
 
-def _canonical_s3_path(path: str) -> str:
-    raw_path = path
-    for _ in range(3):
-        decoded = unquote(raw_path).replace("\\", "/")
-        if decoded == raw_path:
-            break
-        raw_path = decoded
-    if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
-        return raw_path
-    if not raw_path.startswith("s3://"):
-        return raw_path
-    scheme, rest = raw_path[:5], raw_path[5:]
-    parts = [part for part in rest.split("/") if part and part != "."]
-    if any(part == ".." for part in parts):
-        return raw_path
-    return scheme + "/".join(parts)
+_READER_URI_MESSAGES = {
+    "query": "paths cannot carry query strings or fragments",
+    "scheme": "may only read from the cartridge S3 prefixes",
+    "traversal": "path traversal is not allowed",
+    "canonical": "path is not canonical (no encoding, backslashes, empty or dot segments)",
+    "scope": "path must stay inside the active tenant/workspace scope",
+}
 
 
-def _has_exact_scope(path: str, required_scope: str | None) -> bool:
-    if not required_scope:
-        return True
-    if not path.startswith("s3://"):
-        return False
-    parts = [part for part in path[5:].split("/") if part]
-    scope_parts = [part for part in required_scope.strip("/").split("/") if part]
-    if not scope_parts:
-        return False
-    return any(parts[idx : idx + len(scope_parts)] == scope_parts for idx in range(len(parts)))
+def _required_scope_values(required_scope: str | None) -> tuple[str | None, str | None]:
+    if required_scope is None:
+        return None, None
+    try:
+        return parse_required_scope(required_scope)
+    except ValueError:
+        return "", ""
+
+
+def _reader_uri_violation(
+    name: str,
+    path: str,
+    prefixes: tuple[str, ...],
+    scope: tuple[str | None, str | None],
+) -> str | None:
+    try:
+        require_scoped_reader_uri(path, prefixes=prefixes, tenant=scope[0], workspace=scope[1])
+    except ReaderUriError as exc:
+        if exc.reason == "prefix":
+            return f"{name} path must start with one of {prefixes}"
+        return f"{name} {_READER_URI_MESSAGES.get(exc.reason, _READER_URI_MESSAGES['scope'])}"
+    return None
 
 
 def has_limit_clause(sql: str) -> bool:
@@ -231,26 +239,17 @@ def _reader_paths(function: dict) -> list[str] | None:
     return [text]
 
 
-def _path_violation(path: str, prefixes: tuple[str, ...], required_scope: str | None) -> str | None:
-    raw_path = _canonical_s3_path(path)
-    if "?" in raw_path or "#" in raw_path:
-        return "DuckDB reader paths cannot carry query strings or fragments"
-    if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
-        return "DuckDB readers may only read from the cartridge S3 prefixes"
-    if "/../" in raw_path or raw_path.endswith("/.."):
-        return "DuckDB reader path traversal is not allowed"
-    if not any(raw_path.startswith(prefix) for prefix in prefixes):
-        return f"DuckDB reader path must start with one of {prefixes}"
-    if not _has_exact_scope(raw_path, required_scope):
-        return "DuckDB reader path must stay inside the active tenant/workspace scope"
-    return None
+def _path_violation(
+    path: str, prefixes: tuple[str, ...], scope: tuple[str | None, str | None]
+) -> str | None:
+    return _reader_uri_violation("DuckDB reader", path, prefixes, scope)
 
 
 def _node_violation(
     node: dict,
     tables: set[str],
     prefixes: tuple[str, ...],
-    required_scope: str | None,
+    scope: tuple[str | None, str | None],
 ) -> str | None:
     kind = node.get("type")
     if isinstance(kind, str) and "class" not in node and "query_location" in node and "alias" in node:
@@ -275,7 +274,7 @@ def _node_violation(
                 if paths is None:
                     return "DuckDB readers must use direct string literal paths and constant options"
                 for path in paths:
-                    found = _path_violation(path, prefixes, required_scope)
+                    found = _path_violation(path, prefixes, scope)
                     if found:
                         return found
             elif name not in _SAFE_TABLE_FUNCTIONS:
@@ -295,7 +294,7 @@ def _node_violation(
 def _ast_violation(
     sql: str,
     prefixes: tuple[str, ...],
-    required_scope: str | None,
+    scope: tuple[str | None, str | None],
     allowed_tables: frozenset[str] = frozenset(),
 ) -> str | None:
     try:
@@ -313,7 +312,7 @@ def _ast_violation(
             function = node.get("function")
             if isinstance(function, dict) and str(function.get("function_name") or "").lower() in _READER_TABLE_FUNCTIONS:
                 function["_reader_call"] = True
-        found = _node_violation(node, tables, prefixes, required_scope)
+        found = _node_violation(node, tables, prefixes, scope)
         if found:
             return found
     return None
@@ -373,23 +372,15 @@ def validate_kb_sql(
         return False, "DuckDB readers must use a direct string literal path"
 
     normalized_prefixes = _prefixes(allowed_bucket_prefix)
+    scope = _required_scope_values(required_scope)
     for fn in _READ_FN_RE.finditer(stripped):
-        name = fn.group(1).lower()
-        raw_path = _canonical_s3_path(fn.group("path"))
-        if "?" in raw_path or "#" in raw_path:
-            return False, f"{name} paths cannot carry query strings or fragments"
-        if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
-            return False, f"{name} may only read from the cartridge S3 prefixes"
-        if "/../" in raw_path or raw_path.endswith("/.."):
-            return False, f"{name} path traversal is not allowed"
-        if not any(raw_path.startswith(prefix) for prefix in normalized_prefixes):
-            return False, f"{name} path must start with one of {normalized_prefixes}"
-        if not _has_exact_scope(raw_path, required_scope):
-            return False, f"{name} path must stay inside the active tenant/workspace scope"
+        found = _reader_uri_violation(fn.group(1).lower(), fn.group("path"), normalized_prefixes, scope)
+        if found:
+            return False, found
 
     if any(not _usable_name(str(name)) for name in allowed_tables):
         return False, "Runtime table names must be plain identifiers"
-    violation = _ast_violation(stripped, normalized_prefixes, required_scope, frozenset(allowed_tables))
+    violation = _ast_violation(stripped, normalized_prefixes, scope, frozenset(allowed_tables))
     if violation:
         return False, violation
 

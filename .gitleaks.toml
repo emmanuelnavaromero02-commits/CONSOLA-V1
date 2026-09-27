@@ -2,12 +2,10 @@
 useDefault = true
 
 [allowlist]
-description = "Test fixtures and documented public/CI-only values"
-paths = [
-    '''(^|/)tests?/''',
-    '''\.test\.tsx$''',
-]
+description = "Documented public or CI-only literal values"
 regexes = [
+    # CI-only dummy Fernet key (.github/workflows/docker-image.yml compose validation).
     '''d7to_DkrHVKV5_jOzwCNV-wOl4r6gGCY7Usccczm9dk=''',
+    # INEGI public catalog token (cartridges/inegi/app/core/inegi_client.py).
     '''96fbd1bf-21e6-28e3-6e64-2b15999d2c89''',
 ]

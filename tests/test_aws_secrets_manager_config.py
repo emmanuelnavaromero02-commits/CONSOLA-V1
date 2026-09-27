@@ -224,3 +224,87 @@ def test_aws_env_example_does_not_document_static_aws_keys():
     assert "HUBSPOT_URL=" in src
     assert "SALESFORCE_URL=" in src
     assert "SF_TOKEN_URL=" in src
+
+
+def _fake_curl(tmp_path: Path, *, fail: bool = False) -> Path:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "curl.log"
+    script = bin_dir / "curl"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{log}"\n'
+        + ("exit 7\n" if fail else "")
+        + 'url="${@: -1}"\n'
+        'case "$url" in\n'
+        '  */api/token) printf imds-token ;;\n'
+        '  */meta-data/mac) [[ "$*" == *"X-aws-ec2-metadata-token: imds-token"* ]] && printf 0a:1b:2c:3d:4e:5f ;;\n'
+        '  */macs/0a:1b:2c:3d:4e:5f/vpc-ipv4-cidr-block) [[ "$*" == *"imds-token"* ]] && printf 10.0.0.0/16 ;;\n'
+        "  *) exit 22 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return bin_dir
+
+
+def _resolve_trusted_proxies(tmp_path: Path, preset: str | None, *, fail: bool = False) -> tuple[str, str]:
+    import os
+    import subprocess
+
+    entrypoint = _read(REPO / "scripts/aws-entrypoint.sh")
+    assignment = next(
+        line for line in entrypoint.splitlines() if line.startswith("TRUSTED_PROXY_IPS=")
+    )
+    env = {"PATH": f"{_fake_curl(tmp_path, fail=fail)}:{os.environ['PATH']}"}
+    if preset is not None:
+        env["TRUSTED_PROXY_IPS"] = preset
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'set -Eeuo pipefail; source "$1"; {assignment}; printf %s "$TRUSTED_PROXY_IPS"',
+            "probe",
+            str(REPO / "scripts/aws-env-pair.sh"),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    log = tmp_path / "curl.log"
+    return result.stdout, log.read_text(encoding="utf-8") if log.exists() else ""
+
+
+def test_entrypoint_derives_trusted_proxies_from_the_vpc_cidr_via_imdsv2(tmp_path):
+    value, calls = _resolve_trusted_proxies(tmp_path, None)
+    assert value == "10.0.0.0/16"
+    assert "-X PUT -H X-aws-ec2-metadata-token-ttl-seconds: 60" in calls
+    assert calls.count("X-aws-ec2-metadata-token: imds-token") == 2
+
+
+def test_entrypoint_keeps_terraform_provided_trusted_proxies(tmp_path):
+    value, calls = _resolve_trusted_proxies(tmp_path, "10.0.1.0/24,10.0.4.0/24")
+    assert value == "10.0.1.0/24,10.0.4.0/24"
+    assert calls == ""
+
+
+def test_entrypoint_trusts_no_proxy_when_imds_is_unreachable(tmp_path):
+    value, _ = _resolve_trusted_proxies(tmp_path, None, fail=True)
+    assert value == ""
+
+
+def test_trusted_proxies_reach_the_console_through_env_and_terraform():
+    entrypoint = _read(REPO / "scripts/aws-entrypoint.sh")
+    writes = entrypoint.split("for config_name in", 2)[2].split("done", 1)[0]
+    assert "TRUSTED_PROXY_IPS" in writes
+    userdata = _read(TF / "user_data/app.sh.tpl")
+    assert "TRUSTED_PROXY_IPS=${trusted_proxy_ips}" in userdata
+    ec2 = _read(TF / "ec2_app.tf")
+    assert re.search(
+        r"trusted_proxy_ips\s+=\s+join\(\",\", \[aws_subnet\.public\.cidr_block, "
+        r"aws_subnet\.public_secondary\.cidr_block\]\)",
+        ec2,
+    )
+    alb = _read(TF / "public_https.tf")
+    assert "subnets            = [aws_subnet.public.id, aws_subnet.public_secondary.id]" in alb

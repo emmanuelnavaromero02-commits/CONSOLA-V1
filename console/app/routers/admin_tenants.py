@@ -13,6 +13,7 @@ from app.dependencies import ROLE_ADMIN, require_global_any_role
 from app.services import audit_service, auth
 from app.services.csrf import require_csrf
 from app.services.permission_roles import GLOBAL_ROLES
+from app.services.request_rate_limits import client_ip
 
 
 router = APIRouter(prefix="/api/admin/tenants", tags=["Admin Tenants"])
@@ -26,10 +27,7 @@ MAX_EMAIL = 254
 
 
 def _client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",", 1)[0].strip() or None
-    return request.client.host if request.client else None
+    return client_ip(request) if request.client else None
 
 
 def _normalize_name(value: Any, field: str) -> str:

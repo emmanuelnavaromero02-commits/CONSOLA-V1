@@ -95,7 +95,7 @@ def test_query_kb_blocks_duckdb_metadata_exfil_before_duckdb(
 @pytest.mark.parametrize("sql", P0_EXFIL_SQL)
 def test_validate_kb_sql_blocks_duckdb_metadata_exfil(cartridge, sql):
     load_cartridge_app(cartridge)
-    from app.core.sql_guard import validate_kb_sql
+    from omega_cartridge_kit.sql_guard import validate_kb_sql
 
     prefixes = (
         f"s3://lakehouse/raw/{cartridge}/",

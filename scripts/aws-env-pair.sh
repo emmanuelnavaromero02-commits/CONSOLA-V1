@@ -230,3 +230,10 @@ publish_env_pair() {
 
   aws_env_discard_backups
 }
+
+aws_imds_vpc_cidr() {
+  local imds="http://169.254.169.254/latest" token mac
+  token="$(curl -fsS -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" "$imds/api/token")" || return 1
+  mac="$(curl -fsS -m 2 -H "X-aws-ec2-metadata-token: $token" "$imds/meta-data/mac")" || return 1
+  curl -fsS -m 2 -H "X-aws-ec2-metadata-token: $token" "$imds/meta-data/network/interfaces/macs/$mac/vpc-ipv4-cidr-block"
+}

@@ -20,7 +20,7 @@ PREFIXES = (
 
 
 def _validate_kb_sql(sql: str):
-    from app.core.sql_guard import validate_kb_sql
+    from omega_cartridge_kit.sql_guard import validate_kb_sql
 
     return validate_kb_sql(sql, PREFIXES)
 
@@ -204,7 +204,7 @@ def test_existing_salesforce_kb_sql_passes_guard():
 
 
 def test_limit_detection_ignores_strings():
-    from app.core.sql_guard import has_limit_clause
+    from omega_cartridge_kit.sql_guard import has_limit_clause
 
     assert has_limit_clause("SELECT * FROM x LIMIT 10") is True
     assert has_limit_clause(
@@ -223,11 +223,11 @@ def test_limit_detection_ignores_strings():
         ("\t\n", "empty"),
         (
             "SELECT * FROM read_parquet('s3://lakehouse/raw/salesforce/..%2F..%2Fetc/passwd')",
-            "traversal",
+            "not canonical",
         ),
         (
             "SELECT * FROM read_parquet('s3://lakehouse/raw/salesforce/..%252F..%252Fetc/passwd')",
-            "traversal",
+            "not canonical",
         ),
     ],
 )
@@ -239,7 +239,7 @@ def test_validate_kb_sql_additional_blocks(sql, expected):
 
 
 def test_validate_kb_sql_rejects_none():
-    from app.core.sql_guard import validate_kb_sql
+    from omega_cartridge_kit.sql_guard import validate_kb_sql
     ok, reason = validate_kb_sql(None, "s3://lakehouse/raw/salesforce/")  # type: ignore[arg-type]
     assert ok is False
     assert "empty" in reason

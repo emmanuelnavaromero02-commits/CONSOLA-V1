@@ -84,7 +84,7 @@ connector:
       - name: list_kbs
         description: List all Knowledge Bits configured for the HubSpot cartridge
       - name: run_kb
-        description: Execute a Knowledge Bit and write results to Parquet and PostgreSQL
+        description: Execute a Knowledge Bit and write results to Parquet
       - name: query_kb
         description: Run arbitrary DuckDB SQL against HubSpot Bronze/Silver data
 

@@ -411,6 +411,7 @@ def test_console_request_rate_limit_helper_refactor_does_not_trigger_full_stack_
     assert _root_targets(flags) == {
         "console/tests/test_agent_runner_scheduler_auth.py",
         "tests/test_request_rate_limits.py",
+        "tests/test_workspace_client_ip_parity.py",
     }
 
 
@@ -601,3 +602,87 @@ def test_sap_b1_hint_sources_select_the_hints_contract():
     assert "tests/test_sap_b1_hints.py" not in _root_targets(
         _flags("cartridges/sap_b1/tests/test_indicators_catalog.py")
     )
+
+
+def test_cartridge_kit_change_rebuilds_and_tests_every_sql_cartridge():
+    flags = _flags("omega_cartridge_kit/sql_guard.py")
+
+    sql_cartridges = {
+        "hubspot",
+        "replicon",
+        "salesforce",
+        "sap_b1",
+        "sap_hcm",
+        "sap_s4hana",
+        "sap_successfactors",
+    }
+    matrix = json.loads(str(flags["build_matrix"]))
+    assert {item["service"] for item in matrix["include"]} == sql_cartridges
+    assert flags["python_runtime"] is True
+    assert flags["release_full_stack"] is True
+    assert set(str(flags["cartridge_test_targets"]).split()) == {
+        f"cartridges/{name}/tests" for name in sql_cartridges
+    }
+    assert set(str(flags["cartridge_requirement_paths"]).split()) == {
+        f"cartridges/{name}/requirements.txt" for name in sql_cartridges
+    }
+    assert {
+        "tests/test_omega_cartridge_kit_sql_guard.py",
+        "tests/test_cartridge_sql_guard_paths.py",
+    } <= _root_targets(flags)
+
+
+def test_lakehouse_change_rebuilds_every_image_that_copies_it():
+    flags = _flags("omega_lakehouse/storage_scope.py")
+
+    matrix = json.loads(str(flags["build_matrix"]))
+    assert {item["service"] for item in matrix["include"]} == {
+        "console",
+        "refinement",
+        "mcp-infra",
+        "banxico",
+        "inegi",
+        "sec_edgar",
+        "hubspot",
+        "replicon",
+        "salesforce",
+        "sap_b1",
+        "sap_hcm",
+        "sap_s4hana",
+        "sap_successfactors",
+    }
+    for market in ("banxico", "inegi", "sec_edgar"):
+        assert f"cartridges/{market}/tests" in str(flags["cartridge_test_targets"]).split()
+    assert {
+        "tests/lakehouse",
+        "tests/test_omega_lakehouse_storage_scope.py",
+        "tests/test_omega_cartridge_kit_sql_guard.py",
+        "tests/test_cartridge_kb_scope_20c.py",
+        "tests/test_cartridge_scope_propagation.py",
+    } <= _root_targets(flags)
+    assert flags["refinement_tests"] is True
+    assert flags["console_tests"] is True
+    assert flags["python_runtime"] is True
+    assert flags["release_full_stack"] is True
+
+
+def test_every_image_copying_a_shared_package_is_registered_as_its_consumer():
+    root = Path(__file__).resolve().parents[1]
+    services = ci_changed_areas.SERVICES
+    for prefix, consumers in ci_changed_areas.SHARED_RUNTIME_CONSUMERS.items():
+        package = prefix.rstrip("/")
+        copying = set()
+        for service, context in services.items():
+            dockerfile = root / context.removeprefix("./") / "Dockerfile"
+            if f"COPY {package}" in dockerfile.read_text(encoding="utf-8") or (
+                f" {package}/ " in dockerfile.read_text(encoding="utf-8")
+            ):
+                copying.add(service)
+        assert copying == set(consumers), package
+
+
+def test_client_ip_policies_select_the_parity_contract():
+    for changed in ("console/app/services/request_rate_limits.py", "workspace/app/services/client_ip.py"):
+        targets = _root_targets(_flags(changed))
+        assert {"tests/test_request_rate_limits.py", "tests/test_workspace_client_ip_parity.py"} <= targets
+    assert _flags("workspace/app/services/client_ip.py")["workspace_tests"] is True

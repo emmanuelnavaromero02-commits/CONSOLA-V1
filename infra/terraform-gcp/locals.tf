@@ -33,7 +33,7 @@ locals {
     : local.technical_workspace_url
   )
 
-  airflow_public_url = "${local.console_public_url}/airflow"
+  airflow_public_url = "http://localhost:8082/airflow"
   lakehouse_bucket   = var.lakehouse_bucket_name != "" ? var.lakehouse_bucket_name : google_storage_bucket.lakehouse.name
 
   required_services = toset([

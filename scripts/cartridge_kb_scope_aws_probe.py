@@ -85,11 +85,12 @@ check_cartridge_contract() {
   for cartridge in hubspot replicon sap_hcm sap_s4hana sap_successfactors sap_b1; do
     require_pattern "cartridges/${cartridge}/app/core/request_context.py" "def require_tenant_workspace_scope" || missing+=("${cartridge}:request_context")
     require_pattern "cartridges/${cartridge}/app/services/kb_service.py" "security_context = require_tenant_workspace_scope" || missing+=("${cartridge}:kb_service")
-    require_pattern "cartridges/${cartridge}/app/core/sql_guard.py" "required_scope: str | None = None" || missing+=("${cartridge}:sql_guard_scope")
-    require_pattern "cartridges/${cartridge}/app/core/sql_guard.py" "def _canonical_s3_path" || missing+=("${cartridge}:sql_guard_canonical")
+    require_pattern "cartridges/${cartridge}/app/services/kb_service.py" "from omega_cartridge_kit.sql_guard import validate_kb_sql" || missing+=("${cartridge}:sql_guard_kit")
     require_pattern "cartridges/${cartridge}/app/mcp_server.py" "security_context_denied" || missing+=("${cartridge}:mcp_deny")
     require_pattern "cartridges/${cartridge}/app/main.py" "x-security-context" || missing+=("${cartridge}:mcp_header_guard")
   done
+  require_pattern "omega_cartridge_kit/sql_guard.py" "required_scope: str | None = None" || missing+=("kit:sql_guard_scope")
+  require_pattern "omega_lakehouse/storage_scope.py" "def require_scoped_reader_uri" || missing+=("kit:sql_guard_canonical")
   if [ "${#missing[@]}" -eq 0 ]; then
     emit "cartridge KB signed scope contract" "PASS" "hubspot/replicon/sap_hcm/sap_s4hana/sap_successfactors/sap_b1 fail closed with signed scope"
   else

@@ -4,7 +4,7 @@ output "public_console_url" {
 }
 
 output "public_airflow_url" {
-  description = "Public URL for Airflow through the console load balancer path."
+  description = "Airflow URL on the app host loopback; it is reached through a tunnel, never the public load balancer."
   value       = local.airflow_public_url
 }
 

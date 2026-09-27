@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import secrets
 import sys
 import types
 from pathlib import Path
@@ -13,8 +14,8 @@ LEGACY = "legacy_internal_key_with_more_than_thirty_two_characters_aaaa"
 CONSOLE_KEY = "console_to_refinement_dedicated_key_64_chars_xxxxxxxxxxxxxxxxxx"
 WS_KEY = "workspace_to_refinement_dedicated_key_64_chars_yyyyyyyyyyyyyyy"
 AF_KEY = "airflow_to_refinement_dedicated_key_64_chars_zzzzzzzzzzzzzzzzzz"
-CART_KEY = "cartridge_to_refinement_dedicated_key_64_chars_kkkkkkkkkkkkkkk"
-MCP_KEY = "mcp_infra_to_refinement_dedicated_key_64_chars_mmmmmmmmmmmmm"
+CART_KEY = secrets.token_hex(32)
+MCP_KEY = secrets.token_hex(32)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SERVICE_PATH_MARKERS = (
     "/cartridges/",

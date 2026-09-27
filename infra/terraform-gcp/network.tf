@@ -60,6 +60,6 @@ resource "google_compute_firewall" "lb_health_and_proxy" {
 
   allow {
     protocol = "tcp"
-    ports    = ["8000", "8001", "8082"]
+    ports    = ["8000", "8001"]
   }
 }

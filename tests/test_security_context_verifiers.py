@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi import HTTPException
 
 
@@ -57,7 +58,7 @@ def _load_service(service: str, monkeypatch):
         "mcp_to_refinement_transport_key_64_chars_fffff",
     )
     monkeypatch.setenv(
-        "VAULT_ENCRYPTION_KEY", "8sXi-0kBYU5DJ5dY7CCRkW7XHJsXxLPmO6r9OYx-3a4="
+        "VAULT_ENCRYPTION_KEY", Fernet.generate_key().decode()
     )
     monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
     monkeypatch.setenv("AIRFLOW_USER", "airflow")

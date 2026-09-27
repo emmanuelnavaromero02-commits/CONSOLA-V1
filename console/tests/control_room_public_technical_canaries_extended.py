@@ -222,7 +222,7 @@ EXTENDED_TECHNICAL_PUBLIC_CANARIES = (
     "infra.hcl",
     "Dockerfile",
     "Basic dXNlcjpwYXNz",
-    "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+    "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",  # gitleaks:allow
     "https://hooks.slack-gov.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
     "https://discord.com/api/webhooks/123456789/secret-token",
     "https://example.blob.core.windows.net/c?sv=2024&sig=secret",

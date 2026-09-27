@@ -32,7 +32,7 @@ SECRET_SENTINELS = (
     "credentials-sentinel",
     "bearer-sentinel",
     "jwt-sentinel",
-    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqd3Qtc2VudGluZWwifQ.signature123",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqd3Qtc2VudGluZWwifQ.signature123",  # gitleaks:allow
     "uri-sentinel",
     "unicode-sentinel",
 )
@@ -104,7 +104,7 @@ def poison() -> dict:
         "refresh_token": "refresh-sentinel",
         "api_key": "api-sentinel",
         "client_secret": "client-sentinel",
-        "private_key": "-----BEGIN PRIVATE KEY-----private-sentinel",
+        "private_key": "-----BEGIN PRIVATE KEY-----private-sentinel",  # gitleaks:allow
         "credentials": "credentials-sentinel",
         "connection_string": "postgres://user:uri-sentinel@db/private",
     }
@@ -114,7 +114,7 @@ def poison() -> dict:
         "detail": "-----BEGIN PRIVATE KEY-----private-sentinel-----END PRIVATE KEY-----",
         "label": "password=password-sentinel; access_token=access-sentinel",
         "recommendation": "client_secret=client-sentinel",
-        "fact": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqd3Qtc2VudGluZWwifQ.signature123",
+        "fact": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqd3Qtc2VudGluZWwifQ.signature123",  # gitleaks:allow
         "outcome_summary": "credentials=credentials-sentinel",
         "value": "postgres://user:uri-sentinel@db/private",
         "details": {

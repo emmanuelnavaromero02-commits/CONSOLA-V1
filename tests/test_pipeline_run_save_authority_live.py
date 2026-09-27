@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import secrets
 import sys
 import uuid
 from pathlib import Path
@@ -68,7 +69,7 @@ async def test_unsigned_airflow_http_cannot_write_chosen_workspace(
         "APP_ENV": "test",
         "INTERNAL_API_KEY": "transport-key-that-is-long-enough-123456",
         "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA": "airflow-pair-key-123456",
-        "SECURITY_CONTEXT_SIGNING_KEY": "signing-key-distinct-and-long-enough-123456",
+        "SECURITY_CONTEXT_SIGNING_KEY": secrets.token_urlsafe(32),
         "DATABASE_URL": mcp_dsn,
         "PG_HOST": parsed.hostname or "127.0.0.1",
         "PG_PORT": str(parsed.port),

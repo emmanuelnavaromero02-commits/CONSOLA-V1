@@ -28,6 +28,9 @@ PROTECTED_ENV = {
     "PIP_AUDIT_RESULT": "success",
     "NPM_AUDIT_RESULT": "success",
     "NO_SECURITY_SCAN_NEEDED_RESULT": "skipped",
+    "EVENT_NAME": "pull_request",
+    "GITLEAKS_TREE_RESULT": "success",
+    "GITLEAKS_PR_RANGE_RESULT": "success",
 }
 
 

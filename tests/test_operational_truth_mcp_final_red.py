@@ -109,7 +109,8 @@ def test_cartridge_mcp_duckdb_runtime_is_pinned_and_load_only() -> None:
             "LOAD httpfs"
         )
         assert service.index("autoload_known_extensions") < service.index("LOAD httpfs")
-        assert "ENV HOME=/app" in dockerfile
+        assert "HOME=/home/appuser" in dockerfile
+        assert "ENV HOME=/app" not in dockerfile
         assert "INSTALL httpfs" in dockerfile
         assert "INSTALL aws" in dockerfile
         assert "USER appuser" in dockerfile

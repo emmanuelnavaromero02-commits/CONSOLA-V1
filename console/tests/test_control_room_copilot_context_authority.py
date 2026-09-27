@@ -12,7 +12,7 @@ TENANT_ID = "11111111-1111-1111-1111-111111111111"
 WORKSPACE_ID = "22222222-2222-2222-2222-222222222222"
 DB_ID = "33333333-3333-3333-3333-333333333333"
 FINGERPRINT = "live:0123456789abcdef"
-SECRET = "api_key=raw-operational-secret"
+SECRET = "api_key=raw-operational-secret"  # gitleaks:allow
 VIEWER = {
     "id": 7,
     "email": "viewer@example.com",

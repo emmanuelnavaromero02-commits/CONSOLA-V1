@@ -49,7 +49,7 @@ from app.sql_table_function_policy import (
     validate_table_function_query,
 )
 from app.sql_scope_policy import resolved_cte_table_ids
-from app.storage_scope_policy import has_exact_storage_scope
+from omega_lakehouse.storage_scope import has_exact_storage_scope
 from app.staged_publication_engine import StagedPublicationEngine
 from app.successfactors_fallbacks import (
     annotate_operational_fallback,

@@ -70,7 +70,7 @@ def test_talent_keeps_only_format_valid_business_identifiers():
         "status": "ready",
         "box": {"box_id": "core", "box_label": "Core"},
         "roster": [
-            {"employee_key": "tal_abcdef123456", "display_name": "Colaborador 3456"},
+            {"employee_key": "tal_abcdef123456", "display_name": "Colaborador 3456"},  # gitleaks:allow
             {"employee_key": "technical-id-sentinel", "display_name": "Descartado"},
         ],
     }

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 import pytest
+from cryptography.fernet import Fernet
 
 
 LEGACY = "legacy_internal_key_with_more_than_thirty_two_characters"
@@ -48,7 +49,7 @@ def _load_vault_main(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_KEY", LEGACY)
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT", CONSOLE_KEY)
     monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
-    monkeypatch.setenv("VAULT_ENCRYPTION_KEY", "8sXi-0kBYU5DJ5dY7CCRkW7XHJsXxLPmO6r9OYx-3a4=")
+    monkeypatch.setenv("VAULT_ENCRYPTION_KEY", Fernet.generate_key().decode())
     return importlib.import_module("app.main")
 
 

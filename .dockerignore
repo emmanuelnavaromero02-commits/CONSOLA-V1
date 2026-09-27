@@ -11,3 +11,14 @@
 **/out
 artifacts
 tmp
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/.terraform
+**/.coverage*
+**/coverage

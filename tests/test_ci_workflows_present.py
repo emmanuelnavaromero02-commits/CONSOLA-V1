@@ -139,9 +139,39 @@ def test_compose_validate_declares_required_pair_keys():
         assert key in raw
 
 
+ROOT_CONTEXT_CARTRIDGES = (
+    "banxico",
+    "inegi",
+    "sec_edgar",
+    "hubspot",
+    "replicon",
+    "salesforce",
+    "sap_b1",
+    "sap_hcm",
+    "sap_s4hana",
+    "sap_successfactors",
+)
+
+
 def test_root_context_cartridge_images_build_from_repo_root():
     raw = DOCKER_WF.read_text(encoding="utf-8")
-    assert "console|refinement|mcp-infra|banxico|inegi|sec_edgar)" in raw
+    case = re.search(r"^\s*(console\|refinement\|mcp-infra\|[a-z0-9_|-]+)\)$", raw, re.MULTILINE)
+    assert case, "docker-image.yml lost its repo-root build case"
+    assert set(case.group(1).split("|")) == {"console", "refinement", "mcp-infra", *ROOT_CONTEXT_CARTRIDGES}
+
+    release = _load(WF_DIR / "release.yml")
+    matrix = {
+        item["service"]: item
+        for item in release["jobs"]["build-and-push"]["strategy"]["matrix"]["include"]
+    }
+    compose = _load(REPO / "infra" / "docker-compose.yml")["services"]
+    for cartridge in ROOT_CONTEXT_CARTRIDGES:
+        assert matrix[cartridge]["context"] == "."
+        assert matrix[cartridge]["dockerfile"] == f"./cartridges/{cartridge}/Dockerfile"
+        service = compose[cartridge.replace("_", "-") if cartridge.replace("_", "-") in compose else cartridge]
+        assert service["build"] == {"context": "..", "dockerfile": f"cartridges/{cartridge}/Dockerfile"}
+        dockerfile = (REPO / "cartridges" / cartridge / "Dockerfile").read_text(encoding="utf-8")
+        assert f"cartridges/{cartridge}/app/" in dockerfile or f"cartridges/{cartridge}/app " in dockerfile
 
 
 def test_console_next_coverage_is_published_in_ci():

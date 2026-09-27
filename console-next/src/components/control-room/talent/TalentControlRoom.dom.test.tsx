@@ -75,7 +75,7 @@ const rosterPayload: SfTalentRosterPayload = {
   box: { box_id: "estrella", box_label: "Estrella", display_order: 1 },
   roster: [
     {
-      employee_key: "tal_abc123456789",
+      employee_key: "tal_abc123456789",  // gitleaks:allow
       display_name: "Colaborador 6789",
       role: "Manager",
       unit: "People",

@@ -9,6 +9,7 @@ import types
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -360,7 +361,7 @@ def test_mcp_kb_tool_does_not_return_duckdb_secret_error(monkeypatch):
             return None
 
         def fetchone(self):
-            return ("SELECT 1", None, None)
+            return ("SELECT 1", None)
 
     class FakeConnection:
         def __enter__(self):
@@ -394,7 +395,7 @@ def test_cartridge_duckdb_setup_binds_secret_and_returns_safe_error(cartridge):
     sentinel = "SECRET-GCS-HMAC-SENTINEL"
     env = {
         **os.environ,
-        "PYTHONPATH": str(ROOT / "cartridges" / cartridge),
+        "PYTHONPATH": os.pathsep.join((str(ROOT / "cartridges" / cartridge), str(ROOT))),
         "LAKEHOUSE_PROVIDER": "gcs",
         "LAKEHOUSE_ENDPOINT": "storage.googleapis.com",
         "GCS_BUCKET": "omega-gcs",
@@ -403,7 +404,7 @@ def test_cartridge_duckdb_setup_binds_secret_and_returns_safe_error(cartridge):
         "DATABASE_URL": "postgresql://example.invalid/omega",
         "PG_USER": "test-user",
         "PG_PASSWORD": "test-password",
-        "FIELD_ENCRYPTION_KEY": "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=",
+        "FIELD_ENCRYPTION_KEY": Fernet.generate_key().decode(),
     }
     script = f"""
 from app.services import duckdb_service as service
@@ -463,7 +464,7 @@ def test_cartridge_s3_role_only_uses_imdsv2_and_never_creates_bucket(cartridge):
     }
     env.update(
         {
-            "PYTHONPATH": str(ROOT / "cartridges" / cartridge),
+            "PYTHONPATH": os.pathsep.join((str(ROOT / "cartridges" / cartridge), str(ROOT))),
             "LAKEHOUSE_PROVIDER": "s3",
             "LAKEHOUSE_ENDPOINT": "s3.us-east-1.amazonaws.com",
             "LAKEHOUSE_BUCKET": "omega-role-bucket",
@@ -472,7 +473,7 @@ def test_cartridge_s3_role_only_uses_imdsv2_and_never_creates_bucket(cartridge):
             "DATABASE_URL": "postgresql://example.invalid/omega",
             "PG_USER": "test-user",
             "PG_PASSWORD": "test-password",
-            "FIELD_ENCRYPTION_KEY": "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=",
+            "FIELD_ENCRYPTION_KEY": Fernet.generate_key().decode(),
         }
     )
     script = """
@@ -526,7 +527,7 @@ minio_client.ensure_bucket_exists(settings.minio_bucket)
 def test_cartridge_s3_static_session_uses_only_native_aws_pair(cartridge):
     env = {
         **os.environ,
-        "PYTHONPATH": str(ROOT / "cartridges" / cartridge),
+        "PYTHONPATH": os.pathsep.join((str(ROOT / "cartridges" / cartridge), str(ROOT))),
         "LAKEHOUSE_PROVIDER": "s3",
         "LAKEHOUSE_ENDPOINT": "s3.us-east-1.amazonaws.com",
         "S3_BUCKET_NAME": "omega-static-bucket",
@@ -541,7 +542,7 @@ def test_cartridge_s3_static_session_uses_only_native_aws_pair(cartridge):
         "DATABASE_URL": "postgresql://example.invalid/omega",
         "PG_USER": "test-user",
         "PG_PASSWORD": "test-password",
-        "FIELD_ENCRYPTION_KEY": "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=",
+        "FIELD_ENCRYPTION_KEY": Fernet.generate_key().decode(),
     }
     script = """
 from app.core import minio_client
@@ -600,7 +601,7 @@ def test_cartridge_duckdb_s3_role_loads_preinstalled_aws_extension(cartridge):
     }
     env.update(
         {
-            "PYTHONPATH": str(ROOT / "cartridges" / cartridge),
+            "PYTHONPATH": os.pathsep.join((str(ROOT / "cartridges" / cartridge), str(ROOT))),
             "LAKEHOUSE_PROVIDER": "s3",
             "LAKEHOUSE_ENDPOINT": "s3.us-east-1.amazonaws.com",
             "S3_BUCKET_NAME": "omega-role-bucket",
@@ -608,7 +609,7 @@ def test_cartridge_duckdb_s3_role_loads_preinstalled_aws_extension(cartridge):
             "DATABASE_URL": "postgresql://example.invalid/omega",
             "PG_USER": "test-user",
             "PG_PASSWORD": "test-password",
-            "FIELD_ENCRYPTION_KEY": "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=",
+            "FIELD_ENCRYPTION_KEY": Fernet.generate_key().decode(),
         }
     )
     script = f"""

@@ -5,8 +5,9 @@ import json
 import os
 
 import pytest
+from cryptography.fernet import Fernet
 
-os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=")
+os.environ.setdefault("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
 os.environ.setdefault("INTERNAL_API_KEY", "test-secret-key-not-default")
 os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
 

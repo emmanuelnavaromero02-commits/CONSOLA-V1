@@ -24,6 +24,7 @@ from app.services import session as _session, consumer_assistant as _ca
 from app.services.csrf import clear_csrf_cookie, require_csrf
 from app.services.permissions import require_permission
 from app.services.rate_limiter import get_rate_limiter
+from app.services import client_ip as _client_ip_policy
 from app.services.security_context import sign_security_context
 from app.security import get_internal_api_key
 from app.logging_config import setup_logging  # noqa: E402
@@ -89,8 +90,11 @@ def _rate_limit_disabled() -> bool:
     return os.environ.get("RATE_LIMIT_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"} or _app_env() == "test"
 
 
+_TRUSTED_PROXY_IPS = _client_ip_policy.trusted_proxy_ips()
+
+
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    return _client_ip_policy.client_ip(request, trusted_proxies=_TRUSTED_PROXY_IPS)
 
 
 async def _rate_limit_workspace_surface(request: Request, path: str, user: dict | None) -> None:

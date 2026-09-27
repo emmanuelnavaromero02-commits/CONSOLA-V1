@@ -22,7 +22,7 @@
           },
           {
             "path": "cartridges/sap_b1/tests/conftest.py",
-            "declarations_sha256": "194d59019d618d10e720755ef004b9139b6ba518face857a463382901efd72f1"
+            "declarations_sha256": "31fd28d5052271517cff3e754e8c82ee07287fcdbe86a0659ad65df8ff04c502"
           },
           {
             "path": "cartridges/sap_b1/tests/test_connect_kit.py",
@@ -42,7 +42,7 @@
           },
           {
             "path": "cartridges/sap_successfactors/tests/test_saml_bearer_auth.py",
-            "declarations_sha256": "50bee5c1d1034a95a8f8cab5c49527882f14b2c16cec3036a7ba138d1c8c83ba"
+            "declarations_sha256": "96d41ae5b57328bd3e4f1bc89ed893aac1fadedb762ba7b01ee9456017aabe18"
           },
           {
             "path": "cartridges/sap_successfactors/tests/test_tenant_alias_rls_isolation.py",
@@ -221,7 +221,7 @@
             "declarations_sha256": "725d4ab1beebb4f533ac6dd3ea0bc8829581eae0bf830fab31b4675168173369"
           }
         ],
-        "inventory_sha256": "dd188c18e04a2aa3bf51a8b3428b0523363a726d119f63e68b370ecd40fadf94"
+        "inventory_sha256": "b2e3ba36a940b2b96d1010f3f30eef31aa7eb10a25fb74c142d0eceb102e25ea"
       }
     },
     {
