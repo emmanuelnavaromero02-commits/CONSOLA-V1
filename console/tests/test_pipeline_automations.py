@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from typing import Any, get_args, get_origin
 from unittest.mock import AsyncMock, patch
 
@@ -42,8 +43,13 @@ _WRITES = re.compile(r"\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DRO
 
 
 class CatalogConn:
-    def __init__(self, rows: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        rows: list[dict[str, Any]],
+        runs: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.rows = rows
+        self.runs = runs or []
         self.statements: list[tuple[str, tuple[Any, ...]]] = []
 
     async def execute(self, query: str, *args: Any) -> str:
@@ -56,11 +62,25 @@ class CatalogConn:
         statement = " ".join(query.split())
         assert not _WRITES.search(statement)
         self.statements.append((statement, args))
+        if "FROM pipeline_runs" in statement:
+            assert args[:2] == (TENANT_ID, WORKSPACE_ID)
+            dags = set(args[2])
+            runs = [run for run in self.runs if run["dag_id"] in dags]
+            if "count(*)" in statement:
+                counts: dict[str, int] = {}
+                for run in runs:
+                    if run["status"].lower() in args[3]:
+                        counts[run["dag_id"]] = counts.get(run["dag_id"], 0) + 1
+                return [{"dag_id": dag, "active_runs": count} for dag, count in counts.items()]
+            latest: dict[str, dict[str, Any]] = {}
+            for run in sorted(runs, key=lambda run: run["started_at"], reverse=True):
+                latest.setdefault(run["dag_id"], run)
+            return list(latest.values())
         cartridges = args[0]
         return [row for row in self.rows if cartridges is None or row["cartridge_id"] in cartridges]
 
 
-def _airflow(dags: dict[str, dict[str, Any]], runs: dict[str, Any] | None = None, fail: bool = False):
+def _airflow(dags: dict[str, dict[str, Any]], fail: bool = False):
     calls: list[tuple[str, dict[str, Any]]] = []
 
     async def invoke(tool: str, args: dict[str, Any], _user: Any) -> Any:
@@ -69,11 +89,6 @@ def _airflow(dags: dict[str, dict[str, Any]], runs: dict[str, Any] | None = None
             if fail:
                 raise RuntimeError("airflow down")
             return {"dags": [{"dag_id": dag_id, **values} for dag_id, values in dags.items()]}
-        if tool == "airflow_list_dag_runs":
-            value = (runs or {}).get(args["dag_id"], {"runs": []})
-            if isinstance(value, Exception):
-                raise value
-            return value
         raise AssertionError(f"unexpected tool {tool}")
 
     return invoke, calls
@@ -113,23 +128,24 @@ def test_schedule_payload_shapes():
 async def test_states_and_notes_come_from_airflow_and_the_registered_trigger():
     invoke, calls = _airflow(
         {
-            "entity_scheduler": {"is_paused": False, "is_active": True, "schedule_interval": "*/5 * * * *"},
-            "sap_b1_refresh": {"is_paused": True, "is_active": True},
-            "sap_sf_extract": {"is_paused": True, "is_active": True},
-            "sap_sf_rebuild": {"is_paused": True, "is_active": False},
-        },
-        runs={
             "entity_scheduler": {
-                "runs": [
-                    {"state": "running", "start_date": "2026-09-26T10:00:00Z", "end_date": None},
-                    {"state": "success", "start_date": "2026-09-26T09:55:00Z", "end_date": "2026-09-26T09:56:00Z"},
-                ]
+                "is_paused": False,
+                "is_active": True,
+                "schedule_kind": "scheduled",
+                "schedule_interval": {"__type": "CronExpression", "value": "*/5 * * * *"},
             },
-            "sap_b1_refresh": RuntimeError("timeout"),
-            "sap_sf_extract": {"runs": [{"state": "queued", "start_date": None, "end_date": None}] * 10},
-        },
+            "sap_b1_refresh": {"is_paused": True, "is_active": True, "schedule_kind": "scheduled"},
+            "sap_sf_extract": {"is_paused": True, "is_active": True, "schedule_kind": "manual"},
+            "sap_sf_rebuild": {"is_paused": True, "is_active": False},
+        }
     )
-    conn = CatalogConn(ROWS)
+    started = datetime(2026, 9, 26, 10, tzinfo=UTC)
+    runs = [
+        {"dag_id": "sap_sf_extract", "status": "queued", "started_at": started, "finished_at": None},
+        {"dag_id": "sap_sf_extract", "status": "RUNNING", "started_at": started - timedelta(minutes=5), "finished_at": None},
+        {"dag_id": "sap_sf_extract", "status": "success", "started_at": started - timedelta(days=1), "finished_at": started - timedelta(days=1)},
+    ]
+    conn = CatalogConn(ROWS, runs)
     response = await _list(ADMIN, conn, invoke)
     by_id = {automation.dag_id: automation for automation in response.automations}
 
@@ -137,27 +153,31 @@ async def test_states_and_notes_come_from_airflow_and_the_registered_trigger():
     scheduler = by_id["entity_scheduler"]
     assert (scheduler.state, scheduler.kind, scheduler.cartridge_id) == ("active", "scheduled", None)
     assert scheduler.schedule_description == "Cada 5 minutos"
-    assert scheduler.active_runs == 1 and scheduler.last_run.status == "running"
+    assert scheduler.runs_known is False
+    assert scheduler.active_runs is None and scheduler.last_run is None
     refresh = by_id["sap_b1_refresh"]
     assert refresh.state == "paused_by_operator"
     assert refresh.state_note_es == (
         "En pausa por un operador de plataforma; no se ejecutará en su horario"
     )
-    assert refresh.active_runs is None and refresh.last_run is None
-    assert refresh.schedule_description is None
+    assert refresh.runs_known is True
+    assert refresh.active_runs == 0 and refresh.last_run is None
     extract = by_id["sap_sf_extract"]
     assert extract.state == "paused_manual"
     assert extract.state_note_es == "Se activa automáticamente al pulsar Extraer"
-    assert extract.active_runs == 10 and extract.active_runs_capped is True
+    assert extract.active_runs == 2
+    assert extract.last_run.status == "queued"
+    assert extract.last_run.started_at == started
     rebuild = by_id["sap_sf_rebuild"]
     assert rebuild.state == "unavailable" and rebuild.label == "sap_sf_rebuild"
     orphan = by_id["sap_b1_orphan"]
     assert orphan.state == "unavailable"
     assert orphan.state_note_es.startswith("No aparece en Airflow")
-    assert {tool for tool, _args in calls} == {"airflow_list_dags", "airflow_list_dag_runs"}
-    assert all(args.get("limit") in (None, 10) for _tool, args in calls)
+    assert [tool for tool, _args in calls] == ["airflow_list_dags"]
     statements = [statement for statement, _args in conn.statements]
     assert statements[1] == automations.READ_ONLY_TRANSACTION_SQL
+    run_args = [args for statement, args in conn.statements if "FROM pipeline_runs" in statement]
+    assert run_args and all("entity_scheduler" not in args[2] for args in run_args)
 
 
 @pytest.mark.asyncio
@@ -195,7 +215,8 @@ async def test_unreachable_airflow_is_reported_without_guessing_runs():
     response = await _list(ADMIN, CatalogConn(ROWS), invoke)
     assert response.airflow_available is False
     assert {automation.state for automation in response.automations} == {"unavailable"}
-    assert all(automation.active_runs is None for automation in response.automations)
+    platform = [a for a in response.automations if a.cartridge_id is None]
+    assert platform and all(a.active_runs is None and not a.runs_known for a in platform)
     assert [tool for tool, _args in calls] == ["airflow_list_dags"]
 
 
@@ -226,7 +247,7 @@ def _client(user: dict | None) -> httpx.AsyncClient:
 async def test_route_is_read_only_and_requires_pipelines_read():
     listing = AsyncMock(
         return_value=AutomationsResponse(
-            checked_at=automations.datetime.now(automations.UTC),
+            checked_at=datetime.now(UTC),
             airflow_available=True,
             automations=[],
         )

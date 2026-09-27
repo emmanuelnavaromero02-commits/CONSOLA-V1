@@ -30,8 +30,8 @@ class Automation(_StrictModel):
     state: AutomationState
     state_note_es: str = Field(min_length=1, max_length=240)
     active_runs: int | None = Field(default=None, ge=0)
-    active_runs_capped: bool = False
     last_run: AutomationRun | None = None
+    runs_known: bool
 
 
 class AutomationsResponse(_StrictModel):

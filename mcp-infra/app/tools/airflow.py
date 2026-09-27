@@ -143,6 +143,7 @@ async def airflow_list_dags() -> dict:
                 "description": d.get("description", ""),
                 "schedule_kind": _schedule_kind(d),
                 "timetable_description": d.get("timetable_description"),
+                "schedule_interval": d.get("schedule_interval"),
             }
             for d in dags
         ]

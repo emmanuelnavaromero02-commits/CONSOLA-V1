@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,16 +19,14 @@ from app.services.control_room.business_cartridge_scope import (
     allowed_business_cartridges,
 )
 from app.services.db_scope import run_with_db_scope
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 from app.services.permissions import user_role
 
 
 PLATFORM_CARTRIDGE = "platform"
-PLATFORM_ADMIN_ROLES = frozenset({"owner", "super_admin", "admin"})
 READ_ONLY_TRANSACTION_SQL = "SET TRANSACTION READ ONLY"
-RUNS_PER_DAG = 10
 AIRFLOW_LIST_TIMEOUT_SECONDS = 8.0
-AIRFLOW_RUNS_TIMEOUT_SECONDS = 5.0
-AIRFLOW_CONCURRENCY = 4
+RUN_STATUS = re.compile(r"^[a-z_]{1,40}$")
 ACTIVE_RUN_STATES = frozenset({"queued", "running"})
 EXTRACT_DAG = re.compile(r"^[a-z][a-z0-9_]*_extract(_all)?$")
 CARTRIDGE_ID = re.compile(r"^[a-z0-9_]{1,120}$")
@@ -38,6 +37,23 @@ SELECT cartridge_id, dag_id, description, trigger
  WHERE ($1::text[] IS NULL OR cartridge_id = ANY($1::text[]))
  ORDER BY cartridge_id, dag_id
  LIMIT $2
+"""
+ACTIVE_RUNS_SQL = """
+SELECT dag_id, count(*) AS active_runs
+  FROM pipeline_runs
+ WHERE tenant_id = $1::uuid
+   AND workspace_id = $2::uuid
+   AND dag_id = ANY($3::text[])
+   AND lower(status) = ANY($4::text[])
+ GROUP BY dag_id
+"""
+LAST_RUNS_SQL = """
+SELECT DISTINCT ON (dag_id) dag_id, status, started_at, finished_at
+  FROM pipeline_runs
+ WHERE tenant_id = $1::uuid
+   AND workspace_id = $2::uuid
+   AND dag_id = ANY($3::text[])
+ ORDER BY dag_id, started_at DESC NULLS LAST
 """
 NOTES = {
     "unreachable": "No se pudo consultar Airflow en este momento; estado desconocido.",
@@ -139,16 +155,6 @@ def describe_schedule(value: object) -> str | None:
     return None
 
 
-def _datetime(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
 def _label(row: Mapping[str, Any], dag: Mapping[str, Any] | None) -> str:
     for candidate in (row.get("description"), (dag or {}).get("description")):
         text = " ".join(str(candidate or "").split())
@@ -182,24 +188,28 @@ def _state(
     return "active", NOTES["active_scheduled" if kind == "scheduled" else "active_manual"]
 
 
-def _runs_summary(
-    payload: Mapping[str, Any] | None,
-) -> tuple[int | None, bool, AutomationRun | None]:
-    if not isinstance(payload, Mapping) or payload.get("error"):
-        return None, False, None
-    runs = [run for run in payload.get("runs") or [] if isinstance(run, Mapping)]
-    active = sum(1 for run in runs if str(run.get("state") or "") in ACTIVE_RUN_STATES)
-    last = None
-    if runs:
-        first = runs[0]
-        status = str(first.get("state") or "").strip().lower()
-        if re.fullmatch(r"[a-z_]{1,40}", status):
-            last = AutomationRun(
-                status=status,
-                started_at=_datetime(first.get("start_date")),
-                finished_at=_datetime(first.get("end_date")),
-            )
-    return active, active >= RUNS_PER_DAG, last
+@dataclass(frozen=True)
+class RegisteredDags:
+    rows: list[dict[str, Any]]
+    active: dict[str, int]
+    last: dict[str, AutomationRun]
+
+
+def _run(row: Mapping[str, Any]) -> AutomationRun | None:
+    status = str(row.get("status") or "").strip().lower()
+    if not RUN_STATUS.fullmatch(status):
+        return None
+    return AutomationRun(
+        status=status,
+        started_at=_aware(row.get("started_at")),
+        finished_at=_aware(row.get("finished_at")),
+    )
+
+
+def _aware(value: object) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def is_platform_admin(user: Mapping[str, Any]) -> bool:
@@ -216,24 +226,48 @@ def _visible_cartridges(user: Mapping[str, Any]) -> list[str] | None:
     return sorted(visible)
 
 
-async def _registered_dags(user: Mapping[str, Any]) -> list[dict[str, Any]]:
+async def _registered_dags(user: Mapping[str, Any]) -> RegisteredDags:
     cartridges = _visible_cartridges(user)
     if cartridges is not None and not cartridges:
-        return []
+        return RegisteredDags([], {}, {})
     pool = await auth.pool()
-
-    async def _read(conn: Any, _tenant: str | None, _workspace: str) -> list[Any]:
-        await conn.execute(READ_ONLY_TRANSACTION_SQL)
-        return list(await conn.fetch(REGISTERED_DAGS_SQL, cartridges, MAX_AUTOMATIONS))
-
-    rows = [dict(row) for row in await run_with_db_scope(pool, dict(user), _read)]
     platform = is_platform_admin(user)
-    return [
-        row
-        for row in rows
-        if DAG_ID.fullmatch(str(row.get("dag_id") or ""))
-        and (platform or str(row.get("cartridge_id") or "") != PLATFORM_CARTRIDGE)
-    ]
+
+    async def _read(conn: Any, tenant: str | None, workspace: str) -> RegisteredDags:
+        await conn.execute(READ_ONLY_TRANSACTION_SQL)
+        rows = [
+            dict(row)
+            for row in await conn.fetch(REGISTERED_DAGS_SQL, cartridges, MAX_AUTOMATIONS)
+            if DAG_ID.fullmatch(str(row.get("dag_id") or ""))
+            and (platform or str(row.get("cartridge_id") or "") != PLATFORM_CARTRIDGE)
+        ]
+        workspace_dags = sorted(
+            {
+                str(row["dag_id"])
+                for row in rows
+                if str(row.get("cartridge_id") or "") != PLATFORM_CARTRIDGE
+            }
+        )
+        if not workspace_dags or not tenant:
+            return RegisteredDags(rows, {}, {})
+        active = {
+            str(row["dag_id"]): int(row["active_runs"])
+            for row in await conn.fetch(
+                ACTIVE_RUNS_SQL,
+                tenant,
+                workspace,
+                workspace_dags,
+                sorted(ACTIVE_RUN_STATES),
+            )
+        }
+        last = {
+            str(row["dag_id"]): run
+            for row in await conn.fetch(LAST_RUNS_SQL, tenant, workspace, workspace_dags)
+            if (run := _run(row)) is not None
+        }
+        return RegisteredDags(rows, active, last)
+
+    return await run_with_db_scope(pool, dict(user), _read)
 
 
 async def _default_invoke(tool: str, args: dict[str, Any], user: Mapping[str, Any]) -> Any:
@@ -263,29 +297,6 @@ async def _airflow_dags(
     }
 
 
-async def _runs(
-    dag_ids: Sequence[str], user: Mapping[str, Any], invoke: Invoker
-) -> dict[str, Mapping[str, Any] | None]:
-    gate = asyncio.Semaphore(AIRFLOW_CONCURRENCY)
-
-    async def _one(dag_id: str) -> tuple[str, Mapping[str, Any] | None]:
-        async with gate:
-            try:
-                result = await asyncio.wait_for(
-                    invoke(
-                        "airflow_list_dag_runs",
-                        {"dag_id": dag_id, "limit": RUNS_PER_DAG},
-                        user,
-                    ),
-                    timeout=AIRFLOW_RUNS_TIMEOUT_SECONDS,
-                )
-            except Exception:
-                return dag_id, None
-        return dag_id, result if isinstance(result, Mapping) else None
-
-    return dict(await asyncio.gather(*(_one(dag_id) for dag_id in dag_ids)))
-
-
 async def list_automations(
     user: Mapping[str, Any], *, invoke: Invoker | None = None
 ) -> AutomationsResponse:
@@ -293,28 +304,21 @@ async def list_automations(
     registered = await _registered_dags(user)
     airflow = await _airflow_dags(user, call)
     available = airflow is not None
-    present = [
-        str(row["dag_id"])
-        for row in registered
-        if available and str(row["dag_id"]) in (airflow or {})
-    ]
-    runs = await _runs(present, user, call) if present else {}
     automations: list[Automation] = []
-    for row in registered:
+    for row in registered.rows:
         dag_id = str(row["dag_id"])
         dag = (airflow or {}).get(dag_id)
         kind = _kind(row, dag)
         state, note = _state(dag_id, kind, dag, airflow_available=available)
-        active, capped, last = _runs_summary(runs.get(dag_id))
         cartridge = str(row.get("cartridge_id") or "").strip()
+        workspace_dag = cartridge != PLATFORM_CARTRIDGE
         automations.append(
             Automation(
                 dag_id=dag_id,
                 label=_label(row, dag),
                 cartridge_id=(
                     cartridge
-                    if CARTRIDGE_ID.fullmatch(cartridge)
-                    and cartridge != PLATFORM_CARTRIDGE
+                    if CARTRIDGE_ID.fullmatch(cartridge) and workspace_dag
                     else None
                 ),
                 kind=kind,
@@ -325,9 +329,9 @@ async def list_automations(
                 ),
                 state=state,
                 state_note_es=note,
-                active_runs=active,
-                active_runs_capped=capped,
-                last_run=last,
+                active_runs=registered.active.get(dag_id, 0) if workspace_dag else None,
+                last_run=registered.last.get(dag_id) if workspace_dag else None,
+                runs_known=workspace_dag,
             )
         )
     return AutomationsResponse(
@@ -339,6 +343,8 @@ async def list_automations(
 
 
 __all__ = (
+    "ACTIVE_RUNS_SQL",
+    "LAST_RUNS_SQL",
     "NOTES",
     "REGISTERED_DAGS_SQL",
     "describe_cron",
