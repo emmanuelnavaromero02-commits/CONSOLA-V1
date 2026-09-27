@@ -2115,7 +2115,7 @@
     },
     {
       "path": "console/tests/test_control_room_adapter_contract.py",
-      "sha256": "fb2657093a16136fa63ad92c4c1cc5e23662b5250d1b39118c2356e247098c2e"
+      "sha256": "a7c1af346b1eca827be2d030f94de71d41b436c4e21c270e9e353a2cd6580c3e"
     },
     {
       "path": "console/tests/test_control_room_adversarial_generation.py",
@@ -2771,7 +2771,7 @@
     },
     {
       "path": "console/tests/test_control_room_service.py",
-      "sha256": "848efaaec8dd91ab40feca0aeb8003629521b9c4799dc63d24b61cba202a3b90"
+      "sha256": "5630978b3d29341a49243b5946ee54d60d680f42f1ff4192da29fdd72420b215"
     },
     {
       "path": "console/tests/test_control_room_sql_business_instruction_boundaries.py",
@@ -2971,7 +2971,7 @@
     },
     {
       "path": "console/tests/test_egress_guard_http_framing.py",
-      "sha256": "689f1274fdb1373ff3ff5e629d6a6ba170b67991de08889dc30198c16bf2c1dd"
+      "sha256": "4bedc4053f41568ef10ea8bd5fe0c5ca7a71d65f28068c2a7caa3025744e7e18"
     },
     {
       "path": "console/tests/test_email_service.py",
