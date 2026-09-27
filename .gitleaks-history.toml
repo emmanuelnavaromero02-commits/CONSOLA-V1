@@ -23,6 +23,13 @@ paths = [
     # These are checksums of files that are in the repository anyway: knowing
     # one grants nothing. 24 of the 25 findings in history were these.
     '''^infra/migrations/manifests/''',
+    # Historical fixtures triaged as fakes, 2026-09-26. Until then the tree
+    # config exempted every tests/ directory and every *.test.tsx file, so
+    # past commits carry credential-shaped test values (dummy keys, sample
+    # tokens, generated PEM blocks) that never authenticated anywhere. The
+    # tree scan no longer exempts these paths; new fixtures are scanned.
+    '''(^|/)tests?/''',
+    '''\.test\.tsx$''',
 ]
 
 commits = [

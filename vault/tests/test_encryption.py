@@ -6,14 +6,15 @@ import sys
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-GOOD_KEY = "8sXi-0kBYU5DJ5dY7CCRkW7XHJsXxLPmO6r9OYx-3a4="
-OTHER_KEY = "kV8KuJBgo3-NSr-8Ev9JddXJ6r8MaYRyLb8L6kP5gtA="
+GOOD_KEY = Fernet.generate_key().decode()
+OTHER_KEY = Fernet.generate_key().decode()
 
 
 def _load_crypto(monkeypatch):

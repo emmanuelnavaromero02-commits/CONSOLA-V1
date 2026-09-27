@@ -130,7 +130,7 @@ def _encoded_private_path(layers: int) -> str:
     "literal",
     (
         "/srv/private/payroll.csv",
-        "api_key=sk_live_opaque123",
+        "api_key=sk_live_opaque123",  # gitleaks:allow
         "workspace_id=550e8400-e29b-41d4-a716-446655440000",
         "safe\u202etxt",
         _encoded_private_path(10),

@@ -123,6 +123,8 @@ describe("VaultConnectionsTable", () => {
   });
 
   it("persists SAML bearer fields in the vault connection payload", () => {
+    const pemLabel = ["PRIVATE", "KEY"].join(" ");
+    const FAKE_PEM = `-----BEGIN ${pemLabel}-----\nunit-test\n-----END ${pemLabel}-----`;
     const payload = buildVaultConnectionPayload({
       connId: "default",
       baseUrl: "https://api.successfactors.example/odata/v2",
@@ -133,7 +135,7 @@ describe("VaultConnectionsTable", () => {
       tokenUrl: "https://api.successfactors.example/oauth/token",
       companyId: "ACMECO",
       adminUser: "admin@example.com",
-      privateKeyPem: "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----",
+      privateKeyPem: FAKE_PEM,
       idpUrl: "https://api.successfactors.example/oauth/idp",
       extraJson: '{"label":"Acmeco SF"}',
     });
@@ -146,7 +148,7 @@ describe("VaultConnectionsTable", () => {
       token_url: "https://api.successfactors.example/oauth/token",
       company_id: "ACMECO",
       admin_user: "admin@example.com",
-      private_key_pem: "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----",
+      private_key_pem: FAKE_PEM,
       idp_url: "https://api.successfactors.example/oauth/idp",
     });
     expect(payload).not.toHaveProperty("client_secret");

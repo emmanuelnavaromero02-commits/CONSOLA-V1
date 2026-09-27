@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -14,7 +15,7 @@ from fastapi import HTTPException
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _IMPORT_DEFAULTS = {
-    "INTERNAL_API_KEY": "x7Qp9zR2mK4vL8wN6tJ3sH1bD5fG0aYcE7uV2iO9kP4qZ",
+    "INTERNAL_API_KEY": secrets.token_urlsafe(32),
     "SECURITY_CONTEXT_SIGNING_KEY": (
         "dataset_authorization_signing_key_64_chars_aaaaaaaaaaa"
     ),

@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 import requests
+from cryptography.fernet import Fernet
 
-os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=")
+os.environ.setdefault("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 from app.core.sap_client import ODataRequestError, SAPClientError, SapSfClient
 from app.services import extraction_service

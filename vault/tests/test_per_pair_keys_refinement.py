@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import secrets
 import sys
 import types
 from pathlib import Path
@@ -11,7 +12,7 @@ from fastapi import HTTPException
 
 
 LEGACY         = "legacy_internal_key_with_more_than_thirty_two_characters_aaaa"
-REFINEMENT_KEY = "refinement_to_vault_dedicated_key_64_chars_qqqqqqqqqqqqqqqqqq"
+REFINEMENT_KEY = secrets.token_hex(32)
 CONSOLE_KEY    = "console_to_vault_dedicated_key_64_chars_xxxxxxxxxxxxxxxxxxxxxxx"
 
 

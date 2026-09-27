@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import secrets
 import sys
 from pathlib import Path
 
@@ -51,7 +52,7 @@ def mcp_main(monkeypatch):
         "APP_ENV": "test",
         "INTERNAL_API_KEY": "transport-key-that-is-long-enough-123456",
         "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA": "airflow-pair-key-123456",
-        "SECURITY_CONTEXT_SIGNING_KEY": "signing-key-distinct-and-long-enough-123456",
+        "SECURITY_CONTEXT_SIGNING_KEY": secrets.token_urlsafe(32),
         "PG_PASSWORD": "postgres-password",
         "AIRFLOW_USER": "airflow",
         "AIRFLOW_PASSWORD": "airflow-password",

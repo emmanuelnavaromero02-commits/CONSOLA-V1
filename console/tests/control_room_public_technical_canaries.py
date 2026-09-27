@@ -240,7 +240,7 @@ TECHNICAL_PUBLIC_CANARIES = (
     "AKIAIOSFODNN7EXAMPLE",
     "ghp_" + "a" * 36,
     "AIza" + "A" * 35,
-    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",  # gitleaks:allow
     "sk-proj-" + "A" * 40,
     "sk_live_" + "A" * 32,
     "glpat-" + "A" * 20,

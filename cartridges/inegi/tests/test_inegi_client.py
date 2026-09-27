@@ -222,7 +222,7 @@ def test_test_connection_returns_safe_error_message(monkeypatch):
 def test_test_connection_scrubs_secret_like_error(monkeypatch):
     from app.api import routes_skills
 
-    secret = "abcdefghijklmnopqrstuvwxyz123456"
+    secret = "abcdefghijklmnopqrstuvwxyz123456"  # gitleaks:allow
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("INEGI_API_TOKEN", "dev-env-token")
 

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +31,7 @@ def _purge_app_modules() -> None:
 
 @pytest.fixture
 def fresh_settings(monkeypatch):
-    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", "OENi0J3O2llg-_pAlcZNzewjjm-LpaaCWUYatHmCQpQ=")
+    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("MINIO_ACCESS_KEY", "test-minio-access")
     monkeypatch.setenv("MINIO_SECRET_KEY", "test-minio-secret")
     saved_path = list(sys.path)

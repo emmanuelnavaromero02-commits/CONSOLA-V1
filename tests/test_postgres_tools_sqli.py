@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cryptography.fernet import Fernet
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -483,9 +484,7 @@ def _load_sap_mcp_module(cartridge_id: str):
 
 @pytest.mark.parametrize("cartridge_id", SAP_CARTRIDGES)
 def test_sap_local_validator_rejects_sqli(cartridge_id, monkeypatch):
-    monkeypatch.setenv(
-        "FIELD_ENCRYPTION_KEY", "_lAbgL_v0c1jp9R_jHkR1lHl4o4-XfcExlIRY60n_5o="
-    )
+    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
     mod = _load_sap_mcp_module(cartridge_id)
     with pytest.raises(ValueError, match="Invalid entity"):
         mod._validate_identifier("X') UNION SELECT 1; --", "entity")
@@ -493,9 +492,7 @@ def test_sap_local_validator_rejects_sqli(cartridge_id, monkeypatch):
 
 @pytest.mark.parametrize("cartridge_id", SAP_CARTRIDGES)
 def test_sap_local_validator_accepts_valid(cartridge_id, monkeypatch):
-    monkeypatch.setenv(
-        "FIELD_ENCRYPTION_KEY", "_lAbgL_v0c1jp9R_jHkR1lHl4o4-XfcExlIRY60n_5o="
-    )
+    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
     mod = _load_sap_mcp_module(cartridge_id)
     assert mod._validate_identifier("TimeEntry", "entity") == "TimeEntry"
     assert mod._validate_bounded_int(50, "limit", lo=1, hi=200) == 50

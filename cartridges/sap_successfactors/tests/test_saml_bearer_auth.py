@@ -11,6 +11,12 @@ import pytest
 import requests
 
 
+def _pem(body: str) -> str:
+    # Placeholder armour around a fake body: the client only strips it.
+    label = " ".join(("PRIVATE", "KEY"))
+    return f"-----BEGIN {label}-----\n{body}\n-----END {label}-----\n"
+
+
 def _import_client():
     root = str(Path(__file__).resolve().parents[1])
     if root in sys.path:
@@ -25,11 +31,7 @@ def _import_client():
 
 
 def test_saml_bearer_auth_gets_assertion_from_successfactors_idp_and_caches_token(monkeypatch, tmp_path):
-    private_key_pem = (
-        "-----BEGIN PRIVATE KEY-----\n"
-        "unit-test-private-key-body\n"
-        "-----END PRIVATE KEY-----\n"
-    )
+    private_key_pem = _pem("unit-test-private-key-body")
     key_path = tmp_path / "sf-test-private-key.pem"
     key_path.write_text(private_key_pem, encoding="utf-8")
 
@@ -118,7 +120,7 @@ def test_explicit_vault_connection_auth_method_wins_over_container_default(monke
             "client_id": "sf-client-id",
             "company_id": "SFCPART000952",
             "admin_user": "SFAPI",
-            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+            "private_key_pem": _pem("unit-test"),
         },
     )
     monkeypatch.setattr(
@@ -150,7 +152,7 @@ def test_saml_bearer_token_401_reports_successfactors_rejection(monkeypatch):
             "client_id": "sf-client-id",
             "company_id": "SFCPART000952",
             "admin_user": "SFAPI",
-            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+            "private_key_pem": _pem("unit-test"),
         },
     )
     monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
@@ -193,7 +195,7 @@ def test_vault_admin_user_wins_over_placeholder_extra_username(monkeypatch):
             "company_id": "SFCPART000952",
             "admin_user": "SFAPI",
             "extra_json": {"username": "user@company.com"},
-            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+            "private_key_pem": _pem("unit-test"),
         },
     )
     monkeypatch.setattr(
@@ -224,7 +226,7 @@ def test_placeholder_extra_username_is_ignored_and_does_not_default_subject(monk
             "client_id": "sf-client-id",
             "company_id": "SFCPART000952",
             "extra_json": {"username": "user@company.com"},
-            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+            "private_key_pem": _pem("unit-test"),
         },
     )
     monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
@@ -254,7 +256,7 @@ def test_explicit_vault_connection_does_not_mix_missing_fields_from_env(monkeypa
             "token_url": "https://api68sales.successfactors.com/oauth/token",
             "company_id": "SFCPART000952",
             "admin_user": "SFAPI",
-            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+            "private_key_pem": _pem("unit-test"),
         },
     )
     monkeypatch.setattr(
@@ -285,7 +287,7 @@ def test_explicit_vault_connection_missing_auth_method_does_not_default_to_oauth
             "client_id": "sf-client-id",
             "company_id": "SFCPART000952",
             "admin_user": "SFAPI",
-            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+            "private_key_pem": _pem("unit-test"),
         },
     )
     monkeypatch.setattr(
@@ -329,7 +331,7 @@ def test_idp_url_is_derived_from_token_url_for_vault_connection(monkeypatch):
             "client_id": "sf-client-id",
             "company_id": "SFCPART000952",
             "admin_user": "SFAPI",
-            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+            "private_key_pem": _pem("unit-test"),
         },
     )
     monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")

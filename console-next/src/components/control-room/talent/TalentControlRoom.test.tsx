@@ -99,7 +99,7 @@ describe("TalentControlRoom native panels", () => {
       },
       roster: [
         {
-          employee_key: "tal_abc123456789",
+          employee_key: "tal_abc123456789",  // gitleaks:allow
           display_name: "Colaborador 6789",
           role: "Manager",
           unit: "People",

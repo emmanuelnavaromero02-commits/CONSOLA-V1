@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import runpy
+import secrets
 import subprocess
 import sys
 import time
@@ -157,7 +158,7 @@ async def test_real_legacy_parquet_is_quarantined_and_only_v3_run_is_public(
         "DATABASE_URL": role_dsn,
         "MINIO_ACCESS_KEY": "live-test",
         "MINIO_SECRET_KEY": "live-test",
-        "SECURITY_CONTEXT_SIGNING_KEY": "live-test-signing-key-at-least-32-bytes",
+        "SECURITY_CONTEXT_SIGNING_KEY": secrets.token_urlsafe(32),
         "TENANT_ID": str(tenant),
         "WORKSPACE_ID": str(workspace),
         "CANONICAL_SQL": str(canonical_path),
