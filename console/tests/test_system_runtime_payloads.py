@@ -39,6 +39,25 @@ def test_runtime_config_payload_uses_public_url_provider_and_bucket_defaults():
             "development_default": "http://localhost:8001",
         },
     )
+    assert calls[2] == (
+        ("AIRFLOW_PUBLIC_URL",),
+        {"development_default": "http://localhost:8082", "allow_private": True},
+    )
+    assert all("allow_private" not in kwargs for args, kwargs in calls if args[0] != "AIRFLOW_PUBLIC_URL")
+
+
+def test_public_url_keeps_the_airflow_tunnel_address_in_production(monkeypatch):
+    from app.services import service_urls
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AIRFLOW_PUBLIC_URL", "http://localhost:8082/airflow")
+    monkeypatch.setenv("SUPERSET_PUBLIC_URL", "http://localhost:8088")
+
+    assert (
+        service_urls.public_url("AIRFLOW_PUBLIC_URL", allow_private=True)
+        == "http://localhost:8082/airflow"
+    )
+    assert service_urls.public_url("SUPERSET_PUBLIC_URL") == ""
 
 
 def test_runtime_config_payload_prefers_explicit_s3_bucket():
