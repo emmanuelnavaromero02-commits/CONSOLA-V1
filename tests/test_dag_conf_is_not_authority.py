@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -188,3 +191,56 @@ def test_the_sweep_catches_the_patterns_it_forbids(tmp_path):
     assert _defines_dag(tree)
     assert not (_called_names(tree) & ADMISSION_CALLS)
     assert _signing_sites(tree) == [6]
+
+
+def _load_console_service(name: str):
+    path = ROOT / "console" / "app" / "services" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"_sweep_{name}", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _generated_dag_sources() -> list[tuple[str, str]]:
+    templates = _load_console_service("dag_templates")
+    generator = _load_console_service("dag_code_generator")
+    sources = [
+        (f"template:{item['id']}", templates.get_code(item["id"], cartridge="hubspot", entity="deals"))
+        for item in templates.get_all()
+    ]
+    for label, schema in (
+        ("odata", {"connector": {"protocol": "odata", "api": {}, "auth": {"type": "basic"}}}),
+        ("rest", {"connector": {"api": {}, "auth": {"type": "bearer_token"}}}),
+    ):
+        sources.append((f"generator:{label}", generator.generate_dag_code("synthetic", "Orders", schema)["code"]))
+    return sources
+
+
+GENERATED_DAGS = _generated_dag_sources()
+
+
+@pytest.mark.parametrize("label,source", GENERATED_DAGS, ids=[label for label, _ in GENERATED_DAGS])
+def test_generated_dags_take_scope_only_from_admitted_authority(label, source):
+    tree = ast.parse(source)
+    assert _defines_dag(tree), label
+    assert "admit_run" in _called_names(tree), f"{label} never admits its run"
+    assert _signing_sites(tree) == [], label
+    extracts = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "extract"]
+    assert extracts, label
+    for extract in extracts:
+        assert "_admitted_run" in _called_names(extract), f"{label}: extract runs without admission"
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        constant = node.args[0].value if node.args and isinstance(node.args[0], ast.Constant) else None
+        if isinstance(func, ast.Attribute) and func.attr in {"get", "pop"} and constant == "security_context":
+            pytest.fail(f"{label}:{node.lineno} reads conf security_context")
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "get"
+            and _mentions_conf(func.value)
+            and constant in {"tenant_id", "workspace_id"}
+        ):
+            pytest.fail(f"{label}:{node.lineno} reads scope from conf")

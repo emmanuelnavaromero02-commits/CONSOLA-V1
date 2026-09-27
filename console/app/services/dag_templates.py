@@ -81,25 +81,13 @@ def _get_db_url(conn_id: str, cartridge_id: str = "{cartridge}") -> str:
 _MCP_HDR = {{"x-api-key": INTERNAL_API_KEY_MCP_INFRA, "x-internal-service": "airflow"}}
 
 
-def _current_run_scope() -> tuple[dict, dict]:
-    try:
-        from airflow.operators.python import get_current_context
-        ctx = get_current_context()
-        dag_run = ctx.get("dag_run")
-        conf = getattr(dag_run, "conf", None) or {{}}
-    except Exception:
-        conf = {{}}
-    if not isinstance(conf, dict):
-        conf = {{}}
-    security_context = conf.get("security_context") if isinstance(conf.get("security_context"), dict) else {{}}
-    tenant_id = str(conf.get("tenant_id") or security_context.get("tenant_id") or "").strip()
-    workspace_id = str(conf.get("workspace_id") or security_context.get("workspace_id") or "").strip()
-    scope_args = {{}}
-    if tenant_id:
-        scope_args["tenant_id"] = tenant_id
-    if workspace_id:
-        scope_args["workspace_id"] = workspace_id
-    return security_context, scope_args
+def _admitted_run():
+    """Verified run authority for this DAG run; tenant/workspace never come from conf."""
+    from airflow.operators.python import get_current_context
+    from cartridge_run_admission import admit_run
+    dag_run = get_current_context().get("dag_run")
+    conf = getattr(dag_run, "conf", None)
+    return admit_run(conf if isinstance(conf, dict) else dict(), cartridge_id=CARTRIDGE_ID, dag_run=dag_run)
 
 
 def _watermark_get(entity: str, cartridge_id: str = "{cartridge}") -> str | None:
@@ -134,9 +122,10 @@ def _pipeline_run_save(dag_id: str, entity: str, cartridge_id: str = "{cartridge
                        **kwargs) -> None:
     import requests
     try:
-        _delegated_context, scope_args = _current_run_scope()
-        args = {{"dag_id": dag_id, "cartridge_id": cartridge_id,
-                 "entity": entity, **scope_args, **kwargs}}
+        admitted = _admitted_run()
+        args = dict(dag_id=dag_id, cartridge_id=cartridge_id, entity=entity, **kwargs)
+        args["tenant_id"] = admitted.tenant_id
+        args["workspace_id"] = admitted.workspace_id
         payload = {{
             "tool": "pipeline_run_save",
             "args": args,
@@ -399,6 +388,7 @@ def dag_func():
         """Descarga todos los registros del API y los sube a Bronze."""
         import logging, pandas as pd, requests
         log = logging.getLogger("airflow.task")
+        _admitted_run()  # a run without verified authority stops here
         ctx            = get_current_context()
         airflow_run_id = ctx.get("run_id", "")
         conf    = params or {{}}
@@ -528,6 +518,7 @@ def dag_func():
         """Extrae registros nuevos desde el último watermark y los sube a Bronze."""
         import logging, pandas as pd, requests
         log = logging.getLogger("airflow.task")
+        _admitted_run()  # a run without verified authority stops here
         ctx            = get_current_context()
         airflow_run_id = ctx.get("run_id", "")
         conf    = params or {{}}
@@ -693,6 +684,7 @@ def dag_func():
         import logging, pandas as pd
         from sqlalchemy import create_engine, text
         log = logging.getLogger("airflow.task")
+        _admitted_run()  # a run without verified authority stops here
         ctx            = get_current_context()
         airflow_run_id = ctx.get("run_id", "")
         conf    = params or {{}}
@@ -837,6 +829,7 @@ def dag_func():
         """Inicia extracción async en Replicon, hace polling, descarga CSV y sube a Bronze."""
         import logging, pandas as pd, requests as _req
         log = logging.getLogger("airflow.task")
+        _admitted_run()  # a run without verified authority stops here
         ctx            = get_current_context()
         airflow_run_id = ctx.get("run_id", "")
         conf    = params or {{}}
