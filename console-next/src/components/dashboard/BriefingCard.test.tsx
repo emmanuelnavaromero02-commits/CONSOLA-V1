@@ -20,7 +20,7 @@ vi.mock("next/link", () => ({
 
 function render(actionHref: string | null): string {
   const highlight: BriefingHighlight = {
-    id: "h-1",
+    id: "briefing-1",
     severity: "warning",
     title: "Aviso",
     body: "Detalle",
