@@ -4403,7 +4403,7 @@
     },
     {
       "path": "tests/test_catalog_copilot_live.py",
-      "sha256": "8cb41d15716fd6a8a24b4acb5b304b7589e25a40c30ef41a1838a6d25c604b70"
+      "sha256": "5bfe7e0d0b1e661383b9bcd84f1edf708ef44d80dd6906e9d73affae15f7b606"
     },
     {
       "path": "tests/test_catalog_copilot_migration.py",

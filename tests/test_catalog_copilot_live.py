@@ -758,7 +758,36 @@ def test_end_to_end_evidence_excludes_copilot_while_overlay_shows_it(
             subjects=live["subjects"],
         ),
     )
-    column = public["datasets"]["copilot_evidence"]["columns"][0]
-    assert column["description"] == "Monto inferido por Copiloto"
-    assert column["description_origin"] == "copilot"
+    # Gold evidence lists the injected scope columns first: select by name.
+    columns = {
+        column["name"]: column
+        for column in public["datasets"]["copilot_evidence"]["columns"]
+    }
+    assert set(columns) == {"tenant_id", "workspace_id", "value"}
+    # The live Copilot text plus the link clause rendered for THIS reader,
+    # who can see both ends of the live edge.
+    assert columns["value"]["description"] == (
+        "Monto inferido por Copiloto Enlaza con Empleados."
+    )
+    assert columns["value"]["description_origin"] == "copilot"
+    assert columns["tenant_id"]["description"] == ""
+    assert columns["workspace_id"]["description"] == ""
     assert [relation["origin"] for relation in public["relationships"]] == ["copilot"]
+    # A reader who cannot see the other end gets the annotation without the
+    # link clause and without the edge.
+    restricted = published_catalog(
+        [{"name": "copilot_evidence", "layer": "gold", "cartridge": "acceptance"}],
+        _scope(),
+        annotations=CatalogAnnotations(
+            columns=live["columns"],
+            relationships=live["relationships"],
+            subjects=live["subjects"],
+        ),
+    )
+    value_restricted = {
+        column["name"]: column
+        for column in restricted["datasets"]["copilot_evidence"]["columns"]
+    }["value"]
+    assert value_restricted["description"] == "Monto inferido por Copiloto"
+    assert value_restricted["description_origin"] == "copilot"
+    assert restricted["relationships"] == []
