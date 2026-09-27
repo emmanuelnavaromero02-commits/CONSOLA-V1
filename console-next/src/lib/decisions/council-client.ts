@@ -26,6 +26,7 @@ export const councilDisabledReasons = [
   "Las tareas de seguimiento están desactivadas en este espacio de trabajo.",
   "Ajustaste un umbral que originó esta sugerencia; requiere la aprobación de otra persona del equipo.",
   "La propuesta no tiene un autor vigente; ciérrala desde el Registro.",
+  "La propuesta no tiene un autor vigente; un administrador del espacio puede cerrarla desde el Registro.",
 ] as const;
 
 export const councilStates = [

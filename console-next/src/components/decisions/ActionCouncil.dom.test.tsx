@@ -54,7 +54,7 @@ const SYSTEM: CouncilProposal = {
     value: 12600,
     currency: "USD",
     basis: "rule",
-    formula: "monthly_cost_usd * 3 meses de exposicion",
+    formula: "costo mensual × 3 meses de exposición",
     label: "Regla: costo mensual × 3 meses",
   },
   evidence: [{ label: "Entidad", value: "Ana Gómez" }],
@@ -178,7 +178,8 @@ describe("ActionCouncil", () => {
     expect(system.textContent).toContain("Sugerida por el sistema");
     expect(system.textContent).toContain("Impacto estimado:");
     expect(system.textContent).toContain("Regla: costo mensual × 3 meses");
-    expect(system.textContent).toContain("Fórmula: monthly_cost_usd * 3 meses de exposicion");
+    expect(system.textContent).toContain("Fórmula: costo mensual × 3 meses de exposición");
+    expect(container.textContent).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
     expect(own.textContent).toContain("Propuesta por ti");
     expect(own.textContent).toContain("Impacto: Sin estimación");
     expect(own.textContent).toContain("Requiere la aprobación de otra persona del equipo.");
