@@ -82,6 +82,61 @@ def test_invalid_timezone_or_cron_never_fires(cron, tz):
     assert schedule_is_valid(cron, tz) is False
 
 
+def _fires_across(cron: str, tz: str, day_start: datetime) -> list[datetime]:
+    fires = []
+    for k in range(288):
+        start = day_start + timedelta(minutes=5 * k)
+        fire = fire_in_window(cron, tz, start, start + timedelta(minutes=5))
+        if fire is not None:
+            fires.append(fire)
+    return fires
+
+
+def test_spring_forward_daily_three_am_still_fires():
+    gap = datetime(2026, 3, 8, 7, 0, tzinfo=UTC)
+    assert fire_in_window("0 3 * * *", "America/New_York", *_window(gap)) == gap
+
+
+def test_spring_forward_hourly_fires_at_the_gap_instant():
+    gap = datetime(2026, 3, 8, 7, 0, tzinfo=UTC)
+    assert fire_in_window("0 * * * *", "America/New_York", *_window(gap)) == gap
+
+
+def test_spring_forward_skipped_wall_times_fire_once_at_the_gap_end():
+    day = datetime(2026, 3, 8, 0, 0, tzinfo=UTC)
+    gap = datetime(2026, 3, 8, 7, 0, tzinfo=UTC)
+    assert _fires_across("0 2 * * *", "America/New_York", day) == [gap]
+    assert _fires_across("15 2 * * *", "America/New_York", day) == [gap]
+    assert _fires_across("0 3 * * *", "America/New_York", day) == [gap]
+
+
+def test_spring_forward_santiago_midnight_half_hour_fires_once():
+    day = datetime(2026, 9, 5, 12, 0, tzinfo=UTC)
+    fires = _fires_across("30 0 * * *", "America/Santiago", day)
+    assert fires == [datetime(2026, 9, 6, 4, 0, tzinfo=UTC)]
+
+
+def test_fall_back_hourly_fires_every_utc_hour():
+    for hour in (5, 6, 7):
+        start = datetime(2026, 11, 1, hour, 0, tzinfo=UTC)
+        assert fire_in_window("0 * * * *", "America/New_York", *_window(start)) == start
+
+
+def test_fall_back_repeated_wall_hour_fires_at_both_occurrences():
+    day = datetime(2026, 11, 1, 0, 0, tzinfo=UTC)
+    assert _fires_across("30 1 * * *", "America/New_York", day) == [
+        datetime(2026, 11, 1, 5, 30, tzinfo=UTC),
+        datetime(2026, 11, 1, 6, 30, tzinfo=UTC),
+    ]
+
+
+def test_dst_days_leave_utc_schedules_untouched():
+    for day in (datetime(2026, 3, 8, tzinfo=UTC), datetime(2026, 11, 1, tzinfo=UTC)):
+        assert _fires_across("0 * * * *", "UTC", day) == [
+            day + timedelta(hours=hour) for hour in range(24)
+        ]
+
+
 def test_schedule_is_valid_accepts_real_schedules():
     assert schedule_is_valid("0 8 * * *", "America/Mexico_City") is True
     assert schedule_is_valid("*/15 * * * *", "UTC") is True

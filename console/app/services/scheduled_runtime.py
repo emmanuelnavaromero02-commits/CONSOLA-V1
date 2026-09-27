@@ -134,6 +134,60 @@ async def _active_workspace_scopes(pool: Any) -> list[dict[str, str]]:
         cursor_id = str(rows[-1]["workspace_id"])
 
 
+def _cron_fields(expression: str):
+    expanded, nth_weekday = croniter.expand(expression)
+    plain = not nth_weekday and len(expanded) == 5 and all(
+        entry == "*" or isinstance(entry, int) for field in expanded for entry in field
+    )
+    return expanded, plain
+
+
+def _wall_matches(fields, wall: datetime) -> bool:
+    minutes, hours, dom, months, dows = fields
+
+    def has(field, value) -> bool:
+        return "*" in field or value in field
+
+    if not (has(minutes, wall.minute) and has(hours, wall.hour) and has(months, wall.month)):
+        return False
+    dom_ok = has(dom, wall.day)
+    dow_ok = has(dows, wall.isoweekday() % 7)
+    if "*" in dom or "*" in dows:
+        return dom_ok and dow_ok
+    return dom_ok or dow_ok
+
+
+def _gap_backfill_matches(fields, mark: datetime, local: datetime, zone) -> bool:
+    """True when a DST gap ends at this minute and the cron matches a skipped wall time."""
+    prev_local = (mark - timedelta(minutes=1)).astimezone(zone)
+    end_wall = local.replace(tzinfo=None)
+    wall = prev_local.replace(tzinfo=None) + timedelta(minutes=1)
+    if end_wall - wall <= timedelta(0):
+        return False
+    while wall < end_wall:
+        if _wall_matches(fields, wall):
+            return True
+        wall += timedelta(minutes=1)
+    return False
+
+
+def _cron_fires_at_minute(expression: str, mark: datetime, zone) -> bool:
+    fields, plain = _cron_fields(expression)
+    local = mark.astimezone(zone)
+    if plain:
+        return _wall_matches(fields, local) or _gap_backfill_matches(fields, mark, local, zone)
+    return bool(croniter.match(expression, local))
+
+
+def cron_fires_at(expression: str, tz_name: Any, instant: datetime) -> bool:
+    """True when the cron (evaluated in tz_name) fires at this UTC minute, DST gaps backfilled."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(str(tz_name or "UTC"))
+    mark = instant.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    return _cron_fires_at_minute(expression, mark, zone)
+
+
 def _fire_in_window(
     schedule: dict[str, Any],
     start: datetime,
@@ -153,14 +207,16 @@ def _fire_in_window(
     except Exception as exc:
         raise ValueError("schedule timezone is invalid") from exc
     try:
-        iterator = croniter(expression, start.astimezone(zone) - timedelta(seconds=1))
-        fire = iterator.get_next(datetime)
-        if fire.tzinfo is None:
-            fire = fire.replace(tzinfo=zone)
-        fire_utc = fire.astimezone(timezone.utc)
+        mark = start.astimezone(timezone.utc).replace(second=0, microsecond=0)
+        if mark < start:
+            mark += timedelta(minutes=1)
+        while mark < end:
+            if _cron_fires_at_minute(expression, mark, zone):
+                return mark
+            mark += timedelta(minutes=1)
     except Exception as exc:
         raise ValueError("schedule cron is invalid") from exc
-    return fire_utc if start <= fire_utc < end else None
+    return None
 
 
 def _due_row(

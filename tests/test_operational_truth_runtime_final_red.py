@@ -154,6 +154,42 @@ def test_invalid_schedule_is_an_explicit_operational_error(schedule) -> None:
         _fire_in_window(schedule, start, start + timedelta(minutes=5))
 
 
+def test_agent_schedule_spring_forward_still_fires() -> None:
+    gap = datetime(2026, 3, 8, 7, 0, tzinfo=timezone.utc)
+    window = (gap, gap + timedelta(minutes=5))
+    for cron in ("0 3 * * *", "0 2 * * *", "0 * * * *"):
+        schedule = {"enabled": True, "cron": cron, "tz": "America/New_York"}
+        assert _fire_in_window(schedule, *window) == gap
+    before = (gap - timedelta(minutes=5), gap)
+    assert _fire_in_window(
+        {"enabled": True, "cron": "0 2 * * *", "tz": "America/New_York"}, *before
+    ) is None
+
+
+def test_agent_schedule_fall_back_fires_each_utc_hour() -> None:
+    for hour in (5, 6):
+        start = datetime(2026, 11, 1, hour, 0, tzinfo=timezone.utc)
+        schedule = {"enabled": True, "cron": "0 * * * *", "tz": "America/New_York"}
+        assert _fire_in_window(schedule, start, start + timedelta(minutes=5)) == start
+
+
+def test_agent_due_check_accepts_the_fire_instants_the_window_produces() -> None:
+    from console.app.domains.agentops.invocation import agent_schedule_due
+
+    gap = datetime(2026, 3, 8, 7, 0, tzinfo=timezone.utc)
+    for cron in ("0 3 * * *", "0 2 * * *"):
+        schedule = {"enabled": True, "cron": cron, "tz": "America/New_York"}
+        assert agent_schedule_due(
+            schedule, scheduled_fire_at=gap, interval_minutes=5, grace_minutes=2
+        )
+    assert not agent_schedule_due(
+        {"enabled": True, "cron": "0 4 * * *", "tz": "America/New_York"},
+        scheduled_fire_at=gap,
+        interval_minutes=5,
+        grace_minutes=2,
+    )
+
+
 def test_scheduled_endpoint_never_trusts_schedule_key_from_body() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "console/app/routers/v1/agents.py"
