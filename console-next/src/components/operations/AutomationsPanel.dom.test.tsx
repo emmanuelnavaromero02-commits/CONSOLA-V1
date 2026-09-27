@@ -37,8 +37,8 @@ const SCHEDULED: Automation = {
   state: "paused_by_operator",
   state_note_es: "En pausa por un operador de plataforma; no se ejecutará en su horario",
   active_runs: 0,
-  active_runs_capped: false,
   last_run: { status: "success", started_at: "2026-09-25T10:00:00Z", finished_at: "2026-09-25T10:05:00Z" },
+  runs_known: true,
 };
 
 const MANUAL: Automation = {
@@ -49,9 +49,22 @@ const MANUAL: Automation = {
   schedule_description: null,
   state: "paused_manual",
   state_note_es: "Se activa automáticamente al pulsar Extraer",
-  active_runs: 10,
-  active_runs_capped: true,
+  active_runs: 12,
   last_run: null,
+  runs_known: true,
+};
+
+const PLATFORM: Automation = {
+  dag_id: "entity_scheduler",
+  label: "Meta-scheduler",
+  cartridge_id: null,
+  kind: "scheduled",
+  schedule_description: "Cada 5 minutos",
+  state: "active",
+  state_note_es: "Activa: se ejecuta en su horario.",
+  active_runs: null,
+  last_run: null,
+  runs_known: false,
 };
 
 async function render() {
@@ -88,7 +101,7 @@ describe("AutomationsPanel", () => {
       schema_version: "pipeline-automations/v1",
       checked_at: "2026-09-26T10:00:00Z",
       airflow_available: true,
-      automations: [SCHEDULED, MANUAL],
+      automations: [SCHEDULED, MANUAL, PLATFORM],
     });
     await render();
     const scheduled = container.querySelector('[data-automation="sap_b1_refresh"]');
@@ -99,7 +112,12 @@ describe("AutomationsPanel", () => {
     const manual = container.querySelector('[data-automation="sap_sf_extract"]');
     expect(manual?.textContent).toContain("Manual");
     expect(manual?.textContent).toContain("Se activa automáticamente al pulsar Extraer");
-    expect(manual?.textContent).toContain("10 o más");
+    expect(manual?.textContent).toContain("12");
+    expect(manual?.textContent).toContain("Sin ejecuciones registradas");
+    const platform = container.querySelector('[data-automation="entity_scheduler"]');
+    expect(platform?.textContent).toContain("Plataforma");
+    expect(platform?.textContent).toContain("Sin información");
+    expect(platform?.textContent).not.toContain("Sin ejecuciones");
     expect(container.querySelector('a[href="/monitor"]')?.textContent).toBe("Ver ejecuciones");
     const labels = [...container.querySelectorAll("button")].map((node) => node.textContent?.trim());
     expect(labels.some((label) => /pausar|reanudar|activar|ejecutar/i.test(label ?? ""))).toBe(false);
@@ -119,7 +137,7 @@ describe("AutomationsPanel", () => {
           state: "unavailable",
           state_note_es: "No se pudo consultar Airflow en este momento; estado desconocido.",
           active_runs: null,
-          active_runs_capped: false,
+          runs_known: false,
         },
       ],
     });

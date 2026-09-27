@@ -123,14 +123,22 @@ async def _proposal(
         proposal
         for proposal in council.proposals
         if proposal.origin == origin
-        and (decision_id is None or proposal.decision_id == decision_id)
+        and (
+            proposal.decision_id == decision_id
+            if decision_id is not None or origin == "system"
+            else True
+        )
     ]
     assert len(matches) == 1, council.model_dump(mode="json")
     return matches[0]
 
 
 async def _open_item(
-    seed: AuthoritySeed, scope: AuthorityScope, pool: asyncpg.Pool, marker: str
+    seed: AuthoritySeed,
+    scope: AuthorityScope,
+    pool: asyncpg.Pool,
+    marker: str,
+    **extra: Any,
 ) -> dict[str, Any]:
     item_id = f"council-open-{marker}-{uuid.uuid4().hex[:8]}"
     conn = await asyncpg.connect(seed.admin_dsn)
@@ -138,7 +146,7 @@ async def _open_item(
         await persist_item_rows(
             conn,
             _rows(
-                [_item(item_id, scope.tenant_id, scope.workspace_id)],
+                [{**_item(item_id, scope.tenant_id, scope.workspace_id), **extra}],
                 scope.tenant_id,
                 scope.workspace_id,
                 owner=scope.maker["id"],
@@ -430,6 +438,10 @@ async def test_system_suggestion_is_made_by_the_system_and_checked_by_a_person(
             approved.decision_id,
             SYSTEM_MAKER,
         ) == 1
+        with _patched(pool, _snapshot(scope)):
+            council = await business_council_view.build_action_council(scope.checker)
+        done = next(p for p in council.proposals if p.decision_id == approved.decision_id)
+        assert done.origin == "system" and done.state == "completed"
     finally:
         await pool.close()
 
@@ -723,4 +735,313 @@ async def test_tenant_admin_approves_system_suggestions_but_never_their_own_prop
         assert approved.decision_id != decision_id
     finally:
         await pool.close()
+
+
+async def _admin_execute(seed: AuthoritySeed, sql: str, *args: Any) -> None:
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        await conn.execute(sql, *args)
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_follow_up_kill_switch_blocks_system_and_person_approval(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    scope = await seed_authority_item(seed, seed.first, "kill-switch")
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        live = await _open_item(seed, scope, pool, "kill-switch")
+        current = _snapshot(scope, live, scope.item)
+        with _patched(pool, current):
+            await prepare_followup_intent(scope.maker, scope.item_id)
+            suggestion = await _proposal(scope.checker, origin="system")
+            person = await _proposal(
+                scope.checker, origin="person", decision_id=int(scope.item["decision_id"])
+            )
+            await _admin_execute(
+                seed,
+                """UPDATE control_room_action_templates SET enabled = FALSE
+                    WHERE template_id = 'create_followup_task'""",
+            )
+            try:
+                council = await business_council_view.build_action_council(scope.checker)
+                assert not [
+                    p
+                    for p in council.proposals
+                    if p.origin == "system" and p.state != "completed"
+                ]
+                blocked = next(p for p in council.proposals if p.proposal_id == person.proposal_id)
+                assert blocked.can_approve is False
+                assert blocked.disabled_reason == (
+                    "Las tareas de seguimiento están desactivadas en este espacio de trabajo."
+                )
+                for proposal_id, key in (
+                    (suggestion.proposal_id, "kill-system-1"),
+                    (person.proposal_id, "kill-person-1"),
+                ):
+                    with pytest.raises(HTTPException) as refused:
+                        await business_council_commands.approve_council_proposal(
+                            scope.checker, proposal_id, idempotency_key=key
+                        )
+                    assert refused.value.status_code in {404, 409}
+            finally:
+                await _admin_execute(
+                    seed,
+                    """UPDATE control_room_action_templates SET enabled = TRUE
+                        WHERE template_id = 'create_followup_task'""",
+                )
+        system_row = await _item_row(seed, scope, str(live["id"]))
+        assert system_row["status"] == "open" and system_row["decision_id"] is None
+        person_row = await _item_row(seed, scope, scope.item_id)
+        assert person_row["status"] == "decision_created"
+        assert person_row["execution_status"] == "not_started"
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_hidden_data_sources_cannot_see_approve_or_discard_proposals(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    scope = await seed_authority_item(seed, seed.second, "blind")
+    blind = {**scope.checker, "allowed_cartridges": []}
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=4)
+    try:
+        with _patched(pool, _snapshot(scope, scope.item)):
+            await prepare_followup_intent(scope.maker, scope.item_id)
+            decision_id = int(scope.item["decision_id"])
+            visible = await _proposal(scope.checker, origin="person", decision_id=decision_id)
+            hidden = await business_council_view.build_action_council(blind)
+            assert all(p.decision_id != decision_id for p in hidden.proposals)
+            with pytest.raises(HTTPException) as approve:
+                await business_council_commands.approve_council_proposal(
+                    blind, visible.proposal_id, idempotency_key="oculta-1"
+                )
+            with pytest.raises(HTTPException) as discard:
+                await business_council_commands.discard_council_proposal(
+                    blind,
+                    visible.proposal_id,
+                    reason=REASON,
+                    idempotency_key="blind-discard-1",
+                )
+        assert approve.value.status_code == discard.value.status_code == 404
+        row = await _item_row(seed, scope, scope.item_id)
+        assert row["status"] == "decision_created"
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_a_checker_who_set_the_threshold_needs_another_person(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    scope = seed.second
+    applied = {
+        "cartridge_id": "sap_hcm",
+        "anomaly_type": "council_threshold",
+        "metric": f"gap_{uuid.uuid4().hex[:6]}",
+        "warning_value": 1,
+        "critical_value": None,
+        "currency": "USD",
+        "source": "workspace",
+    }
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        threshold_id = await conn.fetchval(
+            """INSERT INTO control_room_thresholds (
+                   tenant_id, workspace_id, cartridge_id, anomaly_type, metric,
+                   warning_value
+               ) VALUES ($1::uuid, $2::uuid, 'sap_hcm', $3, $4, 1) RETURNING id""",
+            scope.tenant_id,
+            scope.workspace_id,
+            applied["anomaly_type"],
+            applied["metric"],
+        )
+        await conn.execute(
+            """INSERT INTO audit_events (user_id, action, resource_type, resource_id, metadata)
+               VALUES ($1, 'control_room.threshold.upsert', 'control_room_threshold', $2, '{}'::jsonb)""",
+            scope.checker["id"],
+            str(threshold_id),
+        )
+    finally:
+        await conn.close()
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        live = await _open_item(
+            seed, scope, pool, "threshold", thresholds_applied=[applied]
+        )
+        live["thresholds_applied"] = [applied]
+        with _patched(pool, _snapshot(scope, live)):
+            influenced = await _proposal(scope.checker, origin="system")
+            assert influenced.state == "needs_other_approver"
+            assert influenced.can_approve is False
+            assert influenced.disabled_reason.startswith("Ajustaste un umbral")
+            with pytest.raises(HTTPException) as refused:
+                await business_council_commands.approve_council_proposal(
+                    scope.checker, influenced.proposal_id, idempotency_key="self-threshold-1"
+                )
+            assert refused.value.status_code == 403
+            other = await _proposal(scope.maker, origin="system")
+            assert other.can_approve is True
+            approved = await business_council_commands.approve_council_proposal(
+                scope.maker, other.proposal_id, idempotency_key="other-threshold-1"
+            )
+        assert approved.status == "approved_with_followup"
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_author_renews_a_proposal_whose_pending_intent_drifted(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    scope = await seed_authority_item(seed, seed.first, "drift")
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=4)
+    try:
+        with _patched(pool, _snapshot(scope, scope.item)):
+            first = await prepare_followup_intent(scope.maker, scope.item_id)
+            await _admin_execute(
+                seed,
+                """UPDATE control_room_action_intents SET observation_fingerprint = $2
+                    WHERE id = $1::uuid""",
+                first,
+                "0" * 64,
+            )
+            decision_id = int(scope.item["decision_id"])
+            drifted = await _proposal(scope.maker, origin="person", decision_id=decision_id)
+            assert drifted.state == "source_changed" and drifted.can_renew is True
+            await business_council_commands.renew_council_proposal(
+                scope.maker, drifted.proposal_id
+            )
+            ready = await _proposal(scope.checker, origin="person", decision_id=decision_id)
+        assert ready.state == "pending_approval" and ready.can_approve is True
+        states = await _fetch(
+            seed,
+            """SELECT state FROM control_room_action_intents
+                WHERE workspace_id = $1::uuid AND item_id = $2 ORDER BY created_at""",
+            scope.workspace_id,
+            scope.item_id,
+        )
+        assert [row["state"] for row in states] == ["stale", "pending_approval"]
+        stale_event = await _fetch(
+            seed,
+            """SELECT actor_user_id, authorization_permission
+                 FROM control_room_action_intent_events
+                WHERE intent_id = $1::uuid AND event_type = 'stale'""",
+            first,
+        )
+        assert stale_event == [
+            {"actor_user_id": scope.maker["id"], "authorization_permission": "control_room.write"}
+        ]
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_approve_and_discard_never_deadlock(council_seed: AuthoritySeed):
+    seed = council_seed
+    scope = await seed_authority_item(seed, seed.first, "race")
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        other = await _new_user(
+            conn,
+            tenant_id=scope.tenant_id,
+            workspace_id=scope.workspace_id,
+            workspace_role="workspace_admin",
+            suffix=f"race-{uuid.uuid4().hex[:8]}",
+        )
+    finally:
+        await conn.close()
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=2, max_size=8)
+    try:
+        with _patched(pool, _snapshot(scope, scope.item)):
+            await prepare_followup_intent(scope.maker, scope.item_id)
+            decision_id = int(scope.item["decision_id"])
+            checker_view = await _proposal(scope.checker, origin="person", decision_id=decision_id)
+            other_view = await _proposal(other, origin="person", decision_id=decision_id)
+            results = await asyncio.gather(
+                business_council_commands.approve_council_proposal(
+                    scope.checker, checker_view.proposal_id, idempotency_key="race-approve-1"
+                ),
+                business_council_commands.discard_council_proposal(
+                    other,
+                    other_view.proposal_id,
+                    reason=REASON,
+                    idempotency_key="race-discard-1",
+                ),
+                return_exceptions=True,
+            )
+        successes = [result for result in results if not isinstance(result, Exception)]
+        failures = [result for result in results if isinstance(result, Exception)]
+        assert len(successes) == 1 and len(failures) == 1
+        assert isinstance(failures[0], HTTPException)
+        assert failures[0].status_code in {404, 409}
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_automations_read_only_the_workspace_run_history(council_seed: AuthoritySeed):
+    from datetime import UTC, datetime, timedelta
+
+    from app.services import pipeline_automations
+
+    seed = council_seed
+    mine, other = seed.first, seed.second
+    dag_id = f"council_probe_{uuid.uuid4().hex[:6]}_extract"
+    started = datetime(2026, 9, 26, 10, tzinfo=UTC)
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        await conn.execute(
+            """INSERT INTO cartridge_dags (cartridge_id, dag_id, description, trigger)
+               VALUES ('sap_hcm', $1, 'Extracción de prueba', 'on-demand')
+               ON CONFLICT (cartridge_id, dag_id) DO NOTHING""",
+            dag_id,
+        )
+        for scope, status, offset in (
+            (mine, "success", 2),
+            (mine, "RUNNING", 1),
+            (other, "queued", 0),
+            (other, "queued", 0),
+        ):
+            await conn.execute(
+                """INSERT INTO pipeline_runs (
+                       run_id, dag_id, cartridge_id, entity, status, started_at,
+                       tenant_id, workspace_id
+                   ) VALUES ($1, $2, 'sap_hcm', 'employees', $3, $4, $5::uuid, $6::uuid)""",
+                f"run-{uuid.uuid4().hex}",
+                dag_id,
+                status,
+                started - timedelta(hours=offset),
+                scope.tenant_id,
+                scope.workspace_id,
+            )
+    finally:
+        await conn.close()
+
+    async def _invoke(tool: str, _args: dict[str, Any], _user: Any) -> dict[str, Any]:
+        assert tool == "airflow_list_dags"
+        return {"dags": [{"dag_id": dag_id, "is_paused": True, "is_active": True, "schedule_kind": "manual"}]}
+
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=2)
+    try:
+        with patch.object(
+            pipeline_automations.auth, "pool", new=AsyncMock(return_value=pool)
+        ):
+            response = await pipeline_automations.list_automations(
+                mine.maker, invoke=_invoke
+            )
+    finally:
+        await pool.close()
+    (probe,) = [a for a in response.automations if a.dag_id == dag_id]
+    assert probe.runs_known is True
+    assert probe.active_runs == 1
+    assert probe.last_run is not None and probe.last_run.status == "running"
+    assert probe.state_note_es == "Se activa automáticamente al pulsar Extraer"
 

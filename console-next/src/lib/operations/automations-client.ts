@@ -27,10 +27,15 @@ export const automationSchema = z
     state: z.enum(["active", "paused_by_operator", "paused_manual", "unavailable"]),
     state_note_es: z.string().min(1).max(240),
     active_runs: z.number().int().nonnegative().nullable(),
-    active_runs_capped: z.boolean(),
     last_run: automationRunSchema.nullable(),
+    runs_known: z.boolean(),
   })
-  .strict();
+  .strict()
+  .superRefine((automation, context) => {
+    if (!automation.runs_known && (automation.active_runs !== null || automation.last_run !== null)) {
+      context.addIssue({ code: "custom", message: "Unknown runs carry no figures" });
+    }
+  });
 
 export const automationsResponseSchema = z
   .object({

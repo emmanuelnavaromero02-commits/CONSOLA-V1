@@ -16,8 +16,8 @@ const automation = {
   state: "paused_by_operator",
   state_note_es: "En pausa por un operador de plataforma; no se ejecutará en su horario",
   active_runs: 0,
-  active_runs_capped: false,
   last_run: null,
+  runs_known: true,
 };
 
 beforeEach(() => apiGet.mockReset());
@@ -47,5 +47,7 @@ describe("automations client", () => {
     expect(parse({ ...automation, toggle: "pause" })).toBe(false);
     expect(parse({ ...automation, dag_id: "../dags" })).toBe(false);
     expect(parse({ ...automation, active_runs: -1 })).toBe(false);
+    expect(parse({ ...automation, runs_known: false })).toBe(false);
+    expect(parse({ ...automation, runs_known: false, active_runs: null })).toBe(true);
   });
 });

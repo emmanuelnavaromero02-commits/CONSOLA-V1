@@ -23,6 +23,9 @@ export const councilDisabledReasons = [
   "La propuesta venció; su autor puede renovarla.",
   "La tarea de seguimiento no está preparada; su autor puede renovarla.",
   "Los datos de origen cambiaron desde que se preparó la propuesta.",
+  "Las tareas de seguimiento están desactivadas en este espacio de trabajo.",
+  "Ajustaste un umbral que originó esta sugerencia; requiere la aprobación de otra persona del equipo.",
+  "La propuesta no tiene un autor vigente; ciérrala desde el Registro.",
 ] as const;
 
 export const councilStates = [
@@ -57,8 +60,11 @@ const impactSchema = z
       }
       return;
     }
-    if (impact.value === undefined || impact.basis === undefined || impact.formula === undefined) {
-      context.addIssue({ code: "custom", message: "Impact estimate without formula" });
+    if (impact.value === undefined || impact.basis === undefined) {
+      context.addIssue({ code: "custom", message: "Impact estimate without value or basis" });
+    }
+    if ((impact.basis === "persisted") === (impact.formula !== undefined)) {
+      context.addIssue({ code: "custom", message: "Rule impacts show their formula" });
     }
     if ((impact.kind === "money") !== (impact.currency !== undefined)) {
       context.addIssue({ code: "custom", message: "Only money carries currency" });
@@ -106,7 +112,9 @@ export const councilProposalSchema = z
     }
     if (
       proposal.origin === "system" &&
-      (proposal.decision_id !== undefined || proposal.can_renew || proposal.authored_by_you)
+      ((proposal.decision_id !== undefined && proposal.state !== "completed") ||
+        proposal.can_renew ||
+        proposal.authored_by_you)
     ) {
       context.addIssue({ code: "custom", message: "System suggestion with author data" });
     }
@@ -138,7 +146,7 @@ export const councilApproveResponseSchema = z
 export const councilDiscardResponseSchema = z
   .object({
     status: z.literal("discarded"),
-    decision_id: z.number().int().positive().optional(),
+    decision_id: z.number().int().positive().nullish(),
     message: copySchema,
   })
   .strict();

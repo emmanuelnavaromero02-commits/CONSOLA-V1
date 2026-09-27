@@ -116,4 +116,21 @@ describe("DecisionsBoard", () => {
     await click(button("Reabrir"));
     expect(boundary.updateDecision).toHaveBeenCalledWith(3, { status: "open", outcome: null });
   });
+
+  it("hides deletion for decisions linked to the Control Room or the council", async () => {
+    boundary.listDecisions.mockResolvedValue([
+      { ...DECISIONS[0], protected: true },
+      DECISIONS[1],
+    ]);
+    boundary.getDecision.mockImplementation(async (id: number) => ({
+      ...(id === 1 ? { ...DECISIONS[0], protected: true } : DECISIONS[1]),
+      actions: [],
+    }));
+    await render();
+    await click(button("Reponer lote de la sucursal norte"));
+    expect(container.querySelector('[aria-label="Eliminar decisión"]')).toBeNull();
+    expect(container.textContent).toContain("ciérrala en lugar de eliminarla");
+    await click(button("Renegociar margen con distribuidor"));
+    expect(container.querySelector('[aria-label="Eliminar decisión"]')).not.toBeNull();
+  });
 });

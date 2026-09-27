@@ -46,15 +46,14 @@ function formatDate(value: string | null): string | null {
 }
 
 function activeRuns(automation: Automation): string {
-  if (automation.active_runs === null) return "Sin información";
-  if (automation.active_runs_capped) return `${automation.active_runs} o más`;
+  if (!automation.runs_known || automation.active_runs === null) return "Sin información";
   return String(automation.active_runs);
 }
 
 function lastRun(automation: Automation): string {
   const run = automation.last_run;
-  if (automation.state === "unavailable" && run === null) return "Sin información";
-  if (run === null) return automation.active_runs === null ? "Sin información" : "Sin ejecuciones";
+  if (!automation.runs_known) return "Sin información";
+  if (run === null) return "Sin ejecuciones registradas";
   const label = RUN_LABELS[run.status] ?? run.status;
   const when = formatDate(run.finished_at ?? run.started_at);
   return when ? `${label} · ${when}` : label;

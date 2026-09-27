@@ -91,6 +91,27 @@ describe("council contract", () => {
     expect(parse({ ...personProposal, decision_id: undefined })).toBe(false);
     expect(parse({ ...personProposal, state: "completed" })).toBe(false);
     expect(
+      parse({
+        ...personProposal,
+        impact: { kind: "money", value: 10, currency: "USD", basis: "persisted", label: "Estimación registrada con el hallazgo" },
+      }),
+    ).toBe(true);
+    expect(
+      parse({
+        ...personProposal,
+        impact: { kind: "money", value: 10, currency: "USD", basis: "persisted", formula: "Impacto persistido en control_room_items.", label: "x" },
+      }),
+    ).toBe(false);
+    expect(
+      parse({
+        ...personProposal,
+        origin: "system",
+        state: "completed",
+        can_approve: false,
+        can_discard: false,
+      }),
+    ).toBe(true);
+    expect(
       actionCouncilSchema.safeParse({
         schema_version: "control-room-council/v1",
         generated_at: "2026-09-26T10:00:00Z",
@@ -115,10 +136,10 @@ describe("council contract", () => {
     });
 
     apiPost.mockResolvedValueOnce(
-      response({ status: "discarded", message: "Propuesta descartada." }),
+      response({ status: "discarded", decision_id: null, message: "Propuesta descartada." }),
     );
     const discarded = await discardCouncilProposal(handle, "Motivo suficiente", "key-discard-1");
-    expect(discarded.decision_id).toBeUndefined();
+    expect(discarded.decision_id).toBeNull();
     expect(apiPost).toHaveBeenLastCalledWith(`${COUNCIL_ENDPOINT}/${handle}/discard`, {
       reason: "Motivo suficiente",
       idempotency_key: "key-discard-1",
