@@ -98,6 +98,10 @@ def test_every_public_mutation_with_a_success_shape_is_typed_or_exactly_exempt()
     typed_existing = {
         ("POST", "/sap-successfactors/market-validation/run"),
         ("POST", "/actions/preview"),
+        ("POST", "/actions/exception"),
+        ("POST", "/actions/exception-reopen"),
+        ("POST", "/actions/decision-proposal"),
+        ("POST", "/actions/studio-target"),
     }
     retired = {
         ("POST", "/sap-successfactors/talent/actions/preview"),

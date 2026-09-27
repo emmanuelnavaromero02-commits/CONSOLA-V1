@@ -179,9 +179,11 @@ def test_writer_payload_exposes_only_opaque_business_action_contract():
     action = fact["actions"][0]
     assert set(action) == {
         "action_handle",
+        "kind",
         "label",
         "enabled",
         "requires_approval",
     }
+    assert action["kind"] == "followup_task"
     assert len(action["action_handle"]) == 64
     assert _forbidden_action_metadata(action) == set()

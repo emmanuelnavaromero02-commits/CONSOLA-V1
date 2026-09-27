@@ -1,15 +1,15 @@
 import type { ExperienceSectionV2 } from "@/lib/control-room/experience-contract";
 import { buildSectionHighlights } from "@/lib/control-room/experience-headlines";
-import type { OpenExperiencePreview } from "@/lib/control-room/use-control-room-experience-preview";
+import type { OpenExperienceAction } from "@/lib/control-room/use-control-room-experience-action";
 
 import { ExperienceFact } from "./ExperienceFact";
 
 export function ExperienceSection({
   section,
-  onPreviewAction,
+  onAction,
 }: {
   section: ExperienceSectionV2;
-  onPreviewAction: OpenExperiencePreview;
+  onAction: OpenExperienceAction;
 }) {
   if (section.facts.length === 0) return null;
   const highlights = section.facts.length > 1 ? buildSectionHighlights(section) : [];
@@ -44,7 +44,7 @@ export function ExperienceSection({
             key={index}
             fact={fact}
             sectionTitle={section.title}
-            onPreviewAction={onPreviewAction}
+            onAction={onAction}
           />
         ))}
       </div>

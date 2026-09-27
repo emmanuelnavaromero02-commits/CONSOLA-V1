@@ -8,10 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiError } from "@/lib/api";
 import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
 import { controlRoomExperienceKey } from "@/lib/control-room/use-control-room-experience";
-import { useControlRoomExperiencePreview } from "@/lib/control-room/use-control-room-experience-preview";
+import { useControlRoomExperienceAction } from "@/lib/control-room/use-control-room-experience-action";
 
 import { ControlRoomExperienceContent } from "./ControlRoomExperiencePage";
-import { ExperiencePreviewFlow } from "./ExperiencePreviewFlow";
+import { ExperienceActionDialog } from "./ExperienceActionDialog";
 
 const clientBoundary = vi.hoisted(() => ({ preview: vi.fn() }));
 
@@ -46,6 +46,7 @@ const experience: ControlRoomExperienceV2 = {
           actions: [
             {
               action_handle: actionHandle,
+              kind: "followup_task",
               label: "Solicitar revisión de owner",
               enabled: true,
               requires_approval: true,
@@ -68,7 +69,7 @@ function Harness({
   currentExperience?: ControlRoomExperienceV2;
   workspaceId?: string;
 }) {
-  const preview = useControlRoomExperiencePreview(currentExperience, workspaceId);
+  const preview = useControlRoomExperienceAction(currentExperience, workspaceId);
   return (
     <>
       <ControlRoomExperienceContent
@@ -76,9 +77,9 @@ function Harness({
         refreshing={false}
         refreshFailed={false}
         onRefresh={vi.fn()}
-        onPreviewAction={preview.openPreview}
+        onAction={preview.openAction}
       />
-      <ExperiencePreviewFlow {...preview} />
+      <ExperienceActionDialog {...preview} />
     </>
   );
 }
@@ -118,7 +119,7 @@ afterEach(async () => {
 describe("Experience preview confirmation", () => {
   it("opens without POST, exposes only business copy and restores focus on cancel", async () => {
     await renderHarness();
-    const trigger = button("Generar preview");
+    const trigger = button("Solicitar revisión de owner");
     expect(trigger).toBeDefined();
     trigger?.focus();
 
@@ -161,7 +162,7 @@ describe("Experience preview confirmation", () => {
       }),
     );
     await renderHarness();
-    const trigger = button("Generar preview");
+    const trigger = button("Solicitar revisión de owner");
     trigger?.focus();
     await act(async () => trigger?.click());
 
@@ -191,7 +192,7 @@ describe("Experience preview confirmation", () => {
     );
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     await renderHarness();
-    await act(async () => button("Generar preview")?.click());
+    await act(async () => button("Solicitar revisión de owner")?.click());
 
     const confirm = button("Confirmar preview");
     await act(async () => {
@@ -236,7 +237,7 @@ describe("Experience preview confirmation", () => {
       "Solo recomendación: nada se aplica automáticamente.",
     );
 
-    await act(async () => button("Generar preview")?.click());
+    await act(async () => button("Solicitar revisión de owner")?.click());
     expect(container.textContent).not.toMatch(/Aprobar|Ejecutar|Sí, ejecutar/);
     await act(async () => button("Confirmar preview")?.click());
     await act(async () => undefined);
@@ -256,7 +257,7 @@ describe("Experience preview confirmation", () => {
       disabled_reason: "Actualiza los datos antes de continuar.",
     };
     await renderHarness({ currentExperience: disabled });
-    const trigger = button("Generar preview");
+    const trigger = button("Solicitar revisión de owner");
 
     expect(trigger?.hasAttribute("disabled")).toBe(true);
     expect(container.textContent).toContain(
@@ -278,7 +279,7 @@ describe("Experience preview safe errors", () => {
       }) as ApiError;
       clientBoundary.preview.mockRejectedValue(error);
       await renderHarness();
-      await act(async () => button("Generar preview")?.click());
+      await act(async () => button("Solicitar revisión de owner")?.click());
       await act(async () => button("Confirmar preview")?.click());
 
       const alert = container.querySelector('[role="alert"]');
@@ -294,7 +295,7 @@ describe("Experience preview safe errors", () => {
   it("fails stale without POST when refresh removes the selected action", async () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     await renderHarness();
-    await act(async () => button("Generar preview")?.click());
+    await act(async () => button("Solicitar revisión de owner")?.click());
     const withoutActions = structuredClone(experience);
     withoutActions.sections[0].facts[0].actions = [];
     await renderHarness({ currentExperience: withoutActions });
@@ -316,7 +317,7 @@ describe("Experience preview safe errors", () => {
       new Error(`invalid contract ${actionHandle}`),
     );
     await renderHarness();
-    await act(async () => button("Generar preview")?.click());
+    await act(async () => button("Solicitar revisión de owner")?.click());
     await act(async () => button("Confirmar preview")?.click());
 
     const alert = container.querySelector('[role="alert"]');

@@ -6,10 +6,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
-import { useControlRoomExperiencePreview } from "@/lib/control-room/use-control-room-experience-preview";
+import { useControlRoomExperienceAction } from "@/lib/control-room/use-control-room-experience-action";
 
+import { ExperienceActionDialog } from "./ExperienceActionDialog";
 import { ExperienceFact } from "./ExperienceFact";
-import { ExperiencePreviewFlow } from "./ExperiencePreviewFlow";
 
 const handles = ["a".repeat(64), "b".repeat(64), "c".repeat(64)];
 const experience: ControlRoomExperienceV2 = {
@@ -28,19 +28,22 @@ const experience: ControlRoomExperienceV2 = {
           actions: [
             {
               action_handle: handles[0],
+              kind: "followup_task",
               label: "Solicitar revisión de owner",
               enabled: true,
               requires_approval: true,
             },
             {
               action_handle: handles[1],
-              label: "Crear seguimiento",
+              kind: "decision_proposal",
+              label: "Crear Propuesta de Decisión",
               enabled: true,
               requires_approval: false,
             },
             {
               action_handle: handles[2],
-              label: "Revisar datos pendientes",
+              kind: "exception_approval",
+              label: "Aprobar Excepción",
               enabled: false,
               requires_approval: false,
               disabled_reason: "Actualiza los datos antes de continuar.",
@@ -57,14 +60,11 @@ let root: Root;
 let queryClient: QueryClient;
 
 function Harness() {
-  const preview = useControlRoomExperiencePreview(experience, "workspace-a");
+  const action = useControlRoomExperienceAction(experience, "workspace-a");
   return (
     <>
-      <ExperienceFact
-        fact={experience.sections[0].facts[0]}
-        onPreviewAction={preview.openPreview}
-      />
-      <ExperiencePreviewFlow {...preview} />
+      <ExperienceFact fact={experience.sections[0].facts[0]} onAction={action.openAction} />
+      <ExperienceActionDialog {...action} />
     </>
   );
 }
@@ -98,7 +98,7 @@ afterEach(async () => {
   container.remove();
 });
 
-describe("Experience preview action names", () => {
+describe("Experience action names", () => {
   beforeEach(async () => {
     await act(async () => {
       root.render(
@@ -111,25 +111,18 @@ describe("Experience preview action names", () => {
 
   it("identifies enabled and disabled actions without exposing their handles", () => {
     const buttons = [...container.querySelectorAll("button")];
-    const previewButtons = buttons.filter(
-      (button) => button.textContent?.trim() === "Generar preview",
-    );
-    const disabled = actionButton(
-      "Generar preview: Revisar datos pendientes — Cobertura crítica",
-    );
+    const disabled = actionButton("Aprobar Excepción — Cobertura crítica");
 
-    expect(
-      actionButton(
-        "Generar preview: Solicitar revisión de owner — Cobertura crítica",
-      ),
-    ).toBeDefined();
-    expect(
-      actionButton("Generar preview: Crear seguimiento — Cobertura crítica"),
-    ).toBeDefined();
-    expect(previewButtons).toHaveLength(3);
-    expect(
-      buttons.filter((button) => accessibleName(button) === "Generar preview"),
-    ).toHaveLength(0);
+    expect(actionButton("Solicitar revisión de owner — Cobertura crítica")).toBeDefined();
+    expect(actionButton("Crear Propuesta de Decisión — Cobertura crítica")).toBeDefined();
+    expect(buttons.map((button) => button.textContent?.trim())).toEqual([
+      "Solicitar revisión de owner",
+      "Crear Propuesta de Decisión",
+      "Aprobar Excepción",
+    ]);
+    expect(buttons.some((button) => button.textContent?.includes("Generar preview"))).toBe(
+      false,
+    );
     expect(disabled?.disabled).toBe(true);
     const reasonId = disabled?.getAttribute("aria-describedby");
     expect(reasonId).toBeTruthy();
@@ -140,21 +133,22 @@ describe("Experience preview action names", () => {
   });
 
   it("opens a dialog for the exact selected server action", async () => {
-    const owner = actionButton(
-      "Generar preview: Solicitar revisión de owner — Cobertura crítica",
-    );
+    const owner = actionButton("Solicitar revisión de owner — Cobertura crítica");
     await act(async () => owner?.click());
     let dialog = container.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain("Solicitar revisión de owner");
-    expect(dialog?.textContent).not.toContain("Crear seguimiento");
+    expect(dialog?.textContent).toContain("Confirmar preview");
+    expect(dialog?.textContent).not.toContain("Crear Propuesta de Decisión");
 
     await act(async () => visibleButton("Cancelar")?.click());
-    const followUp = actionButton(
-      "Generar preview: Crear seguimiento — Cobertura crítica",
-    );
-    await act(async () => followUp?.click());
+    const proposal = actionButton("Crear Propuesta de Decisión — Cobertura crítica");
+    await act(async () => proposal?.click());
     dialog = container.querySelector('[role="dialog"]');
-    expect(dialog?.textContent).toContain("Crear seguimiento");
+    expect(dialog?.textContent).toContain("Crear Propuesta de Decisión");
+    expect(dialog?.textContent).toContain(
+      "Se crea una decisión con compromiso a 7 días y pasa al Consejo para aprobación.",
+    );
     expect(dialog?.textContent).not.toContain("Solicitar revisión de owner");
+    expect(dialog?.textContent).not.toContain("Confirmar preview");
   });
 });

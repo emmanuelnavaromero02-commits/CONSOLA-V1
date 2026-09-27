@@ -2,14 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   controlRoomExperienceV2Schema,
+  decisionProposalResponseSchema,
+  exceptionApprovalResponseSchema,
+  exceptionReopenResponseSchema,
   experienceActionPreviewResponseSchema,
   experienceNarrativeSchema,
+  studioTargetResponseSchema,
 } from "./experience-contract";
 
 const handle = "a".repeat(64);
 
 const action = {
   action_handle: handle,
+  kind: "followup_task",
   label: "Solicitar revisión de owner",
   enabled: true,
   requires_approval: true,
@@ -301,5 +306,100 @@ describe("experienceActionPreviewResponseSchema", () => {
     { ...response, metadata: { binding_id: handle } },
   ])("fails closed on invalid or unknown response state", (invalid) => {
     expect(() => experienceActionPreviewResponseSchema.parse(invalid)).toThrow();
+  });
+});
+
+describe("direct action contract", () => {
+  const exception = {
+    title: "Proveedor duplicado",
+    observed_at: "2026-07-20T00:00:00Z",
+    approved_at: "2026-07-22T10:00:00Z",
+    reason: "Proveedor validado por auditoría interna",
+    approved_by_you: true,
+    actions: [{ ...action, kind: "exception_reopen", label: "Reabrir hallazgo" }],
+  };
+
+  it("requires a known kind on every action", () => {
+    const withoutKind: Record<string, unknown> = { ...action };
+    delete withoutKind.kind;
+    for (const candidate of [withoutKind, { ...action, kind: "execute" }]) {
+      expect(() =>
+        controlRoomExperienceV2Schema.parse({
+          ...payload,
+          sections: [
+            { ...payload.sections[0], facts: [{ ...fact, actions: [candidate] }] },
+          ],
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("keeps reopen off open findings and only reopen on exceptions", () => {
+    expect(controlRoomExperienceV2Schema.parse({ ...payload, exceptions: [exception] }))
+      .toEqual({ ...payload, exceptions: [exception] });
+    for (const invalid of [
+      {
+        ...payload,
+        sections: [
+          {
+            ...payload.sections[0],
+            facts: [{ ...fact, actions: [{ ...action, kind: "exception_reopen" }] }],
+          },
+        ],
+      },
+      { ...payload, exceptions: [{ ...exception, actions: [action] }] },
+      { ...payload, exceptions: [{ ...exception, item_id: "private" }] },
+      { ...payload, exceptions: Array.from({ length: 21 }, () => exception) },
+      {
+        ...payload,
+        exceptions: [{ ...exception, actions: [exception.actions[0], exception.actions[0]] }],
+      },
+    ]) {
+      expect(() => controlRoomExperienceV2Schema.parse(invalid)).toThrow();
+    }
+  });
+
+  it("accepts only strict direct action responses", () => {
+    expect(
+      exceptionApprovalResponseSchema.parse({
+        action_handle: handle,
+        status: "exception_approved",
+        reversible: true,
+        message: "Hallazgo archivado.",
+      }).status,
+    ).toBe("exception_approved");
+    expect(
+      exceptionReopenResponseSchema.parse({
+        action_handle: handle,
+        status: "exception_reopened",
+        message: "Hallazgo reabierto.",
+      }).status,
+    ).toBe("exception_reopened");
+    expect(
+      decisionProposalResponseSchema.parse({
+        action_handle: handle,
+        status: "proposal_created",
+        decision_id: 41,
+        href: "/decisions?tab=consejo&propuesta=41",
+        message: "Propuesta creada.",
+      }).href,
+    ).toBe("/decisions?tab=consejo&propuesta=41");
+    expect(
+      studioTargetResponseSchema.parse({
+        action_handle: handle,
+        href: "/studio?cartridge=sap_hcm&tab=capas",
+      }).href,
+    ).toBe("/studio?cartridge=sap_hcm&tab=capas");
+    for (const [schema, invalid] of [
+      [exceptionApprovalResponseSchema, { action_handle: handle, status: "dismissed", reversible: true, message: "x" }],
+      [exceptionApprovalResponseSchema, { action_handle: handle, status: "exception_approved", reversible: false, message: "x" }],
+      [decisionProposalResponseSchema, { action_handle: handle, status: "proposal_created", decision_id: 1, href: "https://evil.example/decisions?tab=consejo&propuesta=1", message: "x" }],
+      [decisionProposalResponseSchema, { action_handle: handle, status: "proposal_created", decision_id: 0, href: "/decisions?tab=consejo&propuesta=0", message: "x" }],
+      [studioTargetResponseSchema, { action_handle: handle, href: "/studio?cartridge=x&tab=dags" }],
+      [studioTargetResponseSchema, { action_handle: handle, href: "javascript:alert(1)" }],
+      [studioTargetResponseSchema, { action_handle: handle, href: "/studio?cartridge=x&tab=capas", item_id: "x" }],
+    ] as const) {
+      expect(() => schema.parse(invalid)).toThrow();
+    }
   });
 });

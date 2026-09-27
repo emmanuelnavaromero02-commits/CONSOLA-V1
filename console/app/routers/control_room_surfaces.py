@@ -20,6 +20,9 @@ from app.services.control_room.business_experience import build_business_experie
 from app.services.control_room.business_experience_v2 import (
     build_business_experience_v2,
 )
+from app.services.control_room.business_exception_resolution import (
+    load_exception_resolutions,
+)
 from app.services.control_room.operational_diagnostics import (
     build_operational_diagnostics,
 )
@@ -68,6 +71,7 @@ async def control_room_experience_v2(
         user=user,
         enabled_template_ids=enabled_template_ids,
         actions_by_item=actions_by_item,
+        exception_resolutions=await load_exception_resolutions(user, snapshot),
     )
 
 

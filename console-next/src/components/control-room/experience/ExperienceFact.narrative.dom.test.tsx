@@ -13,7 +13,7 @@ import { ExperienceFact } from "./ExperienceFact";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const forbiddenCopy = /Aprobar|Ejecutar|Sí, ejecutar/;
+const forbiddenCopy = /Ejecutar|Sí, ejecutar|Generar preview/;
 const advisory = "Solo recomendación: nada se aplica automáticamente.";
 
 const narrative = {
@@ -38,6 +38,7 @@ const baseFact = {
   actions: [
     {
       action_handle: "a".repeat(64),
+      kind: "followup_task",
       label: "Solicitar revisión de owner",
       enabled: true,
       requires_approval: true,
@@ -58,7 +59,7 @@ let root: Root;
 
 async function renderFact(fact: ExperienceFactV2) {
   await act(async () => {
-    root.render(<ExperienceFact fact={fact} onPreviewAction={vi.fn()} />);
+    root.render(<ExperienceFact fact={fact} onAction={vi.fn()} />);
   });
 }
 
@@ -159,11 +160,41 @@ describe("ExperienceFact: lectura de negocio opcional", () => {
     expect(narrativeGroup()?.textContent).toContain(markup);
   });
 
-  it("no introduce copy de aprobación o ejecución ni controles propios", async () => {
+  it("no introduce copy de ejecución ni controles propios: un botón por acción del servidor", async () => {
     await renderFact(parseFact({ ...baseFact, narrative }));
 
     expect(container.textContent).not.toMatch(forbiddenCopy);
     expect(narrativeGroup()?.querySelectorAll("button, a, input")).toHaveLength(0);
-    expect(container.querySelectorAll("button")).toHaveLength(1);
+    const buttons = [...container.querySelectorAll("button")];
+    expect(buttons.map((button) => button.textContent?.trim())).toEqual([
+      "Solicitar revisión de owner",
+    ]);
+
+    await renderFact(
+      parseFact({
+        ...baseFact,
+        narrative,
+        actions: [
+          {
+            action_handle: "b".repeat(64),
+            kind: "exception_approval",
+            label: "Aprobar Excepción",
+            enabled: true,
+            requires_approval: false,
+          },
+          {
+            action_handle: "c".repeat(64),
+            kind: "decision_proposal",
+            label: "Crear Propuesta de Decisión",
+            enabled: true,
+            requires_approval: false,
+          },
+        ],
+      }),
+    );
+    expect(
+      [...container.querySelectorAll("button")].map((button) => button.textContent?.trim()),
+    ).toEqual(["Aprobar Excepción", "Crear Propuesta de Decisión"]);
+    expect(container.textContent).not.toMatch(forbiddenCopy);
   });
 });

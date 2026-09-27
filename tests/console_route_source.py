@@ -7,8 +7,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONSOLE_MAIN = REPO_ROOT / "console" / "app" / "main.py"
 CONSOLE_V1_ROUTERS = REPO_ROOT / "console" / "app" / "routers" / "v1"
 CONSOLE_DOMAINS = REPO_ROOT / "console" / "app" / "domains"
+CONSOLE_ROUTERS = REPO_ROOT / "console" / "app" / "routers"
 CONSOLE_ROUTER_MODULES = (
-    REPO_ROOT / "console" / "app" / "routers" / "pipeline_operations.py",
+    CONSOLE_ROUTERS / "pipeline_operations.py",
+    CONSOLE_ROUTERS / "control_room_live.py",
+    CONSOLE_ROUTERS / "control_room_actions.py",
 )
 
 

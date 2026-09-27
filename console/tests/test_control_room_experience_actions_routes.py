@@ -98,7 +98,14 @@ async def test_v2_route_does_not_publish_fixture_only_bindings():
 async def test_v2_route_projects_only_server_owned_authority_actions():
     item = business_item()
     current_snapshot = snapshot(items=(item,))
-    producer = AsyncMock(return_value={str(item["id"]): (public_action("a" * 64),)})
+    producer = AsyncMock(
+        return_value={
+            str(item["id"]): (
+                public_action("a" * 64, template_id="approve_exception"),
+                public_action("b" * 64, template_id="create_decision_proposal"),
+            )
+        }
+    )
     with (
         patch.object(
             surfaces,
@@ -108,19 +115,91 @@ async def test_v2_route_projects_only_server_owned_authority_actions():
         patch.object(
             surfaces,
             "load_enabled_action_template_ids",
-            AsyncMock(return_value=frozenset({"create_followup_task"})),
+            AsyncMock(
+                return_value=frozenset(
+                    {
+                        "create_followup_task",
+                        "approve_exception",
+                        "create_decision_proposal",
+                    }
+                )
+            ),
         ),
         patch.object(surfaces, "issue_action_bindings", producer),
     ):
         response = await surfaces.control_room_experience_v2(OPERATOR)
 
-    action = response.sections[0].facts[0].actions[0]
-    assert action.model_dump(exclude_none=True) == {
-        "action_handle": "a" * 64,
-        "label": "Crear seguimiento operativo",
-        "enabled": True,
-        "requires_approval": True,
-    }
+    producer.assert_awaited_once_with(
+        OPERATOR,
+        current_snapshot,
+        enabled_template_ids=frozenset(
+            {
+                "create_followup_task",
+                "approve_exception",
+                "create_decision_proposal",
+            }
+        ),
+    )
+    actions = [
+        action.model_dump(exclude_none=True)
+        for action in response.sections[0].facts[0].actions
+    ]
+    assert actions == [
+        {
+            "action_handle": "a" * 64,
+            "kind": "exception_approval",
+            "label": "Aprobar Excepción",
+            "enabled": True,
+            "requires_approval": False,
+        },
+        {
+            "action_handle": "b" * 64,
+            "kind": "decision_proposal",
+            "label": "Crear Propuesta de Decisión",
+            "enabled": True,
+            "requires_approval": False,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_followup_preview_handles_keep_their_own_kind_next_to_direct_actions():
+    item = business_item()
+    producer = AsyncMock(
+        return_value={
+            str(item["id"]): (
+                public_action("c" * 64),
+                public_action("d" * 64, template_id="open_in_studio"),
+            )
+        }
+    )
+    with (
+        patch.object(
+            surfaces,
+            "collect_surface_snapshot",
+            AsyncMock(return_value=snapshot(items=(item,))),
+        ),
+        patch.object(
+            surfaces,
+            "load_enabled_action_template_ids",
+            AsyncMock(
+                return_value=frozenset({"create_followup_task", "open_in_studio"})
+            ),
+        ),
+        patch.object(surfaces, "issue_action_bindings", producer),
+    ):
+        response = await surfaces.control_room_experience_v2(OPERATOR)
+
+    assert producer.await_args.kwargs["enabled_template_ids"] == frozenset(
+        {"create_followup_task", "open_in_studio"}
+    )
+    assert [
+        (action.kind, action.label, action.requires_approval)
+        for action in response.sections[0].facts[0].actions
+    ] == [
+        ("followup_task", "Crear seguimiento operativo", True),
+        ("studio_adjustment", "Ajustar en Estudio", False),
+    ]
 
 
 @pytest.mark.asyncio

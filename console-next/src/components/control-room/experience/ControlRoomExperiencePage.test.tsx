@@ -38,7 +38,7 @@ function renderContent(overrides = {}) {
       refreshing={false}
       refreshFailed={false}
       onRefresh={vi.fn()}
-      onPreviewAction={vi.fn()}
+      onAction={vi.fn()}
       {...overrides}
     />,
   );
@@ -79,10 +79,13 @@ describe("ControlRoomExperienceContent", () => {
     expect(markup).not.toContain("workspace-fixture");
   });
 
-  it("renders decisions as information without reference or action CTA", () => {
+  it("renders decisions as a badge linking to the council without execution CTA", () => {
     const markup = renderContent();
 
     expect(markup).toContain("Decisión registrada");
+    expect(markup).toContain("Ver en el Consejo de Acciones");
+    expect(markup).toContain('href="/decisions?tab=consejo"');
+    expect(markup).not.toContain("propuesta=");
     expect(markup).not.toContain("reference");
     expect(markup).not.toContain("Aprobar");
     expect(markup).not.toContain("Ejecutar");
@@ -94,6 +97,7 @@ describe("ControlRoomExperienceContent", () => {
 
     expect(markup).not.toContain("Generar preview");
     expect(markup).not.toContain("Confirmar preview");
+    expect(markup.match(/<button/g)).toHaveLength(1);
   });
 
   it("renders a disabled server action and its exact reason without enabling it", () => {
@@ -110,6 +114,7 @@ describe("ControlRoomExperienceContent", () => {
                 actions: [
                   {
                     action_handle: "a".repeat(64),
+                    kind: "followup_task" as const,
                     label: "Solicitar revisión de owner",
                     enabled: false,
                     requires_approval: true,
@@ -125,9 +130,40 @@ describe("ControlRoomExperienceContent", () => {
 
     expect(markup).toContain("Solicitar revisión de owner");
     expect(markup).toContain("Actualiza los datos antes de continuar.");
-    expect(markup).toContain("Generar preview");
+    expect(markup).not.toContain("Generar preview");
     expect(markup).toContain("disabled");
     expect(markup).not.toContain("a".repeat(64));
+  });
+
+  it("collapses approved exceptions and never exposes their handles", () => {
+    const markup = renderContent({
+      experience: {
+        ...experience,
+        exceptions: [
+          {
+            title: "Proveedor duplicado",
+            observed_at: "2026-07-20T00:00:00Z",
+            approved_at: "2026-07-22T10:00:00Z",
+            reason: "Proveedor validado por auditoría interna",
+            approved_by_you: true,
+            actions: [
+              {
+                action_handle: "d".repeat(64),
+                kind: "exception_reopen" as const,
+                label: "Reabrir hallazgo",
+                enabled: true,
+                requires_approval: false,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(markup).toContain("Excepciones aprobadas (1)");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("Proveedor duplicado");
+    expect(markup).not.toContain("d".repeat(64));
   });
 
   it("summarises multi-fact sections with headlines built only from present fields", () => {

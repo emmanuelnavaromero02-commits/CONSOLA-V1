@@ -11,6 +11,12 @@ from app.services.control_room.business_action_authority import (
     action_item_is_stale,
     action_source_binding_complete,
 )
+from app.services.control_room.business_action_authority_policy import (
+    DIRECT_ACTION_TEMPLATE_IDS,
+)
+from app.services.control_room.business_action_public_projection import (
+    PUBLIC_ACTION_KINDS,
+)
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_action_resolution import (
     authorized_explicit_action_bindings,
@@ -34,10 +40,14 @@ def resolve_business_experience_actions(
 ) -> list[ExperienceAction]:
     if not action_item_is_current(item, operation="preview"):
         return []
-    bindings = authorized_explicit_action_bindings(
-        item,
-        user,
-        enabled_template_ids=enabled_template_ids,
+    bindings = tuple(
+        binding
+        for binding in authorized_explicit_action_bindings(
+            item,
+            user,
+            enabled_template_ids=enabled_template_ids,
+        )
+        if binding.template_id not in DIRECT_ACTION_TEMPLATE_IDS
     )
     stale = action_item_is_stale(item)
     source_binding = action_source_binding_complete(item)
@@ -57,9 +67,11 @@ def resolve_business_experience_actions(
         if label is None:
             continue
         enabled = not stale and source_binding
+        # Preview-only templates open the same confirmation flow as follow-ups.
         actions.append(
             ExperienceAction(
                 action_handle=binding.binding_id,
+                kind=PUBLIC_ACTION_KINDS.get(template_id, "followup_task"),
                 label=label,
                 enabled=enabled,
                 requires_approval=bool(template.get("requires_approval", True)),

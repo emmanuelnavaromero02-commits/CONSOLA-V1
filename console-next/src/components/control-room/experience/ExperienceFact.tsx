@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { useId } from "react";
 import { CalendarDays, CheckCircle2, Clock3, Info } from "lucide-react";
 
@@ -5,7 +6,7 @@ import type {
   ExperienceFactV2,
   ExperienceNarrative,
 } from "@/lib/control-room/experience-contract";
-import type { OpenExperiencePreview } from "@/lib/control-room/use-control-room-experience-preview";
+import type { OpenExperienceAction } from "@/lib/control-room/use-control-room-experience-action";
 import {
   decisionLabel,
   formatMetric,
@@ -13,7 +14,10 @@ import {
 } from "@/lib/control-room/experience-presenter";
 import { cn } from "@/lib/utils";
 
+import { COUNCIL_LINK_LABEL } from "./ExperienceActionDialog";
 import { FactFallbackReading } from "./FactFallbackReading";
+
+export const COUNCIL_HREF = "/decisions?tab=consejo";
 
 const severityStyle = {
   critical: "border-destructive/30 bg-destructive/10 text-destructive",
@@ -93,11 +97,11 @@ function FactNarrative({ narrative }: { narrative: ExperienceNarrative }) {
 export function ExperienceFact({
   fact,
   sectionTitle = null,
-  onPreviewAction,
+  onAction,
 }: {
   fact: ExperienceFactV2;
   sectionTitle?: string | null;
-  onPreviewAction: OpenExperiencePreview;
+  onAction: OpenExperienceAction;
 }) {
   const reasonId = useId();
   return (
@@ -152,18 +156,15 @@ export function ExperienceFact({
       )}
 
       {fact.actions.length > 0 ? (
-        <div className="mt-5 space-y-3 border-t pt-4">
+        <div className="mt-5 space-y-2 border-t pt-4">
           {fact.actions.map((action, index) => {
             const disabledReasonId = `${reasonId}-${index}`;
             return (
               <div key={index} className="space-y-2">
-                <p className="break-words text-sm font-medium text-card-foreground">
-                  {action.label}
-                </p>
                 <button
                   type="button"
                   disabled={!action.enabled}
-                  aria-label={`Generar preview: ${action.label} — ${fact.title}`}
+                  aria-label={`${action.label} — ${fact.title}`}
                   aria-describedby={
                     !action.enabled && action.disabled_reason
                       ? disabledReasonId
@@ -171,13 +172,12 @@ export function ExperienceFact({
                   }
                   onClick={
                     action.enabled
-                      ? (event) =>
-                          onPreviewAction(fact, action, event.currentTarget)
+                      ? (event) => onAction(fact, action, event.currentTarget)
                       : undefined
                   }
-                  className="inline-flex min-h-[44px] w-full items-center justify-center rounded-md border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex min-h-[44px] w-full items-center justify-center break-words rounded-md border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Generar preview
+                  {action.label}
                 </button>
                 {!action.enabled && action.disabled_reason ? (
                   <p
@@ -199,10 +199,18 @@ export function ExperienceFact({
           <time dateTime={fact.observed_at}>{formatObservedAt(fact.observed_at)}</time>
         </span>
         {fact.decision ? (
-          <span className="inline-flex items-center gap-1.5 font-medium text-success">
-            <CheckCircle2 aria-hidden className="h-4 w-4" />
-            {decisionLabel(fact.decision)}
-          </span>
+          <>
+            <span className="inline-flex items-center gap-1.5 font-medium text-success">
+              <CheckCircle2 aria-hidden className="h-4 w-4" />
+              {decisionLabel(fact.decision)}
+            </span>
+            <Link
+              href={COUNCIL_HREF}
+              className="font-medium text-primary underline-offset-4 hover:underline"
+            >
+              {COUNCIL_LINK_LABEL}
+            </Link>
+          </>
         ) : null}
       </div>
     </article>

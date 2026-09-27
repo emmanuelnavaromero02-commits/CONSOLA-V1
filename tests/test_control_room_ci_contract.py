@@ -166,6 +166,7 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_mcp_infra_pdf_ci_contract.py",
     "tests/test_mcp_control_room_read_permissions.py",
     "tests/test_v1_router_mount.py",
+    "tests/test_migration_99zzzzv_direct_action_templates.py",
 )
 
 FOCAL_TESTS = (

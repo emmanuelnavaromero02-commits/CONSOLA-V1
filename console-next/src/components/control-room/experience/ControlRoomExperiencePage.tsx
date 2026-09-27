@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, RefreshCcw } from "lucide-react";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
 import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
@@ -10,15 +11,16 @@ import {
 } from "@/lib/control-room/experience-presenter";
 import { useControlRoomExperience } from "@/lib/control-room/use-control-room-experience";
 import {
-  type OpenExperiencePreview,
-  useControlRoomExperiencePreview,
-} from "@/lib/control-room/use-control-room-experience-preview";
+  type OpenExperienceAction,
+  useControlRoomExperienceAction,
+} from "@/lib/control-room/use-control-room-experience-action";
 import { useControlRoomLive } from "@/lib/control-room/use-control-room-live";
 import { cn } from "@/lib/utils";
 
+import { ExperienceActionDialog } from "./ExperienceActionDialog";
+import { ExperienceExceptions } from "./ExperienceExceptions";
 import { ExperienceLiveBadge } from "./ExperienceLiveBadge";
 import { ExperienceLoadState } from "./ExperienceLoadState";
-import { ExperiencePreviewFlow } from "./ExperiencePreviewFlow";
 import { ExperienceSection } from "./ExperienceSection";
 
 export function ControlRoomExperienceContent({
@@ -26,7 +28,7 @@ export function ControlRoomExperienceContent({
   refreshing,
   refreshFailed,
   onRefresh,
-  onPreviewAction,
+  onAction,
   checkedAt = null,
   liveOffline = false,
 }: {
@@ -34,7 +36,7 @@ export function ControlRoomExperienceContent({
   refreshing: boolean;
   refreshFailed: boolean;
   onRefresh: () => void;
-  onPreviewAction: OpenExperiencePreview;
+  onAction: OpenExperienceAction;
   checkedAt?: number | null;
   liveOffline?: boolean;
 }) {
@@ -78,22 +80,24 @@ export function ControlRoomExperienceContent({
             <ExperienceSection
               key={`${section.title}:${index}`}
               section={section}
-              onPreviewAction={onPreviewAction}
+              onAction={onAction}
             />
           ))
         )}
+        <ExperienceExceptions exceptions={experience.exceptions ?? []} onAction={onAction} />
       </div>
     </>
   );
 }
 
 export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } = {}) {
+  const router = useRouter();
   const query = useControlRoomExperience();
-  const preview = useControlRoomExperiencePreview(query.data, query.workspaceId);
+  const action = useControlRoomExperienceAction(query.data, query.workspaceId, router.push);
   const live = useControlRoomLive({
     workspaceId: query.workspaceId,
     experience: query,
-    paused: preview.selection !== null,
+    paused: action.dialogOpen,
   });
   const retry = live.refreshAll;
 
@@ -106,7 +110,7 @@ export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } =
           refreshing={query.isFetching}
           refreshFailed={query.isRefetchError}
           onRefresh={retry}
-          onPreviewAction={preview.openPreview}
+          onAction={action.openAction}
           checkedAt={live.checkedAt}
           liveOffline={live.offline}
         />
@@ -115,7 +119,7 @@ export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } =
       ) : (
         <ExperienceLoadState state={experienceErrorKind(query.error)} onRetry={retry} />
       )}
-      <ExperiencePreviewFlow {...preview} />
+      <ExperienceActionDialog {...action} />
     </main>
   );
 }

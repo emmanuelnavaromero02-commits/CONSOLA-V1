@@ -8,13 +8,14 @@ const sourceFiles = [
   "src/components/control-room/experience/ControlRoomExperiencePage.tsx",
   "src/components/control-room/experience/ExperienceSection.tsx",
   "src/components/control-room/experience/ExperienceFact.tsx",
-  "src/components/control-room/experience/ExperiencePreviewFlow.tsx",
+  "src/components/control-room/experience/ExperienceActionDialog.tsx",
+  "src/components/control-room/experience/ExperienceExceptions.tsx",
   "src/components/control-room/experience/ExperienceLiveBadge.tsx",
   "src/components/control-room/experience/FactFallbackReading.tsx",
   "src/lib/control-room/experience-client.ts",
   "src/lib/control-room/experience-headlines.ts",
   "src/lib/control-room/use-control-room-experience.ts",
-  "src/lib/control-room/use-control-room-experience-preview.ts",
+  "src/lib/control-room/use-control-room-experience-action.ts",
   "src/lib/control-room/use-control-room-live.ts",
   "src/lib/time/use-now.ts",
 ];
@@ -33,13 +34,46 @@ describe("Control Room Business Experience boundary", () => {
     expect(page.split("\n").length).toBeLessThanOrEqual(180);
   });
 
-  it("uses only the V2 Experience GET, its freshness GET and the action preview POST", () => {
+  it("uses only the V2 GETs, the preview POST and the four audited action POSTs", () => {
     const endpointMatches = source.match(/"\/api\/control-room\/[^\"]+"/g) ?? [];
     expect([...new Set(endpointMatches)].sort()).toEqual([
+      '"/api/control-room/actions/decision-proposal"',
+      '"/api/control-room/actions/exception"',
+      '"/api/control-room/actions/exception-reopen"',
       '"/api/control-room/actions/preview"',
+      '"/api/control-room/actions/studio-target"',
       '"/api/control-room/experience/v2"',
       '"/api/control-room/experience/v2/freshness"',
     ]);
+  });
+
+  it("confirms every mutating action in a dialog and navigates without window.location", () => {
+    const dialog = readFileSync(
+      join(
+        process.cwd(),
+        "src/components/control-room/experience/ExperienceActionDialog.tsx",
+      ),
+      "utf8",
+    );
+    const page = readFileSync(
+      join(
+        process.cwd(),
+        "src/components/control-room/experience/ControlRoomExperiencePage.tsx",
+      ),
+      "utf8",
+    );
+
+    expect(dialog).toContain('role="dialog"');
+    expect(dialog).toContain('aria-modal="true"');
+    expect(dialog).toContain('role="status"');
+    expect(dialog).toContain(
+      "El hallazgo se archivará como excepción aprobada; puedes reabrirlo.",
+    );
+    expect(dialog).toContain(
+      "Se crea una decisión con compromiso a 7 días y pasa al Consejo para aprobación.",
+    );
+    expect(page).toContain("router.push");
+    expect(page).toContain("paused: action.dialogOpen");
   });
 
   it("disconnects every legacy root surface and mutation", () => {

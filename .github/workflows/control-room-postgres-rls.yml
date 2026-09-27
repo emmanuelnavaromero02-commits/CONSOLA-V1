@@ -228,7 +228,8 @@ jobs:
             tests/test_talent_nine_box_projection_guards.py \
             tests/test_talent_readiness_benchmark_guards.py \
             tests/test_talent_score_type_guards.py \
-            tests/test_v1_router_mount.py
+            tests/test_v1_router_mount.py \
+            tests/test_migration_99zzzzv_direct_action_templates.py
 
       - name: Run SuccessFactors pipeline persistence tests
         env:

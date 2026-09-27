@@ -113,6 +113,7 @@ from app.services.intelligence import market_decision_validation
 from app.services.control_room import cycle_blackboard
 from app.services.permissions import require_permission
 from app.services.security_context import build_security_context, verify_signed_security_context
+from app.routers.control_room_actions import router as actions_router
 from app.routers.control_room_live import router as live_router
 from app.routers.control_room_surfaces import router as surfaces_router
 
@@ -120,6 +121,7 @@ from app.routers.control_room_surfaces import router as surfaces_router
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
 router.include_router(surfaces_router)
 router.include_router(live_router)
+router.include_router(actions_router)
 
 
 _INTERNAL_OPERATIONAL_VIEWS = frozenset(

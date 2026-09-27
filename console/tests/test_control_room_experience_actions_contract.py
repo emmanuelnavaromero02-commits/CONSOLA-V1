@@ -67,6 +67,7 @@ def test_valid_action_has_exact_server_binding():
     action = fact.actions[0]
     assert action.model_dump() == {
         "action_handle": action.action_handle,
+        "kind": "followup_task",
         "label": "Solicitar revision de owner",
         "enabled": True,
         "requires_approval": True,
