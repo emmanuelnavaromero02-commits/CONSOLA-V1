@@ -7,9 +7,9 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 from app.services.permissions import has_permission
 
-DECISIONS_PLATFORM_ROLES = frozenset({"admin", "owner", "super_admin"})
 DECISIONS_PERMISSIONS = ("control_room.approve", "control_room.write")
 
 
@@ -110,7 +110,7 @@ def can_delete_decision(
 def can_view_decisions(user: Mapping[str, Any] | None) -> bool:
     if not user:
         return False
-    if str(user.get("role") or "") in DECISIONS_PLATFORM_ROLES:
+    if str(user.get("role") or "") in PLATFORM_ADMIN_ROLES:
         return True
     return any(has_permission(dict(user), key) for key in DECISIONS_PERMISSIONS)
 
