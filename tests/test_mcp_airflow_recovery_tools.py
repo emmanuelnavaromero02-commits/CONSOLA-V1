@@ -126,6 +126,33 @@ def test_describe_reports_manual_schedule_scheduler_health_and_stale_runs(monkey
     assert all(method == "GET" for method, _url, _kwargs in fake.requests)
 
 
+def test_describe_falls_back_to_the_logical_date_when_queued_at_is_absent(monkeypatch):
+    dag_url = f"{BASE}/dags/sap_successfactors_extract"
+    airflow, _fake = _tools(
+        monkeypatch,
+        {
+            ("GET", dag_url): FakeResponse(200, _dag(dag_id="sap_successfactors_extract")),
+            ("GET", f"{BASE}/health"): FakeResponse(200, {"scheduler": {"status": "unhealthy"}}),
+            ("GET", f"{dag_url}/dagRuns"): FakeResponse(
+                200,
+                {
+                    "dag_runs": [
+                        {"dag_run_id": "old", "state": "queued", "logical_date": _iso(timedelta(hours=2)), "execution_date": _iso(timedelta(hours=2))},
+                        {"dag_run_id": "fresh", "state": "queued", "execution_date": _iso(timedelta(minutes=1))},
+                        {"dag_run_id": "undated", "state": "queued"},
+                    ],
+                    "total_entries": 120,
+                },
+            ),
+        },
+    )
+    result = asyncio.run(airflow.airflow_describe_dag("sap_successfactors_extract"))
+    assert [(run["dag_run_id"], run["stale"]) for run in result["runs"]] == [("old", True), ("fresh", False), ("undated", False)]
+    assert result["runs"][0]["queued_at"]
+    assert result["scheduler_healthy"] is False
+    assert result["runs_truncated"] is True
+
+
 @pytest.mark.parametrize(
     "overrides,kind",
     [

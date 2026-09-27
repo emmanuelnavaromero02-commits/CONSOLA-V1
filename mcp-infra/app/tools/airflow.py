@@ -200,12 +200,17 @@ async def airflow_describe_dag(dag_id: str, stale_after_seconds: int = 900) -> d
     runs = []
     for run in runs_payload.get("dag_runs", []) or []:
         state = str(run.get("state") or "").lower()
-        queued_at = _parse_airflow_time(run.get("queued_at"))
+        # Airflow 2.x run payloads carry no queued_at; a manually triggered
+        # run's logical date is its trigger time.
+        queued_since = (
+            run.get("queued_at") or run.get("logical_date") or run.get("execution_date")
+        )
+        queued_at = _parse_airflow_time(queued_since)
         runs.append(
             {
                 "dag_run_id": run.get("dag_run_id"),
                 "state": state,
-                "queued_at": run.get("queued_at"),
+                "queued_at": queued_since,
                 "start_date": run.get("start_date"),
                 "stale": bool(
                     state == "queued"
