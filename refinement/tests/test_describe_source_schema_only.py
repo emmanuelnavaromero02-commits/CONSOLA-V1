@@ -132,4 +132,6 @@ def test_tool_manifest_declares_schema_only(refinement_main):
     tools = asyncio.run(refinement_main.mcp_tools())
     items = tools.get("tools", tools) if isinstance(tools, dict) else tools
     describe = next(tool for tool in items if tool["name"] == "describe_source")
-    assert describe["input_schema"]["properties"]["schema_only"] == {"type": "boolean", "default": False}
+    schema_only = describe["input_schema"]["properties"]["schema_only"]
+    assert schema_only["type"] == "boolean"
+    assert schema_only["default"] is False
