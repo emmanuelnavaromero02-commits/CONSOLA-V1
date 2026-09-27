@@ -1,6 +1,6 @@
 import type { AnalyticsApp } from "@/lib/admin-surfaces";
-import { dailyParts } from "@/lib/control-room/wisdom-bit-monitors";
 import type { DatasetDetail, DatasetSummary, PipelineEntity, PipelineLastRun } from "@/lib/monitor/types";
+import { describeSchedule } from "@/lib/schedule/frequency";
 
 export type NodeStatus = "sincronizado" | "en_proceso" | "requiere_revision";
 
@@ -99,6 +99,7 @@ export function aggregateStatus(facts: Array<StatusFact | null>): StatusFact | n
 export interface ScheduleSource {
   trigger_type?: string | null;
   cron_expression?: string | null;
+  cron_timezone?: string | null;
   enabled?: boolean | null;
   dag_id?: string | null;
 }
@@ -118,14 +119,9 @@ export function scheduleText(entity: ScheduleSource | null | undefined): string 
   if (!entity) return null;
   const cron = text(entity.cron_expression);
   if (!scheduleIsActive(entity)) {
-    return cron ? `Sin programación activa (cron ${cron} registrado sin activar)` : "Sin programación activa";
+    return cron ? "Bajo demanda (hay una frecuencia registrada sin activar)" : "Bajo demanda";
   }
-  const daily = dailyParts(cron);
-  if (daily) {
-    const time = `${String(daily.hour).padStart(2, "0")}:${String(daily.minute).padStart(2, "0")}`;
-    return `Diaria a las ${time} UTC (cron ${cron})`;
-  }
-  return `Programada en UTC (cron ${cron})`;
+  return describeSchedule(cron, entity.cron_timezone);
 }
 
 export function appsUsing(names: Iterable<string>, apps: AnalyticsApp[] | null | undefined): AnalyticsApp[] {

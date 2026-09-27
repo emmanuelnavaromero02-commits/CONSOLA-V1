@@ -4,7 +4,9 @@ import { Pencil, Play, Plus, RefreshCw, ScanSearch, Table2, Type, Upload } from 
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { FrequencyPicker } from "@/components/schedule/FrequencyPicker";
 import { useSourceSchema } from "@/lib/monitor/hooks";
+import { defaultTimeZone } from "@/lib/schedule/frequency";
 import { MAX_SPEC_BYTES, studioErrorMessage } from "@/lib/studio/client";
 import {
   useCreateEntity,
@@ -41,12 +43,15 @@ function manifestEntity(manifest: StudioManifest | undefined, name: string): Stu
 }
 
 function draftFor(entity: StudioEntity, meta: StudioManifestEntity | undefined): EditDraft {
+  const cron = String(meta?.cron_expression ?? "").trim();
+  const trigger = String(meta?.trigger_type ?? (cron ? "scheduled" : "manual")).trim().toLowerCase();
   return {
     display_name: String(entity.display_name ?? meta?.display_name ?? ""),
     mode: String(entity.mode ?? meta?.mode ?? "full"),
     primary_key: String(meta?.primary_key ?? ""),
     dag_id: String(entity.dag_id ?? meta?.dag_id ?? ""),
-    cron_expression: String(meta?.cron_expression ?? ""),
+    cron_expression: trigger === "manual" ? "" : cron,
+    cron_timezone: String(meta?.cron_timezone || "UTC"),
     description: String(entity.description ?? meta?.description ?? ""),
   };
 }
@@ -176,7 +181,8 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
 
   function startEdit(entity: StudioEntity) {
     const before = draftFor(entity, manifestEntity(manifest, entity.name));
-    setEditing({ name: entity.name, before, draft: before });
+    const draft = before.cron_expression ? before : { ...before, cron_timezone: defaultTimeZone() };
+    setEditing({ name: entity.name, before, draft });
     setRenaming(null);
   }
 
@@ -417,14 +423,13 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
                             saveEdit();
                           }}
                         >
-                          {(["display_name", "primary_key", "dag_id", "cron_expression", "description"] as const).map((field) => (
+                          {(["display_name", "primary_key", "dag_id", "description"] as const).map((field) => (
                             <label key={field} className="flex flex-col gap-1 text-xs">
                               <span className="font-medium">
                                 {{
                                   display_name: "Nombre visible",
                                   primary_key: "Llave primaria",
                                   dag_id: "DAG",
-                                  cron_expression: "Cron (vacío = manual)",
                                   description: "Descripción",
                                 }[field]}
                               </span>
@@ -457,6 +462,21 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
                               ))}
                             </select>
                           </label>
+                          <FrequencyPicker
+                            name="entity_frequency"
+                            className="md:col-span-3"
+                            value={{ cron: editing.draft.cron_expression, timeZone: editing.draft.cron_timezone }}
+                            onChange={(next) =>
+                              setEditing((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      draft: { ...current.draft, cron_expression: next.cron, cron_timezone: next.timeZone },
+                                    }
+                                  : current,
+                              )
+                            }
+                          />
                           <div className="flex items-end gap-2 md:col-span-3">
                             <button type="submit" className={primaryButtonClass} disabled={update.isPending}>
                               {update.isPending ? <Spinner /> : null} Guardar cambios

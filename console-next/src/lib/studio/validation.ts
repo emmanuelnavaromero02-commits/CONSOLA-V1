@@ -62,6 +62,7 @@ export interface EntityDraft {
   primary_key: string;
   dag_id: string;
   cron_expression: string;
+  cron_timezone: string;
   description: string;
 }
 
@@ -76,6 +77,9 @@ export function changedEntityFields(before: EntityDraft, after: EntityDraft): En
     const cron = after.cron_expression.trim();
     patch.cron_expression = cron || null;
     patch.trigger_type = cron ? "scheduled" : "manual";
+  }
+  if (after.cron_expression.trim() && after.cron_timezone !== before.cron_timezone) {
+    patch.cron_timezone = after.cron_timezone;
   }
   return patch;
 }

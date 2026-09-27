@@ -592,6 +592,7 @@ def test_sap_b1_hint_sources_select_the_hints_contract():
         "mcp-infra/app/tools/control_room.py",
         "console-next/src/app/(shell)/studio/page.tsx",
         "console-next/src/lib/studio/sections.ts",
+        "console-next/src/lib/glossary.ts",
         "scripts/deploy_main_aws.py",
         "infra/terraform/deploy/docker-compose.cartridges.yml",
     ):

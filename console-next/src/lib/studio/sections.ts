@@ -1,5 +1,6 @@
 import { Award, Clock, Database, Network, Wand2, type LucideIcon } from "lucide-react";
 
+import { LAYER_LABELS } from "@/lib/glossary";
 import type { DatasetSummary } from "@/lib/monitor/types";
 
 import { datasetsForLayer } from "./datasets";
@@ -28,21 +29,21 @@ export const STUDIO_SECTIONS: readonly StudioSection[] = [
   },
   {
     id: "entidades",
-    label: "Tablas de Origen (Bronce)",
+    label: LAYER_LABELS.bronze,
     step: 3,
     icon: Database,
     countNoun: { one: "tabla de origen", other: "tablas de origen" },
   },
   {
     id: "refinar",
-    label: "Modelado y Limpieza (Plata)",
+    label: LAYER_LABELS.silver,
     step: 4,
     icon: Wand2,
     countNoun: { one: "dataset Plata", other: "datasets Plata" },
   },
   {
     id: "capas",
-    label: "Indicadores y KPIs (Oro)",
+    label: LAYER_LABELS.gold,
     step: 5,
     icon: Award,
     countNoun: { one: "dataset Oro", other: "datasets Oro" },
