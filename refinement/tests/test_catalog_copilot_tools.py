@@ -91,8 +91,6 @@ def test_tool_catalogue_exposes_copilot_tools():
     assert set(tools["auto_catalog"]["input_schema"]["properties"]) == {
         "cartridge",
         "include_sources",
-        "max_items",
-        "budget_ms",
     }
     assert tools["reject_relationship"]["input_schema"]["required"] == [
         "from_dataset",
@@ -114,7 +112,7 @@ def test_auto_catalog_requires_read_permission(worker):
     assert worker.calls == []
 
 
-def test_auto_catalog_runs_bounded_catch_up_with_the_verified_context(worker):
+def test_auto_catalog_enqueues_with_the_verified_context(worker):
     result = refinement_main._mcp_invoke_sync(
         _body(
             "auto_catalog",
@@ -130,12 +128,7 @@ def test_auto_catalog_runs_bounded_catch_up_with_the_verified_context(worker):
     assert result["status"] == "ready"
     sec, kwargs = worker.calls[0]
     assert sec["workspace_id"] == WORKSPACE and sec["trusted"] is True
-    assert kwargs == {
-        "cartridge": "sap_successfactors",
-        "include_sources": True,
-        "max_items": 8,
-        "budget_ms": 1500,
-    }
+    assert kwargs == {"cartridge": "sap_successfactors", "include_sources": True}
 
 
 def test_auto_catalog_rejects_unsafe_cartridge_and_idles_without_workspace(worker):

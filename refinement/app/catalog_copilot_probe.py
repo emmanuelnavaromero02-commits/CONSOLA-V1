@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -35,7 +36,10 @@ EXACT_KEY_MAX_ROWS = 5_000_000
 MAX_KEY_CANDIDATES = 8
 MAX_BRONZE_FILES = 50
 CONTAINMENT_CHILD_CAP = 20_000
+# Child rows read before DISTINCT: bounds the scan of a large fact table.
+CONTAINMENT_ROW_CAP = 200_000
 _LOAD_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+_LOAD_DATE_PATTERN = r"load_date=([0-9]{4}-[0-9]{2}-[0-9]{2})"
 
 
 class ProbeError(RuntimeError):
@@ -107,14 +111,27 @@ class CatalogCopilotProbe:
         self.engine = engine
         self.timeout_seconds = timeout_seconds
 
+    def _timeout(self, deadline: float | None) -> float:
+        if deadline is None:
+            return self.timeout_seconds
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProbeError("probe_budget_exhausted")
+        return min(self.timeout_seconds, remaining)
+
     def _run(
-        self, sql: str, *, gold_context: dict[str, Any] | None = None
+        self,
+        sql: str,
+        *,
+        gold_context: dict[str, Any] | None = None,
+        deadline: float | None = None,
     ) -> list[tuple]:
+        timeout = self._timeout(deadline)
         with self.engine._duckdb_lock:
             con = self.engine._conn()
             if gold_context is not None:
                 self.engine._pg_gold_attach(con, gold_context)
-            timer = threading.Timer(self.timeout_seconds, con.interrupt)
+            timer = threading.Timer(timeout, con.interrupt)
             timer.daemon = True
             timer.start()
             try:
@@ -150,6 +167,7 @@ class CatalogCopilotProbe:
         key_cols: list[str],
         row_count: int | None,
         sample: int = PATTERN_SAMPLE_ROWS,
+        deadline: float | None = None,
     ) -> ColumnProbeResult:
         result = ColumnProbeResult()
         text_cols = list(dict.fromkeys(text_cols))[:MAX_PATTERN_COLUMNS]
@@ -178,7 +196,7 @@ class CatalogCopilotProbe:
                 f"SELECT {columns} FROM ({relation.sql}) _published LIMIT {limit}"
                 ") _sample"
             )
-            row = self._run(sql, gold_context=gold_ctx)[0]
+            row = self._run(sql, gold_context=gold_ctx, deadline=deadline)[0]
             result.sampled_rows = int(row[0] or 0)
             for (column, pattern_name), value in zip(plan, row[1:], strict=True):
                 count = int(value or 0)
@@ -194,7 +212,7 @@ class CatalogCopilotProbe:
                 projections.append(f"count({quoted})")
             sql = f"SELECT {', '.join(projections)} FROM ({relation.sql}) _published"
             try:
-                row = self._run(sql, gold_context=gold_ctx)[0]
+                row = self._run(sql, gold_context=gold_ctx, deadline=deadline)[0]
             except ProbeError:
                 return result
             total = int(row[0] or 0)
@@ -214,45 +232,62 @@ class CatalogCopilotProbe:
         ctx: dict[str, Any],
         *,
         child_cap: int = CONTAINMENT_CHILD_CAP,
+        row_cap: int = CONTAINMENT_ROW_CAP,
+        deadline: float | None = None,
     ) -> ContainmentResult:
         cap = max(1, int(child_cap))
+        rows = max(1, int(row_cap))
         child_q = quote_identifier(child_column)
         parent_q = quote_identifier(parent_column)
+        # The child is sampled before DISTINCT so a large fact table is never
+        # scanned in full; only the (smaller) parent key set is read whole.
         sql = (
-            "WITH child AS ("
-            f"SELECT DISTINCT CAST({child_q} AS VARCHAR) AS v FROM ({child.sql}) _c "
-            f"WHERE {child_q} IS NOT NULL LIMIT {cap + 1}"
+            "WITH child_rows AS ("
+            f"SELECT CAST({child_q} AS VARCHAR) AS v FROM ({child.sql}) _c "
+            f"WHERE {child_q} IS NOT NULL LIMIT {rows + 1}"
+            f"), child AS (SELECT DISTINCT v FROM child_rows LIMIT {cap + 1}"
             "), parent AS ("
             f"SELECT DISTINCT CAST({parent_q} AS VARCHAR) AS k FROM ({parent.sql}) _p "
             f"WHERE {parent_q} IS NOT NULL"
-            ") SELECT (SELECT count(*) FROM child), "
+            ") SELECT (SELECT count(*) FROM child_rows), (SELECT count(*) FROM child), "
             "(SELECT count(*) FROM child c LEFT JOIN parent p ON c.v = p.k "
             "WHERE p.k IS NULL)"
         )
         gold_ctx = ctx if (child.gold or parent.gold) else None
-        row = self._run(sql, gold_context=gold_ctx)[0]
-        child_distinct = int(row[0] or 0)
-        orphans = int(row[1] or 0)
+        row = self._run(sql, gold_context=gold_ctx, deadline=deadline)[0]
+        sampled_rows = int(row[0] or 0)
+        child_distinct = int(row[1] or 0)
+        orphans = int(row[2] or 0)
         return ContainmentResult(
             child_distinct=child_distinct,
             orphan_values=orphans,
-            sampled=child_distinct > cap,
+            sampled=child_distinct > cap or sampled_rows > rows,
         )
 
-    def _latest_partition_glob(self, source: str, ctx: dict[str, Any]) -> tuple[str, str]:
-        load_date = self.engine._resolve_latest_date(source, ctx)
-        if not load_date or not _LOAD_DATE.fullmatch(str(load_date)):
-            raise ProbeError("bronze_partition_unavailable")
+    def _latest_partition_glob(
+        self, source: str, ctx: dict[str, Any], deadline: float | None = None
+    ) -> tuple[str, str]:
+        """Latest load_date from object keys only: no Parquet footer is read."""
         path = str(self.engine._bronze_path(source, ctx))
         if path.endswith("/**/*.parquet") and "load_date=" not in path:
-            narrowed = path[: -len("/**/*.parquet")] + f"/load_date={load_date}/**/*.parquet"
-        elif "load_date=*" in path:
-            narrowed = path.replace("load_date=*", f"load_date={load_date}", 1)
+            base = path[: -len("/**/*.parquet")]
+        elif "/load_date=*" in path:
+            base = path.split("/load_date=*", 1)[0]
         else:
             raise ProbeError("bronze_partition_unavailable")
-        if "'" in narrowed:
+        if "'" in base:
             raise ProbeError("bronze_partition_unavailable")
-        return str(load_date), narrowed
+        listing = f"{base}/load_date=*/batch_id=*/*.parquet"
+        row = self._run(
+            "SELECT max(regexp_extract(file, "
+            f"{_quote_literal(_LOAD_DATE_PATTERN)}, 1)) "
+            f"FROM glob({_quote_literal(listing)})",
+            deadline=deadline,
+        )[0]
+        load_date = str(row[0] or "")
+        if not _LOAD_DATE.fullmatch(load_date):
+            raise ProbeError("bronze_partition_unavailable")
+        return load_date, f"{base}/load_date={load_date}/**/*.parquet"
 
     def bronze_footer(
         self,
@@ -260,11 +295,13 @@ class CatalogCopilotProbe:
         ctx: dict[str, Any],
         *,
         allow_range: Callable[[str, str], bool] | None = None,
+        deadline: float | None = None,
     ) -> BronzeFooter:
-        load_date, narrowed = self._latest_partition_glob(source, ctx)
+        load_date, narrowed = self._latest_partition_glob(source, ctx, deadline)
         rows = self._run(
             f"SELECT file FROM glob({_quote_literal(narrowed)}) ORDER BY file "
-            f"LIMIT {MAX_BRONZE_FILES + 1}"
+            f"LIMIT {MAX_BRONZE_FILES + 1}",
+            deadline=deadline,
         )
         files = [str(row[0]) for row in rows if row and row[0]]
         truncated = len(files) > MAX_BRONZE_FILES
@@ -273,19 +310,24 @@ class CatalogCopilotProbe:
             raise ProbeError("bronze_partition_unavailable")
         file_list = "[" + ", ".join(_quote_literal(path) for path in files) + "]"
         num_rows = int(
-            self._run(f"SELECT sum(num_rows) FROM parquet_file_metadata({file_list})")[0][0]
+            self._run(
+                f"SELECT sum(num_rows) FROM parquet_file_metadata({file_list})",
+                deadline=deadline,
+            )[0][0]
             or 0
         )
         schema = self._run(
             f"DESCRIBE SELECT * FROM read_parquet({file_list}, union_by_name=true, "
-            "hive_partitioning=false) LIMIT 0"
+            "hive_partitioning=false) LIMIT 0",
+            deadline=deadline,
         )
         stats = {
             str(row[0]): row
             for row in self._run(
                 "SELECT path_in_schema, sum(stats_null_count), sum(num_values), "
                 "min(stats_min_value), max(stats_max_value) "
-                f"FROM parquet_metadata({file_list}) GROUP BY path_in_schema"
+                f"FROM parquet_metadata({file_list}) GROUP BY path_in_schema",
+                deadline=deadline,
             )
         }
         fields: list[dict[str, Any]] = []

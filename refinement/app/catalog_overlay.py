@@ -19,6 +19,8 @@ try:
         SEMANTIC_TYPES,
         SENSITIVE_STATS,
         classify_column,
+        column_description,
+        dataset_display_name,
         semantic_type,
     )
 except ModuleNotFoundError:
@@ -27,6 +29,8 @@ except ModuleNotFoundError:
         SEMANTIC_TYPES,
         SENSITIVE_STATS,
         classify_column,
+        column_description,
+        dataset_display_name,
         semantic_type,
     )
 
@@ -216,11 +220,28 @@ def _source_entry(state: dict[str, Any]) -> dict[str, Any]:
         name = _text(item.get("name"))
         if not name:
             continue
+        semantic_value = str(item.get("semantic_type") or "")
+        classes_value = _classifications(item.get("classifications"))
+        rendered = _text(item.get("description")) or (
+            column_description(
+                {
+                    "column": name,
+                    "semantic_type": semantic_value or "text",
+                    "classifications": classes_value,
+                    "pii_kind": item.get("pii_kind"),
+                    "null_rate": item.get("null_rate")
+                    if isinstance(item.get("null_rate"), (int, float))
+                    else None,
+                }
+            )
+            if semantic_value in SEMANTIC_TYPES
+            else ""
+        )
         column: dict[str, Any] = {
             "name": name,
             "type": _text(item.get("type")),
-            "description": _text(item.get("description")),
-            "description_origin": "copilot" if _text(item.get("description")) else None,
+            "description": rendered,
+            "description_origin": "copilot" if rendered else None,
             "tags": [],
             "is_key": False,
             "is_metric": False,
@@ -260,6 +281,85 @@ def _source_entry(state: dict[str, Any]) -> dict[str, Any]:
         "columns": columns,
         "copilot": _copilot_block(state),
     }
+
+
+def _label_of(
+    name: str,
+    datasets: dict[str, Any],
+    annotations: CatalogAnnotations,
+) -> str:
+    state = annotations.subjects.get(("dataset", name)) or {}
+    return (
+        _text(state.get("display_name"))
+        or _text((datasets.get(name) or {}).get("display_name"))
+        or dataset_display_name(name, str((datasets.get(name) or {}).get("cartridge") or ""))
+    )
+
+
+def _join_names(names: list[str]) -> str:
+    shown = names[:3]
+    rest = len(names) - len(shown)
+    if rest > 0:
+        return f"{', '.join(shown)} y {rest} más"
+    if len(shown) == 1:
+        return shown[0]
+    return ", ".join(shown[:-1]) + " y " + shown[-1]
+
+
+def _render_links(
+    datasets: dict[str, Any],
+    merged: dict[tuple[str, str, str, str], dict[str, Any]],
+    annotations: CatalogAnnotations,
+    visible: set[str],
+) -> None:
+    """Relationship clauses computed for this reader only.
+
+    Stored Copilot text never names another dataset (the profiling user may
+    see tables this reader cannot); links and counts come from the active
+    edges whose two ends are visible to the reader.
+    """
+    edges: dict[tuple[str, str, str, str], dict[str, Any]] = {
+        key: value
+        for key, value in merged.items()
+        if key[0] in visible and key[2] in visible
+    }
+    for row in annotations.relationships:
+        key = _relationship_key(row)
+        if (
+            str(row.get("status") or "active") == "active"
+            and key[0] in visible
+            and key[2] in visible
+            and key not in edges
+            and all(_IDENTIFIER.fullmatch(part) for part in key)
+        ):
+            edges[key] = row
+    for name, dataset in datasets.items():
+        if dataset.get("kind") != "dataset":
+            continue
+        touching = [key for key in edges if name in (key[0], key[2])]
+        if isinstance(dataset.get("copilot"), dict):
+            dataset["copilot"]["relations"] = len(touching)
+        related = sorted(
+            {
+                _label_of(key[2] if key[0] == name else key[0], datasets, annotations)
+                for key in touching
+                if (key[2] if key[0] == name else key[0]) != name
+            }
+        )
+        if related and dataset.get("description_origin") == "copilot":
+            dataset["description"] = (
+                f"{dataset.get('description') or ''} Se vincula con {_join_names(related)}."
+            ).strip()
+        links: dict[str, list[str]] = {}
+        for key in touching:
+            if key[0] == name and key[2] != name:
+                links.setdefault(key[1], []).append(_label_of(key[2], datasets, annotations))
+        for column in dataset.get("columns") or []:
+            targets = sorted(set(links.get(str(column.get("name") or ""), [])))
+            if targets and column.get("description_origin") == "copilot":
+                column["description"] = (
+                    f"{column.get('description') or ''} Enlaza con {_join_names(targets)}."
+                ).strip()
 
 
 def apply_catalog_annotations(
@@ -318,6 +418,7 @@ def apply_catalog_annotations(
         for key, relation in sorted(merged.items())
         if key[0] in visible and key[2] in visible
     ]
+    _render_links(result_datasets, merged, annotations, visible)
 
     if include_sources and not tags and (not layer or layer == "bronze"):
         for state in annotations.sources:

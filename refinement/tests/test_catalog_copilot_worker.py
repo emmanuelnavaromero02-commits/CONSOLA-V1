@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import queue
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
@@ -241,36 +244,50 @@ def test_disabled_copilot_does_nothing(env, monkeypatch):
     assert store.saved_states == 0
 
 
-def test_catch_up_is_bounded_by_items_and_enqueues_the_rest(env):
+def test_catch_up_never_profiles_in_the_request_and_reports_pending(env, monkeypatch):
     local, host, store = env
     host.add("sap_successfactors_locations", "SELECT 'L' || i AS location_id FROM range(5) t(i)")
     worker = _worker(local, host, store)
-    status = worker.catch_up(SEC, max_items=1)
-    assert (status.processed, status.pending, status.stale) == (1, 2, 3)
-    assert status.status == "working"
-    assert worker.wait_idle(timeout=10)
+    profiled_in_request = []
+    original = worker.profile_and_link
+
+    def spy(sec, subject, **kwargs):
+        profiled_in_request.append(threading.current_thread().name)
+        return original(sec, subject, **kwargs)
+
+    monkeypatch.setattr(worker, "profile_and_link", spy)
+    request_thread = threading.current_thread().name
+    status = worker.catch_up(SEC)
+    assert (status.processed, status.stale) == (0, 3)
+    assert status.status == "working" and status.pending == 3
+    assert worker.wait_idle(timeout=15)
     assert len(store.states) == 3
+    assert request_thread not in profiled_in_request
     again = worker.catch_up(SEC)
     assert again.status == "idle"
     assert (again.processed, again.pending, again.stale) == (0, 0, 0)
     assert again.annotation_epoch is not None
 
 
-def test_catch_up_respects_the_time_budget(env):
-    local, host, store = env
-    ticks = iter([0.0] + [10.0] * 50)
-    worker = _worker(local, host, store, clock=lambda: next(ticks, 10.0))
-    status = worker.catch_up(SEC, budget_ms=1500)
-    assert status.processed == 0
-    assert status.pending == 2
-    worker.wait_idle(timeout=10)
-
-
-def test_catch_up_caps_caller_limits(env):
+def test_catch_up_returns_fast_even_when_profiles_are_slow(env, monkeypatch):
     local, host, store = env
     worker = _worker(local, host, store)
-    status = worker.catch_up(SEC, max_items=500, budget_ms=10_000_000)
-    assert status.processed == 2
+    release = threading.Event()
+    original = worker._profile_dataset
+
+    def slow(sec, name, deadline):
+        release.wait(timeout=5)
+        return original(sec, name, deadline)
+
+    monkeypatch.setattr(worker, "_profile_dataset", slow)
+    started = time.perf_counter()
+    status = worker.catch_up(SEC)
+    assert time.perf_counter() - started < 1.0
+    assert status.status == "working"
+    polled = worker.catch_up(SEC)
+    assert polled.pending == 2, "queued and in-flight subjects count as pending"
+    release.set()
+    assert worker.wait_idle(timeout=15)
 
 
 def test_catch_up_filters_by_cartridge(env):
@@ -279,8 +296,20 @@ def test_catch_up_filters_by_cartridge(env):
     worker = _worker(local, host, store)
     status = worker.catch_up(SEC, cartridge="hubspot")
     assert status.stale == 1
+    assert worker.wait_idle(timeout=15)
     assert ("dataset", "hubspot_deals") in store.states
     assert ("dataset", EMPLOYEES) not in store.states
+
+
+def test_every_query_of_a_profile_is_clamped_to_its_budget(env):
+    local, host, store = env
+    worker = _worker(local, host, store)
+    outcome = worker.profile_and_link(
+        SEC, {"kind": "dataset", "name": EMPLOYEES}, deadline=time.monotonic() - 1
+    )
+    assert outcome["status"] == "partial"
+    state = store.states[("dataset", EMPLOYEES)]
+    assert state["error_code"] == "probe_budget_exhausted"
 
 
 def test_bronze_source_profile_uses_footers_and_declared_protection(env, tmp_path):
@@ -314,7 +343,7 @@ def test_bronze_source_profile_uses_footers_and_declared_protection(env, tmp_pat
     assert columns["emailAddress"]["classification_origin"] == "packaged"
     assert columns["emailAddress"]["confidence"] == 1.0
     assert "@a.mx" not in json.dumps(summary)
-    assert "Cubre del" in columns["lastModified"]["description"]
+    assert "description" not in columns["lastModified"], "rendered at read time"
     assert worker.profile_and_link(SEC, {"kind": "bronze_source", "name": source}) == {
         "processed": False,
         "reason": "fresh",
@@ -342,18 +371,231 @@ def test_invisible_dataset_is_never_profiled(env):
     }
 
 
-def test_catch_up_keeps_going_when_one_subject_breaks(env, monkeypatch):
+def test_the_background_queue_keeps_going_when_one_subject_breaks(env, monkeypatch):
     local, host, store = env
     worker = _worker(local, host, store)
     original = worker._profile_dataset
 
-    def flaky(sec, name):
+    def flaky(sec, name, deadline):
         if name == EMPLOYEES:
             raise RuntimeError("storage hiccup")
-        return original(sec, name)
+        return original(sec, name, deadline)
 
     monkeypatch.setattr(worker, "_profile_dataset", flaky)
-    status = worker.catch_up(SEC)
-    assert status.processed == 1
+    worker.catch_up(SEC)
+    assert worker.wait_idle(timeout=15)
     assert ("dataset", DEPARTMENTS) in store.states
     assert ("dataset", EMPLOYEES) not in store.states
+
+
+def test_reprofiling_the_parent_keeps_valid_child_edges(env):
+    """Reviewer reproduction: profiling the dimension must not retire FK edges."""
+    local, host, store = env
+    worker = _worker(local, host, store)
+    _profile(worker, DEPARTMENTS)
+    _profile(worker, EMPLOYEES)
+    assert store.edges[tuple(EDGE.values())]["status"] == "active"
+    host.add(DEPARTMENTS, DEPARTMENTS_SQL, run_id="run-2")
+    store.seed_from_snapshot(DEPARTMENTS, host.snapshots[DEPARTMENTS])
+    assert _profile(worker, DEPARTMENTS)["processed"] is True
+    assert store.edges[tuple(EDGE.values())]["status"] == "active"
+    summary = store.states[("dataset", EMPLOYEES)]["summary"]
+    assert "department_id" in summary["refuted_keys"]
+    assert "employee_id" in summary["exact_keys"]
+
+
+def test_an_edge_beyond_the_candidate_cap_is_not_retired(env, monkeypatch):
+    local, host, store = env
+    worker = _worker(local, host, store)
+    _profile(worker, EMPLOYEES)
+    assert store.edges[tuple(EDGE.values())]["status"] == "active"
+    monkeypatch.setattr(catalog_copilot, "MAX_CONTAINMENT_CANDIDATES", 0)
+    host.add(EMPLOYEES, EMPLOYEES_SQL, run_id="run-2")
+    _profile(worker, EMPLOYEES)
+    assert store.edges[tuple(EDGE.values())]["status"] == "active"
+
+
+def test_an_edge_to_a_refuted_key_is_retired(env):
+    local, host, store = env
+    worker = _worker(local, host, store)
+    _profile(worker, EMPLOYEES)
+    host.add(
+        DEPARTMENTS,
+        DEPARTMENTS_SQL + " UNION ALL SELECT 'D001', 'Duplicado'",
+        run_id="run-2",
+    )
+    _profile(worker, DEPARTMENTS)
+    assert store.edges[tuple(EDGE.values())]["status"] == "retired"
+    assert "department_id" in store.states[("dataset", DEPARTMENTS)]["summary"]["refuted_keys"]
+
+
+def test_one_failing_containment_keeps_the_other_edges(env, monkeypatch):
+    local, host, store = env
+    store.seed_from_snapshot(
+        "sap_successfactors_legacy_departments",
+        host.add(
+            "sap_successfactors_legacy_departments",
+            "SELECT 'D' || lpad(CAST(i AS VARCHAR), 3, '0') AS department_id FROM range(60) t(i)",
+        ),
+    )
+    worker = _worker(local, host, store)
+    original = worker.probe.containment
+    from refinement.app.catalog_copilot_probe import ProbeError
+
+    def flaky(child, child_column, parent, parent_column, ctx, **kwargs):
+        if "legacy_departments" in parent.sql:
+            raise ProbeError("probe_timeout")
+        return original(child, child_column, parent, parent_column, ctx, **kwargs)
+
+    monkeypatch.setattr(worker.probe, "containment", flaky)
+    outcome = _profile(worker)
+    assert outcome["status"] == "partial"
+    assert "probe_timeout" in outcome["errors"]
+    assert store.edges[tuple(EDGE.values())]["status"] == "active"
+    assert store.states[("dataset", EMPLOYEES)]["error_code"] == "probe_timeout"
+
+
+def test_failed_edge_writes_still_save_a_partial_state(env):
+    local, host, store = env
+    store.fail_edges = True
+    worker = _worker(local, host, store)
+    outcome = _profile(worker)
+    assert outcome["status"] == "partial"
+    state = store.states[("dataset", EMPLOYEES)]
+    assert (state["status"], state["error_code"]) == ("partial", "edge_write_failed")
+    assert _profile(worker) == {"processed": False, "reason": "fresh"}
+
+
+def test_candidates_rank_confirmed_parents_before_siblings(env, monkeypatch):
+    """Reviewer reproduction: siblings sharing the FK name must not use up the cap."""
+    local, host, store = env
+    for index in range(4):
+        store.seed_from_snapshot(
+            f"sap_successfactors_sibling_{index}",
+            host.add(
+                f"sap_successfactors_sibling_{index}",
+                "SELECT 'D' || lpad(CAST(i % 40 AS VARCHAR), 3, '0') AS department_id, i AS n "
+                "FROM range(200) t(i)",
+            ),
+        )
+    worker = _worker(local, host, store)
+    _profile(worker, DEPARTMENTS)
+    for index in range(4):
+        _profile(worker, f"sap_successfactors_sibling_{index}")
+    monkeypatch.setattr(catalog_copilot, "MAX_CONTAINMENT_CANDIDATES", 1)
+    _profile(worker, EMPLOYEES)
+    assert store.edges[tuple(EDGE.values())]["status"] == "active"
+
+
+def test_one_to_one_pairs_are_stored_once(env):
+    local, host, store = env
+    store.seed_from_snapshot(
+        "sap_successfactors_employee_extra",
+        host.add(
+            "sap_successfactors_employee_extra",
+            "SELECT 'EMP' || lpad(CAST(i AS VARCHAR), 6, '0') AS employee_id, i AS badge "
+            "FROM range(10000) t(i)",
+        ),
+    )
+    worker = _worker(local, host, store)
+    _profile(worker, "sap_successfactors_employee_extra")
+    _profile(worker, EMPLOYEES)
+    host.add(
+        "sap_successfactors_employee_extra",
+        "SELECT 'EMP' || lpad(CAST(i AS VARCHAR), 6, '0') AS employee_id, i AS badge "
+        "FROM range(10000) t(i)",
+        run_id="run-2",
+    )
+    _profile(worker, "sap_successfactors_employee_extra")
+    pairs = [
+        (row["from_dataset"], row["to_dataset"], row["cardinality"], row["status"])
+        for row in store.edges.values()
+        if row["from_column"] == "employee_id"
+    ]
+    active = [pair for pair in pairs if pair[3] == "active"]
+    assert active == [
+        ("sap_successfactors_employee_extra", EMPLOYEES, "1:1", "active")
+    ]
+
+
+def test_wide_bronze_sources_fit_the_state_row(env, tmp_path):
+    """Reviewer reproduction: 200 columns with long names must still be saved."""
+    local, host, store = env
+    source = "raw/sap_successfactors/WideEntity"
+    folder = (
+        tmp_path
+        / source
+        / f"tenant_id={SEC['tenant_id']}"
+        / f"workspace_id={SEC['workspace_id']}"
+        / "load_date=2026-09-25"
+        / "batch_id=1"
+    )
+    folder.mkdir(parents=True)
+    table = pa.table(
+        {
+            f"emailAddressCustomFieldNumber{index:03d}AbcdefghijZ": [f"v{row}" for row in range(5)]
+            for index in range(200)
+        }
+    )
+    pq.write_table(table, folder / "a.parquet")
+    host.sources.append(source)
+    store.max_summary_bytes = 65_536
+    worker = _worker(local, host, store)
+    assert worker.profile_and_link(SEC, {"kind": "bronze_source", "name": source})["processed"]
+    state = store.states[("bronze_source", source)]
+    assert len(json.dumps(state["summary"]).encode()) <= 65_536
+    assert state["summary"]["columns"]
+    assert worker.profile_and_link(SEC, {"kind": "bronze_source", "name": source})["reason"] == "fresh"
+
+
+def test_an_oversized_summary_is_saved_without_columns(env, tmp_path, monkeypatch):
+    local, host, store = env
+    source = "raw/sap_successfactors/PerEmail"
+    folder = (
+        tmp_path
+        / source
+        / f"tenant_id={SEC['tenant_id']}"
+        / f"workspace_id={SEC['workspace_id']}"
+        / "load_date=2026-09-25"
+        / "batch_id=1"
+    )
+    folder.mkdir(parents=True)
+    table = local.engine._con.execute(
+        "SELECT 'x' || i AS emailAddress FROM range(3) t(i)"
+    ).fetch_arrow_table()
+    pq.write_table(table, folder / "a.parquet")
+    host.sources.append(source)
+    store.refuse_source_columns = True
+    worker = _worker(local, host, store)
+    outcome = worker.profile_and_link(SEC, {"kind": "bronze_source", "name": source})
+    assert outcome["status"] == "partial"
+    state = store.states[("bronze_source", source)]
+    assert state["error_code"] == "summary_too_large"
+    assert state["summary"]["columns"] == []
+
+
+def test_source_scan_runs_in_the_background_and_is_throttled(env, tmp_path):
+    local, host, store = env
+    source = "raw/sap_successfactors/PerEmail"
+    folder = (
+        tmp_path
+        / source
+        / f"tenant_id={SEC['tenant_id']}"
+        / f"workspace_id={SEC['workspace_id']}"
+        / "load_date=2026-09-25"
+        / "batch_id=1"
+    )
+    folder.mkdir(parents=True)
+    table = local.engine._con.execute("SELECT 'P' || i AS personIdExternal FROM range(3) t(i)").fetch_arrow_table()
+    pq.write_table(table, folder / "a.parquet")
+    host.sources.append(source)
+    listed = []
+    original = host.list_sources
+    host.list_sources = lambda sec: listed.append(1) or original(sec)
+    worker = _worker(local, host, store)
+    worker.catch_up(SEC, include_sources=True)
+    assert worker.wait_idle(timeout=15)
+    assert ("bronze_source", source) in store.states
+    worker.catch_up(SEC, include_sources=True)
+    assert worker.wait_idle(timeout=15)
+    assert len(listed) == 1

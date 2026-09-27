@@ -128,6 +128,23 @@ def test_migration_reruns_and_backfills_legacy_rows(
     admin = postgres_with_real_init_schema
     sec = _workspace(admin, "legacy_a", "legacy_b")
     with psycopg2.connect(admin) as conn, conn.cursor() as cur:
+        # What real databases still carry: the truncated-name UNIQUE of
+        # 13_data_catalog.sql, 67's global index, and on beta databases the
+        # composite primary key of 19_operational_stability_hotfix.sql.
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS data_relationships_edge_uq ON "
+            "data_relationships (from_dataset, from_column, to_dataset, to_column)"
+        )
+        cur.execute(
+            "ALTER TABLE data_relationships ADD CONSTRAINT "
+            "data_relationships_from_dataset_from_column_to_dataset_to_c_key "
+            "UNIQUE (from_dataset, from_column, to_dataset, to_column)"
+        )
+        cur.execute("ALTER TABLE data_relationships DROP CONSTRAINT data_relationships_pkey")
+        cur.execute(
+            "ALTER TABLE data_relationships ADD CONSTRAINT data_relationships_pkey "
+            "PRIMARY KEY (from_dataset, from_column, to_dataset, to_column)"
+        )
         cur.execute(
             "ALTER TABLE data_relationships DROP CONSTRAINT data_relationships_join_hint_check"
         )
@@ -148,7 +165,17 @@ def test_migration_reruns_and_backfills_legacy_rows(
                 (column, column, hint, sec["tenant_id"], sec["workspace_id"]),
             )
         for column, description, tags in (
-            ("template", "Texto de plantilla", ["semantic_enrichment", "auto_described"]),
+            (
+                "template",
+                "Atributo descriptivo de estado proveniente de legacy a; aporta contexto "
+                "de negocio para analisis y busqueda semantica.",
+                ["semantic_enrichment", "auto_described"],
+            ),
+            (
+                "rewritten",
+                "Texto reescrito por RH",
+                ["semantic_enrichment", "auto_described"],
+            ),
             ("authored", "Texto autorizado", ["finance"]),
             ("empty", "", []),
         ):
@@ -187,7 +214,12 @@ def test_migration_reruns_and_backfills_legacy_rows(
             fetch=True,
         )
     )
-    assert origins == {"template": "copilot", "authored": "manual", "empty": None}
+    assert origins == {
+        "template": "copilot",
+        "rewritten": "manual",
+        "authored": "manual",
+        "empty": None,
+    }
     with psycopg2.connect(admin) as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT count(*) FROM pg_constraint
@@ -196,6 +228,133 @@ def test_migration_reruns_and_backfills_legacy_rows(
                   AND convalidated"""
         )
         assert cur.fetchone()[0] == 2
+        cur.execute(
+            """SELECT indexname FROM pg_indexes
+                WHERE tablename = 'data_relationships' AND indexdef LIKE 'CREATE UNIQUE%%'
+                ORDER BY indexname"""
+        )
+        assert [row[0] for row in cur.fetchall()] == [
+            "data_relationships_legacy_key",
+            "data_relationships_pkey",
+            "data_relationships_scoped_key",
+        ]
+        cur.execute(
+            """SELECT array_agg(a.attname::text)
+                 FROM pg_constraint c
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                WHERE c.conrelid = 'data_relationships'::regclass AND c.contype = 'p'"""
+        )
+        assert cur.fetchone()[0] == ["id"]
+
+
+def test_two_workspaces_with_the_same_datasets_keep_their_own_edges(
+    postgres_with_real_init_schema: str,
+) -> None:
+    """Reviewer reproduction: a global edge key broke every workspace but the first."""
+    admin = postgres_with_real_init_schema
+    first = _workspace(admin, "shared_employees", "shared_departments")
+    second = _workspace(admin, "shared_employees", "shared_departments")
+    store = CatalogCopilotStore(_refinement(admin))
+    edge = {
+        "from_dataset": "shared_employees",
+        "from_column": "department_id",
+        "to_dataset": "shared_departments",
+        "to_column": "department_id",
+        "cardinality": "N:1",
+        "confidence": 0.9,
+        "description": "Detectada",
+        "basis": {"codes": ["name:exact"]},
+    }
+    for sec in (first, second):
+        assert store.upsert_copilot_edges(sec, [edge]) == (1, 0)
+    manual = {**edge, "from_column": "company", "to_column": "company"}
+    for sec in (first, second):
+        _scoped(
+            _refinement(admin),
+            sec,
+            """INSERT INTO data_relationships(from_dataset,from_column,to_dataset,to_column,
+                   join_hint,cardinality,description,transform,origin,status,
+                   tenant_id,workspace_id,scope_status)
+               SELECT %s,%s,%s,%s,'LEFT','N:1','',NULL,'manual','active',%s::uuid,%s::uuid,'scoped'
+                 FROM datasets from_ds
+                 JOIN datasets to_ds ON to_ds.name = %s
+                WHERE from_ds.name = %s AND from_ds.workspace_id = %s::uuid
+                  AND to_ds.workspace_id = %s::uuid
+               ON CONFLICT (workspace_id, from_dataset, from_column, to_dataset, to_column)
+               WHERE workspace_id IS NOT NULL
+               DO UPDATE SET origin = 'manual', status = 'active'""",
+            (
+                manual["from_dataset"],
+                manual["from_column"],
+                manual["to_dataset"],
+                manual["to_column"],
+                sec["tenant_id"],
+                sec["workspace_id"],
+                manual["to_dataset"],
+                manual["from_dataset"],
+                sec["workspace_id"],
+                sec["workspace_id"],
+            ),
+        )
+        assert store.reject_edge(sec, edge) is True
+    for sec in (first, second):
+        rows = _scoped(
+            admin,
+            sec,
+            "SELECT from_column, origin, status FROM data_relationships "
+            "WHERE workspace_id=%s ORDER BY from_column",
+            (sec["workspace_id"],),
+            fetch=True,
+        )
+        assert rows == [("company", "manual", "active"), ("department_id", "manual", "rejected")]
+
+
+def test_mapping_text_is_packaged_and_never_replaces_manual_text(
+    postgres_with_real_init_schema: str,
+) -> None:
+    from refinement.app.duckdb_engine import DuckDBEngine
+
+    admin = postgres_with_real_init_schema
+    sec = _workspace(admin, "mapped")
+    for column, description, origin in (
+        ("manual_col", "Texto de una persona", "manual"),
+        ("packaged_col", "Texto viejo del paquete", "packaged"),
+        ("copilot_col", "Texto inferido", "copilot"),
+    ):
+        _scoped(
+            admin,
+            sec,
+            """INSERT INTO data_catalog(dataset,layer,cartridge,column_name,data_type,
+                   description,description_origin,tenant_id,workspace_id,scope_status)
+               VALUES('mapped','silver','x',%s,'VARCHAR',%s,%s,%s,%s,'scoped')""",
+            (column, description, origin, sec["tenant_id"], sec["workspace_id"]),
+        )
+    engine = DuckDBEngine()
+    engine.pg_url = _refinement(admin)
+    columns = ("manual_col", "packaged_col", "copilot_col", "new_col")
+    engine._update_catalog(
+        "mapped",
+        "silver",
+        "x",
+        [{"name": column, "type": "VARCHAR"} for column in columns],
+        {column: f"Texto nuevo de {column}" for column in columns},
+        user_context={"tenant_id": sec["tenant_id"], "workspace_id": sec["workspace_id"]},
+    )
+    rows = dict(
+        (row[0], row[1:])
+        for row in _scoped(
+            admin,
+            sec,
+            "SELECT column_name, description, description_origin FROM data_catalog "
+            "WHERE workspace_id=%s",
+            (sec["workspace_id"],),
+            fetch=True,
+        )
+    )
+    assert rows["manual_col"] == ("Texto de una persona", "manual")
+    assert rows["packaged_col"] == ("Texto nuevo de packaged_col", "packaged")
+    assert rows["copilot_col"] == ("Texto nuevo de copilot_col", "packaged")
+    assert rows["new_col"] == ("Texto nuevo de new_col", "packaged")
 
 
 def test_database_refuses_value_bearing_evidence_and_legacy_tokens(
@@ -311,21 +470,20 @@ def test_store_guards_on_the_real_schema(postgres_with_real_init_schema: str) ->
         "description": "Detectada",
         "basis": {"codes": ["name:exact"], "containment": 1.0},
     }
-    assert store.upsert_copilot_edges(sec, [edge]) == 1
+    assert store.upsert_copilot_edges(sec, [edge]).written == 1
     assert store.reject_edge(sec, edge) is True
-    assert store.upsert_copilot_edges(sec, [edge]) == 0
+    assert store.upsert_copilot_edges(sec, [edge]).written == 0
     reverse = {
         **edge,
         "from_dataset": "departments",
         "to_dataset": "employees",
     }
-    assert store.upsert_copilot_edges(sec, [reverse]) == 0, "rejected in either direction"
+    assert store.upsert_copilot_edges(sec, [reverse]).written == 0, "rejected in either direction"
     stale = {**edge, "from_column": "location_id", "to_column": "location_id"}
-    assert store.upsert_copilot_edges(sec, [stale]) == 1
-    assert store.retire_copilot_edges(
-        sec, dataset="employees", keep=set(), visible={"employees", "departments"}
-    ) == 1
-    assert store.upsert_copilot_edges(sec, [stale]) == 1, "retired edges come back"
+    assert store.upsert_copilot_edges(sec, [stale]).written == 1
+    stale_key = ("employees", "location_id", "departments", "location_id")
+    assert store.retire_copilot_edges(sec, {stale_key}) == 1
+    assert store.upsert_copilot_edges(sec, [stale]).written == 1, "retired edges come back"
     _scoped(
         admin,
         sec,
@@ -336,7 +494,7 @@ def test_store_guards_on_the_real_schema(postgres_with_real_init_schema: str) ->
         (sec["tenant_id"], sec["workspace_id"]),
     )
     manual = {**edge, "from_column": "company", "to_column": "company"}
-    assert store.upsert_copilot_edges(sec, [manual]) == 0
+    assert store.upsert_copilot_edges(sec, [manual]).written == 0
     statuses = {
         (row[0], row[1]): row[2:]
         for row in _scoped(

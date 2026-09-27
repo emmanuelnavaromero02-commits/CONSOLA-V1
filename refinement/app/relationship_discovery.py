@@ -66,7 +66,11 @@ def discover_relationship_candidates(
     row_counts: dict[str, Any],
     *,
     min_key_cardinality: int = 2,
+    prune_by_distinct: bool = True,
 ) -> list[dict[str, Any]]:
+    """FK -> key candidates. prune_by_distinct=False keeps children whose
+    estimated distinct count exceeds the key's; callers that confirm every
+    candidate by value containment use it, because estimates are noisy."""
     keys_by_signature: dict[tuple[str, str], list[dict[str, Any]]] = {}
     keys_by_class: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for col in columns:
@@ -111,7 +115,8 @@ def discover_relationship_candidates(
                 continue
             key_distinct = key.get("distinct_count")
             if (
-                from_distinct is not None
+                prune_by_distinct
+                and from_distinct is not None
                 and key_distinct is not None
                 and from_distinct > key_distinct
             ):

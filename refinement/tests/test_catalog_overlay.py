@@ -204,7 +204,9 @@ def test_sensitive_columns_lose_literal_statistics():
 def test_dataset_level_copilot_block_and_description_fallback():
     out = apply_catalog_annotations(_snapshot_output(), _annotations(), visible=VISIBLE)
     employees = out["datasets"]["employees"]
-    assert employees["description"] == "Empleados de SAP SuccessFactors: 3 registros."
+    assert employees["description"] == (
+        "Empleados de SAP SuccessFactors: 3 registros. Se vincula con Departamentos."
+    )
     assert employees["description_origin"] == "copilot"
     assert employees["display_name"] == "Empleados"
     assert employees["kind"] == "dataset"
@@ -323,3 +325,82 @@ def test_bronze_subjects_only_when_requested_and_filtered():
         _snapshot_output(), annotations, visible=VISIBLE, include_sources=True, layer="silver"
     )
     assert "raw/sap_successfactors/PerEmail" not in silver_only["datasets"]
+
+
+def test_link_clauses_are_rendered_per_reader_and_never_leak_hidden_tables():
+    """Reviewer reproduction: stored text must not name datasets a reader cannot see."""
+    snapshot = _snapshot_output()
+    snapshot["datasets"]["employees"]["columns"].append(
+        {"name": "cost_center", "type": "VARCHAR", "description": "", "tags": [],
+         "is_key": False, "is_metric": False, "example_values": []}
+    )
+    annotations = _annotations()
+    annotations.columns["employees"]["cost_center"] = {
+        "description": "Identificador de centro de costo.",
+        "description_origin": "copilot",
+    }
+    annotations.relationships.append(
+        {
+            "from_dataset": "employees",
+            "from_column": "cost_center",
+            "to_dataset": "hidden_cost_centers",
+            "to_column": "cost_center",
+            "origin": "copilot",
+            "status": "active",
+            "cardinality": "N:1",
+        }
+    )
+    annotations.subjects[("dataset", "hidden_cost_centers")] = {"display_name": "Centros secretos"}
+    out = apply_catalog_annotations(snapshot, annotations, visible=VISIBLE)
+    text = str(out)
+    assert "Centros secretos" not in text
+    assert "hidden_cost_centers" not in text
+    employees = out["datasets"]["employees"]
+    assert employees["copilot"]["relations"] == 1
+    columns = {c["name"]: c for c in employees["columns"]}
+    assert columns["cost_center"]["description"] == "Identificador de centro de costo."
+    wider = apply_catalog_annotations(
+        _snapshot_output() | {"datasets": snapshot["datasets"]},
+        annotations,
+        visible=VISIBLE | {"hidden_cost_centers"},
+    )
+    widened = {c["name"]: c for c in wider["datasets"]["employees"]["columns"]}
+    assert widened["cost_center"]["description"].endswith("Enlaza con Centros secretos.")
+    assert wider["datasets"]["employees"]["copilot"]["relations"] == 2
+    assert "Centros secretos" in wider["datasets"]["employees"]["description"]
+
+
+def test_manual_text_never_gets_generated_link_clauses():
+    snapshot = _snapshot_output()
+    annotations = _annotations()
+    annotations.subjects[("dataset", "employees")]["description"] = ""
+    snapshot["datasets"]["employees"]["description"] = "Plantilla autorizada"
+    out = apply_catalog_annotations(snapshot, annotations, visible=VISIBLE)
+    assert out["datasets"]["employees"]["description"] == "Plantilla autorizada"
+
+
+def test_bronze_column_descriptions_are_rendered_from_compact_facts():
+    state = {
+        "subject": "raw/sap_successfactors/PerEmail",
+        "cartridge": "sap_successfactors",
+        "status": "ready",
+        "summary": {
+            "rows": 3,
+            "columns": [
+                {
+                    "name": "emailAddress",
+                    "type": "VARCHAR",
+                    "semantic_type": "text",
+                    "classifications": ["pii", "confidential"],
+                    "pii_kind": "email",
+                    "null_rate": 0.5,
+                }
+            ],
+        },
+    }
+    out = apply_catalog_annotations(
+        _snapshot_output(), _annotations(sources=[state]), visible=VISIBLE, include_sources=True
+    )
+    column = out["datasets"]["raw/sap_successfactors/PerEmail"]["columns"][0]
+    assert column["description"].startswith("Correo electrónico de la persona")
+    assert column["description"].endswith("50% de los registros no tienen dato.")

@@ -18,7 +18,7 @@ from typing import Any
 import duckdb
 
 from refinement.app.catalog_copilot_rules import evidence_is_counts_only
-from refinement.app.catalog_copilot_store import edge_key
+from refinement.app.catalog_copilot_store import WriteResult, edge_key
 from refinement.app.duckdb_engine import DuckDBEngine
 
 TENANT = "11111111-1111-4111-8111-111111111111"
@@ -48,6 +48,9 @@ class FakeCopilotStore:
         self.protection: dict[str, str] = {}
         self.lock = threading.Lock()
         self.saved_states = 0
+        self.fail_edges = False
+        self.max_summary_bytes: int | None = None
+        self.refuse_source_columns = False
 
     def add_column(self, dataset: str, column: str, **values: Any) -> None:
         row = {
@@ -146,10 +149,12 @@ class FakeCopilotStore:
                 row["semantic_type"] = item.get("semantic_type")
                 row["copilot_evidence"] = dict(item.get("evidence") or {})
                 row["copilot_confidence"] = item.get("confidence")
-        return len(annotations)
+        return WriteResult(len(annotations), 0)
 
     def upsert_copilot_edges(self, sec, edges):
         written = 0
+        if self.fail_edges:
+            return WriteResult(0, len(edges))
         with self.lock:
             for edge in edges:
                 key = edge_key(edge)
@@ -177,17 +182,14 @@ class FakeCopilotStore:
                     "status": "active",
                 }
                 written += 1
-        return written
+        return WriteResult(written, 0)
 
-    def retire_copilot_edges(self, sec, *, dataset, keep, visible):
+    def retire_copilot_edges(self, sec, keys):
         retired = 0
         with self.lock:
-            for key, row in self.edges.items():
-                if dataset not in (row["from_dataset"], row["to_dataset"]):
-                    continue
-                if row["origin"] != "copilot" or row["status"] != "active" or key in keep:
-                    continue
-                if row["from_dataset"] in visible and row["to_dataset"] in visible:
+            for key in keys:
+                row = self.edges.get(key)
+                if row and row["origin"] == "copilot" and row["status"] == "active":
                     row["status"] = "retired"
                     retired += 1
         return retired
@@ -203,6 +205,13 @@ class FakeCopilotStore:
     def save_state(self, sec, state):
         summary = state.get("summary") or {}
         assert not {"values", "examples", "sample", "samples", "min", "max"} & set(summary)
+        if self.max_summary_bytes is not None:
+            import json
+
+            if len(json.dumps(summary, default=str).encode()) > self.max_summary_bytes:
+                raise ValueError("summary exceeds the database bound")
+        if self.refuse_source_columns and summary.get("columns"):
+            raise ValueError("summary refused by the database")
         with self.lock:
             self.states[(state["subject_kind"], state["subject"])] = {
                 **copy.deepcopy(state),

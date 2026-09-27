@@ -291,3 +291,55 @@ def test_profile_and_link_new_dataset_under_two_seconds(local):
             "basis": ["name:exact", "types:compatible", "containment:1.00", "key:exact"],
         }
     ]
+
+
+def test_latest_partition_comes_from_object_keys_not_file_footers(local, tmp_path):
+    """Reviewer reproduction: history is never scanned; a broken old file is harmless."""
+    _bronze(local, tmp_path, "2026-09-25", 12, "b")
+    old = (
+        tmp_path
+        / "raw/sap_successfactors/PerPersonal"
+        / f"tenant_id={SEC['tenant_id']}"
+        / f"workspace_id={SEC['workspace_id']}"
+        / "load_date=2026-01-01"
+        / "batch_id=a"
+    )
+    old.mkdir(parents=True)
+    (old / "broken.parquet").write_bytes(b"not a parquet file")
+    footer = CatalogCopilotProbe(local.engine).bronze_footer(
+        "raw/sap_successfactors/PerPersonal", SEC
+    )
+    assert (footer.load_date, footer.num_rows) == ("2026-09-25", 12)
+
+
+def test_containment_samples_the_child_before_distinct(local):
+    child = _relation(local, "employees", EMPLOYEES_SQL)
+    parent = _relation(local, "departments", DEPARTMENTS_SQL)
+    result = CatalogCopilotProbe(local.engine).containment(
+        child, "department_id", parent, "department_id", SEC, row_cap=100
+    )
+    assert result.sampled is True
+    assert result.orphan_values == 0
+    assert result.child_distinct == 40
+
+
+def test_queries_are_clamped_to_the_remaining_budget(local):
+    relation = _relation(local, "employees", EMPLOYEES_SQL)
+    probe = CatalogCopilotProbe(local.engine)
+    with pytest.raises(ProbeError) as exc:
+        probe.column_probe(
+            relation,
+            SEC,
+            text_cols=["email"],
+            key_cols=[],
+            row_count=10000,
+            deadline=time.monotonic() - 0.01,
+        )
+    assert exc.value.code == "probe_budget_exhausted"
+    huge = PublishedRelation(sql="SELECT i AS k FROM range(2000000000) t(i)", head={}, gold=False)
+    started = time.perf_counter()
+    with pytest.raises(ProbeError):
+        probe.containment(
+            huge, "k", huge, "k", SEC, child_cap=1_000_000, deadline=time.monotonic() + 0.1
+        )
+    assert time.perf_counter() - started < 5.0

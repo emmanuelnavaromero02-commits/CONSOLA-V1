@@ -1900,19 +1900,18 @@ async def mcp_tools():
             {
                 "name": "auto_catalog",
                 "description": (
-                    "Autocatalogado del Copiloto (determinista, sin LLM): perfila los "
-                    "datasets publicados visibles que aún no tienen perfil vigente, "
-                    "clasifica datos personales/financieros por conteos y detecta "
-                    "relaciones llave foránea -> llave primaria confirmadas por contención. "
-                    "Trabajo acotado por elementos y milisegundos; lo demás queda en cola."
+                    "Autocatalogado del Copiloto (determinista, sin LLM): pone en cola, "
+                    "para un proceso en segundo plano, los datasets publicados visibles "
+                    "que aún no tienen perfil vigente, que clasifica datos "
+                    "personales/financieros por conteos y detecta relaciones llave "
+                    "foránea -> llave primaria confirmadas por contención. Responde de "
+                    "inmediato con cuántas tablas quedan pendientes."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "cartridge": {"type": "string"},
                         "include_sources": {"type": "boolean", "default": False},
-                        "max_items": {"type": "integer", "default": 8, "maximum": 8},
-                        "budget_ms": {"type": "integer", "default": 1500, "maximum": 1500},
                     },
                 },
             },
@@ -2829,14 +2828,6 @@ def _catalog_copilot_worker() -> AutonomousCatalogWorker:
         return _CATALOG_COPILOT_WORKER
 
 
-def _bounded_int(value: object, default: int, upper: int) -> int:
-    try:
-        number = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-    return max(0, min(number, upper))
-
-
 def _auto_catalog(sec: dict, args: dict) -> dict:
     if not _has_tenant_workspace_scope(sec):
         return {
@@ -2854,8 +2845,6 @@ def _auto_catalog(sec: dict, args: dict) -> dict:
             sec,
             cartridge=cartridge,
             include_sources=args.get("include_sources") is True,
-            max_items=_bounded_int(args.get("max_items"), 8, 8),
-            budget_ms=_bounded_int(args.get("budget_ms"), 1500, 1500),
         )
     except Exception as exc:
         _log_internal_error(exc, "catalog copilot catch-up failed")
