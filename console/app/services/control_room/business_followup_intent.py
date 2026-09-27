@@ -131,6 +131,13 @@ async def _prepare(
             item_id=item_id,
         ),
     )
+    existing = await find_binding_intent(
+        conn,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        maker_user_id=maker_user_id,
+        item_id=item_id,
+    )
     row = await fetch_authoritative_row_for_update(
         conn, tenant_id=tenant_id, workspace_id=workspace_id, item_id=item_id
     )
@@ -141,13 +148,6 @@ async def _prepare(
     )
     if contract is None:
         return None
-    existing = await find_binding_intent(
-        conn,
-        tenant_id=tenant_id,
-        workspace_id=workspace_id,
-        maker_user_id=maker_user_id,
-        item_id=item_id,
-    )
     if existing is not None:
         if str(existing.get("state") or "") != "pending_approval":
             return None

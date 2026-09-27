@@ -135,7 +135,17 @@ class CouncilConn:
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
         statement = self._record(query, args)
         if "decision.status = 'open'" in statement:
-            return [dict(row) for row in self.persons]
+            statuses, council_only = set(args[2]), args[5]
+            return [
+                dict(row)
+                for row in self.persons
+                if row["status"] in statuses
+                and (
+                    not council_only
+                    or (row["metadata"].get("writeback_result") or {}).get("origin")
+                    == "control_room_council"
+                )
+            ][: args[4]]
         if "FROM control_room_action_intents" in statement:
             return [dict(row) for row in self.intents]
         if "LEFT JOIN decisions" in statement:
@@ -490,7 +500,8 @@ async def test_completed_system_decisions_and_authorless_proposals_are_honest():
     assert orphaned.origin == "person"
     assert not (orphaned.can_discard or orphaned.can_renew or orphaned.can_approve)
     assert orphaned.disabled_reason == (
-        "La propuesta no tiene un autor vigente; ciérrala desde el Registro."
+        "La propuesta no tiene un autor vigente; un administrador del espacio puede "
+        "cerrarla desde el Registro."
     )
 
 
@@ -508,4 +519,113 @@ async def test_latest_intent_query_keeps_one_row_per_item_and_maker_without_a_ca
     assert "latest.maker_user_id = intent.maker_user_id" in statement
     assert "LIMIT" not in statement
     assert len(args) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "intent_overrides",
+    ({"expires_at": NOW - timedelta(minutes=1)}, None, {"state": "stale"}),
+)
+async def test_disabled_follow_ups_never_promise_a_renewal(intent_overrides):
+    row = person_row()
+    intents = [] if intent_overrides is None else [intent_for(row, **intent_overrides)]
+    for viewer in (MAKER, CHECKER):
+        (proposal,) = (
+            await _council(viewer, CouncilConn([row], intents, enabled=False))
+        ).proposals
+        assert not proposal.can_renew and not proposal.can_approve
+        assert proposal.disabled_reason == (
+            "Las tareas de seguimiento están desactivadas en este espacio de trabajo."
+        )
+
+
+@pytest.mark.asyncio
+async def test_authorless_proposals_point_approvers_to_a_workspace_admin():
+    orphan = person_row("proposal-orphan", decision_created_by_id=None, decision_created_by=None)
+    (for_checker,) = (await _council(CHECKER, CouncilConn([orphan]))).proposals
+    workspace_admin = {**MAKER, "workspace_role": "workspace_admin"}
+    (for_admin,) = (await _council(workspace_admin, CouncilConn([orphan]))).proposals
+    assigned = {**orphan, "decision_assignee_id": CHECKER["id"]}
+    (for_assignee,) = (await _council(CHECKER, CouncilConn([assigned]))).proposals
+    assert for_checker.disabled_reason == (
+        "La propuesta no tiene un autor vigente; un administrador del espacio puede "
+        "cerrarla desde el Registro."
+    )
+    assert for_admin.disabled_reason == for_assignee.disabled_reason == (
+        "La propuesta no tiene un autor vigente; ciérrala desde el Registro."
+    )
+
+
+@pytest.mark.asyncio
+async def test_default_source_thresholds_still_mark_the_author_as_influencer():
+    live = business_item(
+        "finding-9",
+        thresholds_applied=[
+            {
+                "cartridge_id": "sap_hcm",
+                "anomaly_type": "headcount_gap",
+                "metric": "gap",
+                "warning_value": 10,
+                "source": "default",
+            }
+        ],
+    )
+    thresholds = [
+        {"id": "44", "cartridge_id": "sap_hcm", "anomaly_type": "headcount_gap", "metric": "gap"}
+    ]
+    (proposal,) = (
+        await _council(
+            CHECKER,
+            CouncilConn(direct=[direct_row(live)], thresholds=thresholds, authored=["44"]),
+            live,
+        )
+    ).proposals
+    assert proposal.state == "needs_other_approver" and not proposal.can_approve
+
+
+@pytest.mark.asyncio
+async def test_pending_proposals_are_not_crowded_out_by_completed_ones():
+    done = [
+        person_row(
+            f"proposal-done-{index}",
+            status="approved",
+            execution_status="executed",
+            decision_created_at=NOW - timedelta(minutes=index),
+            metadata={
+                **person_row()["metadata"],
+                "writeback_result": {"origin": "control_room_council"},
+            },
+        )
+        for index in range(15)
+    ]
+    old = person_row("proposal-old", decision_created_at=NOW - timedelta(days=30))
+    conn = CouncilConn([*done, old], [intent_for(old)])
+    council = await _council(CHECKER, conn)
+    states = [proposal.state for proposal in council.proposals]
+    assert states.count("completed") == 10
+    assert "pending_approval" in states
+    calls = [args for statement, args in conn.statements if "decision.status = 'open'" in statement]
+    assert [(list(args[2]), args[4], args[5]) for args in calls] == [
+        (["decision_created"], 100, False),
+        (["approved"], 10, True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_completed_system_decisions_show_when_the_finding_was_detected():
+    first_seen = NOW - timedelta(days=3)
+    done = person_row(
+        "proposal-system",
+        status="approved",
+        execution_status="executed",
+        first_seen_at=first_seen,
+        decision_created_by_id=None,
+        decision_created_by="system:control-room",
+        metadata={
+            **person_row()["metadata"],
+            "writeback_result": {"origin": "control_room_council"},
+        },
+    )
+    (proposal,) = (await _council(CHECKER, CouncilConn([done]))).proposals
+    assert proposal.origin == "system" and proposal.created_at == first_seen
 

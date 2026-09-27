@@ -28,6 +28,10 @@ CHECKER_INFLUENCED_REASON = (
     "otra persona del equipo."
 )
 NO_AUTHOR_REASON = "La propuesta no tiene un autor vigente; ciérrala desde el Registro."
+NO_AUTHOR_ADMIN_REASON = (
+    "La propuesta no tiene un autor vigente; un administrador del espacio puede "
+    "cerrarla desde el Registro."
+)
 APPROVED_MESSAGE = (
     "Decisión aprobada y tarea de seguimiento interna registrada. "
     "No se modificó ningún sistema externo (ERP)."
@@ -56,6 +60,8 @@ CouncilDisabledReason = Literal[
     "Ajustaste un umbral que originó esta sugerencia; requiere la aprobación de "
     "otra persona del equipo.",
     "La propuesta no tiene un autor vigente; ciérrala desde el Registro.",
+    "La propuesta no tiene un autor vigente; un administrador del espacio puede "
+    "cerrarla desde el Registro.",
 ]
 EvidenceLabel = Literal["Entidad", "Indicador", "Fecha del dato", "Severidad"]
 _Copy = Annotated[str, Field(min_length=1, max_length=240)]
@@ -203,6 +209,7 @@ __all__ = (
     "MAX_COUNCIL_EVIDENCE",
     "MAX_COUNCIL_PROPOSALS",
     "NEEDS_OTHER_APPROVER_REASON",
+    "NO_AUTHOR_ADMIN_REASON",
     "NO_AUTHOR_REASON",
     "NO_ESTIMATE_LABEL",
     "NO_FOLLOWUP_REASON",

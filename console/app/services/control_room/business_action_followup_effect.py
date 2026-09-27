@@ -33,7 +33,7 @@ from app.services.control_room.business_workflow_state import (
 APPROVE_AND_FOLLOW_UP_AUDIT = "control_room.council.approve_and_follow_up"
 COUNCIL_ORIGIN = "control_room_council"
 FOLLOWUP_ADAPTER = "internal_followup_task"
-APPROVAL_ACTION_PREFIX = "Aprobacion en el Consejo de Acciones: "
+APPROVAL_ACTION_PREFIX = "Aprobación en el Consejo de Acciones: "
 FOLLOWUP_ACTION_PREFIX = "Seguimiento operativo Control Room: "
 MAKER_NOTES = {
     "system": "Propuesta sugerida por el sistema; aprobada por una persona del equipo.",

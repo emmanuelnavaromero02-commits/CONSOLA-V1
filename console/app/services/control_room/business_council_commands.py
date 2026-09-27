@@ -30,6 +30,7 @@ from app.services.control_room.business_action_authority_repository import (
 from app.services.control_room.business_action_followup_effect import (
     complete_followup_effect,
     proposal_changed,
+    require_followups_enabled,
 )
 from app.services.control_room.business_action_mutations import (
     persist_status_transition,
@@ -55,7 +56,6 @@ from app.services.control_room.business_council_actors import (
     require_council_distinct_actors,
 )
 from app.services.control_room.business_council_view import (
-    PENDING_STATUSES,
     PersonProposal,
     SystemSuggestion,
     authored_threshold_keys,
@@ -102,6 +102,11 @@ CLOSE_DECISION_SQL = """
 UPDATE decisions
    SET status = 'closed', closed_at = NOW()
  WHERE id = $1 AND workspace_id = $2 AND status = 'open'
+"""
+ASSIGN_CHECKER_SQL = """
+UPDATE decisions
+   SET assignee_id = $3
+ WHERE id = $1 AND workspace_id = $2 AND assignee_id IS NULL
 """
 INSERT_DECISION_ACTION_SQL = """
 INSERT INTO decision_actions (decision_id, action_text, note, actor)
@@ -288,6 +293,7 @@ async def _approve_person(
         raise _not_found()
     if proposal.intent is None:
         raise proposal_changed()
+    await require_followups_enabled(conn)
     intent = await lock_intent(
         conn,
         tenant_id=tenant_id,
@@ -469,6 +475,10 @@ async def _approve_system(
     decision_id = int(decision["id"]) if decision and decision.get("id") else 0
     if decision_id <= 0:
         raise proposal_changed()
+    assigned = await conn.execute(
+        ASSIGN_CHECKER_SQL, decision_id, workspace_id, checker_id
+    )
+    require_exact_count(assigned, "UPDATE")
     linked = await fetch_authoritative_row_for_update(
         conn,
         tenant_id=tenant_id,
@@ -544,7 +554,7 @@ async def approve_council_proposal(
             user=user,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            statuses=PENDING_STATUSES,
+            include_completed=False,
         )
         match = _match_person(proposals, proposal_id)
         if match is None:
@@ -813,7 +823,7 @@ async def discard_council_proposal(
             user=user,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            statuses=PENDING_STATUSES,
+            include_completed=False,
         )
         match = _match_person(proposals, proposal_id)
         if match is None:
@@ -906,7 +916,7 @@ async def renew_council_proposal(
             user=user,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            statuses=PENDING_STATUSES,
+            include_completed=False,
         )
         match = _match_person(proposals, proposal_id)
         if match is None or match.maker_user_id != maker_id:
@@ -914,7 +924,10 @@ async def renew_council_proposal(
         return match
 
     proposal = await run_with_db_scope(pool, dict(user), _find)
-    intent_id = await prepare_followup_intent(user, proposal.item_id)
+    try:
+        intent_id = await prepare_followup_intent(user, proposal.item_id)
+    except asyncpg.DeadlockDetectedError:
+        raise proposal_changed() from None
     if intent_id is None:
         raise HTTPException(
             409,

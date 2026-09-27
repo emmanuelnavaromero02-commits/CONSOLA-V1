@@ -10,25 +10,35 @@ from app.services.control_room.business_impact_rules import calculate_item_impac
 
 
 PERSISTED_FORMULA = "Impacto persistido en control_room_items."
-RULE_LABELS = {
-    PERSISTED_FORMULA: "Estimación registrada con el hallazgo",
+RULES = {
+    PERSISTED_FORMULA: ("Estimación registrada con el hallazgo", None),
     "max(0, revenue_usd * 20% - margen_bruto_usd) + abs(wip_usd si >= 5000)": (
-        "Regla: brecha vs margen objetivo 20 % más WIP en revisión"
+        "Regla: brecha vs margen objetivo 20 % más WIP en revisión",
+        "máx(0; ingresos × 20 % − margen bruto) + WIP en revisión si es de 5 000 o más",
     ),
     "horas_no_facturables * tarifa_replicon": (
-        "Regla: horas no facturables × tarifa registrada"
+        "Regla: horas no facturables × tarifa registrada",
+        "horas no facturables × tarifa por hora",
     ),
-    "abs(revenue)": "Regla: valor absoluto del ingreso negativo",
-    "open_value": "Regla: valor abierto pendiente",
-    "total_spend": "Regla: gasto total concentrado",
+    "abs(revenue)": (
+        "Regla: valor absoluto del ingreso negativo",
+        "valor absoluto del ingreso",
+    ),
+    "open_value": ("Regla: valor abierto pendiente", "valor abierto pendiente"),
+    "total_spend": ("Regla: gasto total concentrado", "gasto total del proveedor"),
     "open_value | balance_usd | exposure_usd | total_spend": (
-        "Regla: exposición comercial registrada del socio"
+        "Regla: exposición comercial registrada del socio",
+        "valor abierto, saldo, exposición o gasto total (el primero disponible)",
     ),
-    "monthly_cost_usd * 3 meses de exposicion": "Regla: costo mensual × 3 meses",
+    "monthly_cost_usd * 3 meses de exposicion": (
+        "Regla: costo mensual × 3 meses",
+        "costo mensual × 3 meses de exposición",
+    ),
     "affected_employees * avg_monthly_cost_usd * 15%": (
-        "Regla: personas afectadas × costo mensual × 15 %"
+        "Regla: personas afectadas × costo mensual × 15 %",
+        "personas afectadas × costo mensual promedio × 15 %",
     ),
-    "monthly_cost_usd": "Regla: costo mensual directo",
+    "monthly_cost_usd": ("Regla: costo mensual directo", "costo mensual"),
 }
 HOUR_UNITS = frozenset({"h", "hr", "hrs", "hora", "horas", "hour", "hours"})
 TIME_FORMULA = "Valor observado del indicador en horas"
@@ -76,14 +86,17 @@ def _money(item: Mapping[str, Any]) -> CouncilImpact | None:
         or not currency.isalpha()
     ):
         return None
-    persisted = formula == PERSISTED_FORMULA
+    rule = RULES.get(formula)
+    if rule is None:
+        return None
+    label, readable = rule
     return CouncilImpact(
         kind="money",
         value=round(estimate, 2),
         currency=currency,
-        basis="persisted" if persisted else "rule",
-        formula=None if persisted else formula[:240],
-        label=RULE_LABELS.get(formula, f"Regla: {formula}")[:240],
+        basis="persisted" if formula == PERSISTED_FORMULA else "rule",
+        formula=readable,
+        label=label,
     )
 
 
@@ -111,4 +124,4 @@ def council_impact(
     return _money(item) or _time(metric) or no_estimate()
 
 
-__all__ = ("HOUR_UNITS", "PERSISTED_FORMULA", "RULE_LABELS", "council_impact", "no_estimate")
+__all__ = ("HOUR_UNITS", "PERSISTED_FORMULA", "RULES", "council_impact", "no_estimate")

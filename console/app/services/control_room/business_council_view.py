@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.schemas.control_room_council import (
+    NO_AUTHOR_ADMIN_REASON,
     CHECKER_INFLUENCED_REASON,
     COUNCIL_SCHEMA_VERSION,
     EXPIRED_REASON,
@@ -94,7 +95,8 @@ from app.services.control_room.surface_snapshot import (
     collect_surface_snapshot,
 )
 from app.services.db_scope import run_with_db_scope
-from app.services.permissions import has_permission
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
+from app.services.permissions import has_permission, workspace_role
 from app.services.security_context import sign_server_payload
 
 
@@ -103,6 +105,7 @@ READ_ONLY_TRANSACTION_SQL = "SET TRANSACTION READ ONLY"
 MAX_PERSON_ROWS = 100
 MAX_COMPLETED = 10
 PENDING_STATUSES = ("decision_created",)
+DECISION_ADMIN_ROLES = frozenset({"workspace_admin", "tenant_admin"})
 LISTED_STATUSES = ("decision_created", "approved")
 _OPEN_STATUSES = frozenset({"open", "in_review"})
 _SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -131,7 +134,8 @@ SELECT item.tenant_id::text AS tenant_id,
        decision.created_at AS decision_created_at,
        decision.commitment_date AS decision_commitment_date,
        decision.created_by_id AS decision_created_by_id,
-       decision.created_by AS decision_created_by
+       decision.created_by AS decision_created_by,
+       decision.assignee_id AS decision_assignee_id
   FROM control_room_items AS item
   JOIN decisions AS decision
     ON decision.id = item.decision_id
@@ -144,6 +148,10 @@ SELECT item.tenant_id::text AS tenant_id,
        $4::bigint IS NULL
        OR item.owner_user_id = $4::bigint
        OR decision.created_by_id = $4::bigint
+   )
+   AND (
+       $6::boolean IS FALSE
+       OR item.metadata -> 'writeback_result' ->> 'origin' = 'control_room_council'
    )
  ORDER BY decision.created_at DESC, decision.id DESC
  LIMIT $5
@@ -288,16 +296,32 @@ async def read_person_proposals(
     user: Mapping[str, Any],
     tenant_id: str,
     workspace_id: str,
-    statuses: Sequence[str] = LISTED_STATUSES,
+    include_completed: bool = True,
 ) -> list[PersonProposal]:
-    rows = await conn.fetch(
-        PERSON_PROPOSALS_SQL,
-        tenant_id,
-        workspace_id,
-        list(statuses),
-        person_owner_filter(user),
-        MAX_PERSON_ROWS,
+    owner = person_owner_filter(user)
+    rows = list(
+        await conn.fetch(
+            PERSON_PROPOSALS_SQL,
+            tenant_id,
+            workspace_id,
+            list(PENDING_STATUSES),
+            owner,
+            MAX_PERSON_ROWS,
+            False,
+        )
     )
+    if include_completed:
+        rows += list(
+            await conn.fetch(
+                PERSON_PROPOSALS_SQL,
+                tenant_id,
+                workspace_id,
+                ["approved"],
+                owner,
+                MAX_COMPLETED,
+                True,
+            )
+        )
     rows = [
         dict(row)
         for row in rows
@@ -324,7 +348,7 @@ async def read_person_proposals(
             or decision_id is None
             or str(row.get("decision_status") or "") != "open"
             or str(row.get("decision_workspace_id") or "") != workspace_id
-            or str(row.get("status") or "") not in statuses
+            or str(row.get("status") or "") not in LISTED_STATUSES
         ):
             continue
         maker = optional_actor_id(row.get("decision_created_by_id"))
@@ -491,7 +515,7 @@ def threshold_keys(item: Mapping[str, Any]) -> set[tuple[str, str, str]]:
     keys: set[tuple[str, str, str]] = set()
     for source in (item.get("thresholds_applied"), details.get("thresholds")):
         for entry in source if isinstance(source, Sequence) else ():
-            if not isinstance(entry, Mapping) or entry.get("source") != "workspace":
+            if not isinstance(entry, Mapping):
                 continue
             cartridge, anomaly, metric = (
                 str(entry.get(field) or "").strip()
@@ -631,6 +655,18 @@ def _commitment(value: Any) -> date | None:
     return value if isinstance(value, date) else None
 
 
+def _can_close_in_register(user: Mapping[str, Any], proposal: PersonProposal) -> bool:
+    viewer = optional_actor_id(user.get("id"))
+    return bool(
+        str(user.get("role") or "") in PLATFORM_ADMIN_ROLES
+        or workspace_role(dict(user)) in DECISION_ADMIN_ROLES
+        or (
+            viewer is not None
+            and viewer == optional_actor_id(proposal.row.get("decision_assignee_id"))
+        )
+    )
+
+
 def project_person_proposal(
     proposal: PersonProposal,
     *,
@@ -663,8 +699,12 @@ def project_person_proposal(
     if state == "completed":
         reason = None
     elif authorless:
-        reason = NO_AUTHOR_REASON
-    elif state in {"pending_approval", "needs_other_approver"} and not enabled:
+        reason = (
+            NO_AUTHOR_REASON
+            if _can_close_in_register(user, proposal)
+            else NO_AUTHOR_ADMIN_REASON
+        )
+    elif not enabled:
         reason = FOLLOWUPS_DISABLED_REASON
     elif state in {"pending_approval", "needs_other_approver"} and not can_approve:
         reason = NEEDS_OTHER_APPROVER_REASON
@@ -684,7 +724,9 @@ def project_person_proposal(
         origin="system" if system_made else "person",
         authored_by_you=authored,
         decision_id=proposal.decision_id,
-        created_at=_utc(proposal.row.get("decision_created_at")),
+        created_at=_utc(
+            proposal.row.get("first_seen_at" if system_made else "decision_created_at")
+        ),
         commitment_date=_commitment(proposal.row.get("decision_commitment_date")),
         state=state,
         can_approve=can_approve,
@@ -805,13 +847,11 @@ async def build_action_council(user: Mapping[str, Any]) -> ActionCouncilResponse
     read = await read_council_rows(user, candidates)
     now = datetime.now(UTC)
     person_proposals: list[CouncilProposal] = []
-    completed = 0
     listed_items: set[str] = set()
     for proposal in read.persons:
         if str(proposal.row.get("status") or "") == "approved":
-            if not _completed_by_council(proposal.row) or completed >= MAX_COMPLETED:
+            if not _completed_by_council(proposal.row):
                 continue
-            completed += 1
         elif proposal.system_made:
             continue
         projected = project_person_proposal(

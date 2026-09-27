@@ -171,7 +171,31 @@ def test_money_impact_always_carries_its_formula_and_basis():
     assert rule.kind == "money" and rule.basis == "rule"
     assert rule.value == pytest.approx(1000.0)
     assert rule.label == "Regla: brecha vs margen objetivo 20 % más WIP en revisión"
-    assert rule.formula.startswith("max(0, revenue_usd * 20%")
+    assert rule.formula.startswith("máx(0; ingresos × 20 %")
+
+
+def test_every_impact_rule_has_business_copy_without_field_names():
+    import re
+    from pathlib import Path
+
+    from app.services.control_room import business_council_impact as impact
+
+    source = Path(impact.calculate_item_impact.__code__.co_filename).read_text(
+        encoding="utf-8"
+    )
+    formulas = set(re.findall(r'formula="([^"]+)"', source))
+    ok_formulas = {
+        formula
+        for formula in formulas
+        if not formula.endswith(".") or formula == impact.PERSISTED_FORMULA
+    }
+    assert ok_formulas <= set(impact.RULES)
+    snake = re.compile(r"[a-z]+_[a-z_]+")
+    for label, readable in impact.RULES.values():
+        assert not snake.search(label)
+        assert readable is None or not snake.search(readable)
+    unknown = council_impact({"impact_estimate": None, "details": {}}, None)
+    assert unknown.kind == "none"
 
 
 def test_time_impact_only_from_hour_metrics_and_otherwise_no_estimate():
@@ -534,4 +558,53 @@ def test_discard_locks_intent_before_item_and_decision_like_approval():
     assert source.index("fetch_direct_row_for_update(") < source.index("LOCK_OPEN_DECISION_SQL")
     approve = inspect.getsource(commands._approve_person)
     assert approve.index("lock_intent(") < approve.index("fetch_authoritative_row_for_update(")
+
+
+def test_renew_locks_the_pending_intent_before_the_item():
+    import inspect
+
+    from app.services.control_room import business_followup_intent
+
+    source = inspect.getsource(business_followup_intent._prepare)
+    assert source.index("find_binding_intent(") < source.index(
+        "fetch_authoritative_row_for_update("
+    )
+
+
+@pytest.mark.asyncio
+async def test_renew_reports_a_deadlock_as_a_changed_proposal():
+    import asyncpg
+
+    from app.services.control_room.business_council_view import PersonProposal
+
+    proposal = PersonProposal(
+        row={"cartridge_id": "sap_hcm"},
+        item_id="item-1",
+        decision_id=4,
+        maker_user_id=9,
+        intent=None,
+        handle=HANDLE,
+    )
+
+    async def _found(*_args: Any, **_kwargs: Any) -> PersonProposal:
+        return proposal
+
+    async def _deadlock(*_args: Any, **_kwargs: Any) -> None:
+        raise asyncpg.DeadlockDetectedError("deadlock detected")
+
+    with (
+        patch.object(commands.auth, "pool", new=AsyncMock(return_value=object())),
+        patch.object(commands, "run_with_db_scope", _found),
+        patch.object(commands, "prepare_followup_intent", _deadlock),
+    ):
+        with pytest.raises(HTTPException) as changed:
+            await commands.renew_council_proposal(WRITER, HANDLE)
+    assert changed.value.status_code == 409
+
+
+def test_person_approval_checks_the_follow_up_switch_before_touching_the_intent():
+    import inspect
+
+    source = inspect.getsource(commands._approve_person)
+    assert source.index("require_followups_enabled(") < source.index("lock_intent(")
 
