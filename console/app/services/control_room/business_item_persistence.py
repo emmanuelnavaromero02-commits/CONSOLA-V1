@@ -93,14 +93,17 @@ async def _lapse_exceptions(
     *,
     owner_scope_id: int | None,
     workspace_wide: bool,
-) -> None:
+) -> int:
+    lapsed = 0
     for workspace_id, item_ids in sorted(candidates.items()):
-        await conn.execute(
+        result = await conn.execute(
             LAPSE_EXCEPTIONS_SQL,
             workspace_id,
             sorted(set(item_ids)),
             None if workspace_wide else owner_scope_id,
         )
+        lapsed += parse_command_tag(result, "INSERT")
+    return lapsed
 
 
 def _assert_count(result: Any, *, expected: int) -> None:
@@ -131,9 +134,10 @@ async def persist_item_rows(
     *,
     owner_scope_id: int | None = None,
     workspace_wide: bool = False,
-) -> None:
+) -> int:
+    """Upsert the rows and return how many approved exceptions lapsed."""
     if not rows:
-        return
+        return 0
     _validate_owner_scope(
         rows,
         owner_scope_id=owner_scope_id,
@@ -148,7 +152,7 @@ async def persist_item_rows(
         bool(workspace_wide),
     )
     _assert_count(result, expected=len(rows))
-    await _lapse_exceptions(
+    return await _lapse_exceptions(
         conn,
         lapse_candidates,
         owner_scope_id=owner_scope_id,

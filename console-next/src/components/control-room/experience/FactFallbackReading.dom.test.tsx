@@ -77,8 +77,9 @@ describe("fallbackRecommendation", () => {
     ).toBe("Revisa la evidencia y decide si ajustarlo en Estudio o crear una propuesta de decisión.");
   });
 
-  it("stays neutral for readers and facts without actions", () => {
+  it("stays neutral for readers, facts without actions and stale facts", () => {
     expect(fallbackRecommendation({ ...fact, actions: [] })).toBe(NEUTRAL_RECOMMENDATION);
+    expect(fallbackRecommendation({ ...fact, stale: true })).toBe(NEUTRAL_RECOMMENDATION);
     expect(NEUTRAL_RECOMMENDATION).not.toMatch(/aprobar|Estudio|propuesta/i);
   });
 });

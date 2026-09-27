@@ -24,6 +24,7 @@ function joinOptions(parts: readonly string[]): string {
 }
 
 export function fallbackRecommendation(fact: ExperienceFactV2): string {
+  if (fact.stale === true) return NEUTRAL_RECOMMENDATION;
   const kinds = new Set(fact.actions.map((action) => action.kind));
   const parts = (
     ["exception_approval", "studio_adjustment", "decision_proposal", "followup_task"] as const

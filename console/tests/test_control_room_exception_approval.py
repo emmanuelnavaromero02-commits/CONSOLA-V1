@@ -309,6 +309,14 @@ async def test_reopen_restores_open_status_strips_resolution_and_audits():
         "motivo válido" + chr(0x2028) + "otra línea",
         "motivo válido" + chr(0x2029),
         "motivo válido" + chr(0xFEFF),
+        chr(0x3164) * 12,
+        "motivo" + chr(0x115F) + "válido",
+        "motivo" + chr(0x1160) + "válido",
+        "motivo válido" + chr(0xFFA0),
+        "motivo válido" + chr(0x2800),
+        chr(0x2800) * 20,
+        "!!!!!!!!!!!!",
+        "- - - - - - - - - -",
         12345678901,
         None,
     ),
@@ -335,7 +343,11 @@ def test_reason_is_trimmed_and_request_is_strict():
         ExceptionApprovalRequest.model_validate(
             {"action_handle": "A" * 64, "reason": REASON}
         )
-    ExceptionReopenRequest.model_validate({"action_handle": HANDLE, "reason": "Sí!"})
+    ExceptionReopenRequest.model_validate({"action_handle": HANDLE, "reason": "Sí, ok"})
+    with pytest.raises(ValidationError):
+        ExceptionReopenRequest.model_validate(
+            {"action_handle": HANDLE, "reason": "Sí!"}
+        )
     with pytest.raises(ValidationError):
         ExceptionReopenRequest.model_validate({"action_handle": HANDLE, "reason": "no"})
 
@@ -459,3 +471,20 @@ async def test_reopen_lock_survives_observation_drift_but_not_a_new_approval():
             LockConn(token=_lock_token(contract), row=reapproved), "reopen_exception"
         )
     assert exc.value.status_code == 409
+
+
+def test_reason_minimum_counts_letters_and_digits_only():
+    ExceptionApprovalRequest.model_validate(
+        {"action_handle": HANDLE, "reason": "Caso 12345: ok"}
+    )
+    for reason in ("abc defg hi", "a . b . c . d . e . f . g . h . i", "ñandú 1234"):
+        letters = sum(character.isalnum() for character in reason)
+        if letters >= 10:
+            ExceptionApprovalRequest.model_validate(
+                {"action_handle": HANDLE, "reason": reason}
+            )
+        else:
+            with pytest.raises(ValidationError):
+                ExceptionApprovalRequest.model_validate(
+                    {"action_handle": HANDLE, "reason": reason}
+                )

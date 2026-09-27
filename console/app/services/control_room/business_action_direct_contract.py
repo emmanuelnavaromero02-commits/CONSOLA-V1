@@ -374,7 +374,10 @@ def classify_direct_action(
         live, template_id, user=user, authorization=authorization
     ):
         return DirectMatch.INELIGIBLE, None
-    if action_item_is_stale(live) or row is None:
+    if action_item_is_stale(live):
+        # A refresh cannot make stale source data current; no action is offered.
+        return DirectMatch.INELIGIBLE, None
+    if row is None:
         return DirectMatch.NEEDS_REFRESH, None
     try:
         item_id = str(live.get("id") or live.get("item_id") or "").strip()
@@ -492,6 +495,10 @@ def match_reopen_item(
         ):
             return None
         if not _owner_allowed(row, authorization) or workflow_is_quarantined(row):
+            return None
+        if not business_cartridge_allowed(
+            user, str(row.get("cartridge_id") or ""), allow_platform=True
+        ):
             return None
         if _status(row.get("status")) != "dismissed" or not workflow_reopen_allowed(
             row

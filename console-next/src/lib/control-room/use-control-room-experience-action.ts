@@ -38,13 +38,21 @@ export const REASON_LIMITS: Partial<Record<ExperienceActionKind, { min: number; 
 };
 
 const INVISIBLE_OR_CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+// Characters that render blank although Unicode classes them as letters/symbols.
+const BLANK_FILLERS = /[\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]/u;
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/gu;
 
 export function normalizeReason(value: string): string {
   return value.replace(/[\t\n\r ]+/g, " ").trim();
 }
 
 export function reasonHasHiddenCharacters(value: string): boolean {
-  return INVISIBLE_OR_CONTROL.test(value.replace(/[\t\n\r]/g, " "));
+  const spaced = value.replace(/[\t\n\r]/g, " ");
+  return INVISIBLE_OR_CONTROL.test(spaced) || BLANK_FILLERS.test(spaced);
+}
+
+export function reasonVisibleLength(value: string): number {
+  return normalizeReason(value).match(LETTER_OR_DIGIT)?.length ?? 0;
 }
 
 export function reasonIsValid(kind: ExperienceActionKind, value: string): boolean {
@@ -52,7 +60,7 @@ export function reasonIsValid(kind: ExperienceActionKind, value: string): boolea
   if (!limits) return true;
   if (reasonHasHiddenCharacters(value)) return false;
   const length = Array.from(normalizeReason(value)).length;
-  return length >= limits.min && length <= limits.max;
+  return reasonVisibleLength(value) >= limits.min && length <= limits.max;
 }
 
 export interface ExperienceActionSubject {

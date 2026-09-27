@@ -30,7 +30,7 @@ from app.services.control_room.business_state_refresh import (
 from app.services.control_room.business_studio_target import resolve_studio_target
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
-from app.services.request_rate_limits import rate_limit
+from app.services.request_rate_limits import rate_limit_authenticated_action
 
 
 router = APIRouter(tags=["Control Room"])
@@ -52,7 +52,11 @@ async def control_room_refresh(
     request: Request,
     user: dict = Depends(require_authenticated),
 ) -> ControlRoomRefreshResponse:
-    await rate_limit(request, "/api/control-room/refresh", str(user.get("id") or ""))
+    await rate_limit_authenticated_action(
+        "/api/control-room/refresh",
+        user_id=user.get("id"),
+        workspace_id=user.get("active_workspace_id") or user.get("workspace_id"),
+    )
     result = await refresh_control_room_state(
         user,
         ip=_client_ip(request),

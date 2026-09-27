@@ -209,7 +209,7 @@ describe("Aprobar Excepción", () => {
     const confirm = dialogButton("Aprobar Excepción");
     expect(confirm?.hasAttribute("disabled")).toBe(true);
     await typeReason("corto");
-    expect(dialog()?.textContent).toContain("5/500 · mínimo 10 caracteres");
+    expect(dialog()?.textContent).toContain("5/500 · mínimo 10 letras o números");
     expect(confirm?.hasAttribute("disabled")).toBe(true);
     await act(async () => confirm?.click());
     expect(client.approve).not.toHaveBeenCalled();
@@ -249,6 +249,10 @@ describe("Aprobar Excepción", () => {
     ["a bidi override", "motivo válido \u202e al revés"],
     ["an Arabic letter mark", "motivo válido\u061c"],
     ["a line separator", "motivo válido\u2028otra"],
+    ["Hangul fillers", "\u3164".repeat(12)],
+    ["an embedded Hangul filler", "motivo\u115fválido"],
+    ["a braille blank", "motivo válido\u2800"],
+    ["a halfwidth filler", "motivo válido\uffa0"],
   ])("rejects reasons with %s before sending", async (_name, value) => {
     await render();
     await act(async () => button("Aprobar Excepción")?.click());
@@ -258,6 +262,15 @@ describe("Aprobar Excepción", () => {
     expect(dialog()?.textContent).toContain("caracteres invisibles o de control");
     await act(async () => dialogButton("Aprobar Excepción")?.click());
     expect(client.approve).not.toHaveBeenCalled();
+  });
+
+  it("requires ten letters or digits, not ten characters", async () => {
+    await render();
+    await act(async () => button("Aprobar Excepción")?.click());
+    await typeReason("! ! ! ! ! ! ! ! ! ! ! !");
+    expect(dialogButton("Aprobar Excepción")?.hasAttribute("disabled")).toBe(true);
+    await typeReason("Caso 12345: ok");
+    expect(dialogButton("Aprobar Excepción")?.hasAttribute("disabled")).toBe(false);
   });
 
   it("keeps focus inside the dialog including the reason field and closes on Escape", async () => {

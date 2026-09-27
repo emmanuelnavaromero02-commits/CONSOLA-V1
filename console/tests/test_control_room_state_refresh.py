@@ -30,7 +30,11 @@ from app.services.control_room.business_workflow_provenance import (
     persistence_metadata,
 )
 from app.services.csrf import require_csrf
-from app.services.request_rate_limits import RATE_LIMITS
+from app.services.rate_limiter import InMemoryRateLimiter
+from app.services.request_rate_limits import (
+    RATE_LIMITS,
+    rate_limit_authenticated_action,
+)
 from control_room_surface_fixtures import OPERATOR, VIEWER, business_item
 
 
@@ -53,6 +57,7 @@ def test_refresh_is_one_csrf_protected_write_scoped_post():
     assert names == {"require_csrf", "control_room.write"}
     assert route.response_model is ControlRoomRefreshResponse
     assert RATE_LIMITS[PATH] == (6, 60)
+    assert RATE_LIMITS[f"{PATH}:workspace"] == (30, 60)
 
 
 def test_only_the_explicit_refresh_route_writes_dashboard_state_over_http():
@@ -102,19 +107,55 @@ async def test_refresh_requires_authentication_write_and_csrf():
 
 
 @pytest.mark.asyncio
-async def test_refresh_is_rate_limited_before_touching_state():
+async def test_refresh_is_rate_limited_per_user_before_touching_state():
     refresh = AsyncMock(side_effect=AssertionError("refreshed"))
     limiter = AsyncMock(side_effect=HTTPException(429, "too many requests"))
     with (
         patch.object(actions_router, "refresh_control_room_state", new=refresh),
-        patch.object(actions_router, "rate_limit", new=limiter),
+        patch.object(actions_router, "rate_limit_authenticated_action", new=limiter),
     ):
         async with _client(OPERATOR) as client:
             response = await client.post(PATH)
 
     assert response.status_code == 429
-    assert limiter.await_args.args[1:] == (PATH, "9")
+    assert limiter.await_args.args == (PATH,)
+    assert limiter.await_args.kwargs == {
+        "user_id": 9,
+        "workspace_id": OPERATOR["active_workspace_id"],
+    }
     refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refresh_limits_are_per_user_and_per_workspace_never_per_ip(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    limiter = InMemoryRateLimiter()
+
+    async def hit(user_id: int, workspace: str) -> int:
+        try:
+            await rate_limit_authenticated_action(
+                PATH,
+                user_id=user_id,
+                workspace_id=workspace,
+                limiter_factory=lambda: limiter,
+            )
+        except HTTPException as exc:
+            return exc.status_code
+        return 200
+
+    assert [await hit(1, "ws-a") for _ in range(7)] == [200] * 6 + [429]
+    assert await hit(2, "ws-a") == 200
+    for user_id in range(3, 26):
+        assert await hit(user_id, "ws-a") == 200
+    assert await hit(99, "ws-a") == 429
+    assert await hit(99, "ws-b") == 200
+    assert not any(":-" in key or "127.0.0.1" in key for key in limiter._buckets)
+    with pytest.raises(HTTPException) as missing:
+        await rate_limit_authenticated_action(
+            PATH, user_id=None, workspace_id="ws-a", limiter_factory=lambda: limiter
+        )
+    assert missing.value.status_code == 403
 
 
 class ScopedConn:
@@ -131,6 +172,49 @@ class ScopedConn:
     async def execute(self, query: str, *_args: Any) -> str:
         self.statements.append(" ".join(query.split()))
         return "SELECT 1"
+
+
+@pytest.mark.asyncio
+async def test_refresh_audits_inside_the_persistence_transaction():
+    conn = ScopedConn()
+    audit = AsyncMock()
+
+    async def persisted(_user, *, on_persisted):
+        await on_persisted(conn, 5, 2)
+        return {"items": []}
+
+    with (
+        patch.object(control_room_service, "refresh_dashboard_state", new=persisted),
+        patch.object(refresh_service.audit_service, "record_event", new=audit),
+        patch.object(
+            refresh_service.auth, "pool", new=AsyncMock(side_effect=AssertionError)
+        ),
+    ):
+        await refresh_service.refresh_control_room_state(OPERATOR)
+
+    kwargs = audit.await_args.kwargs
+    assert audit.await_count == 1
+    assert kwargs["connection"] is conn
+    assert kwargs["metadata"] == {"persisted_rows": 5, "lapsed_exceptions": 2}
+    assert kwargs["critical"] is True
+
+
+@pytest.mark.asyncio
+async def test_audit_failure_inside_the_transaction_fails_the_refresh():
+    async def persisted(_user, *, on_persisted):
+        await on_persisted(ScopedConn(), 1, 0)
+        return {"items": []}
+
+    with (
+        patch.object(control_room_service, "refresh_dashboard_state", new=persisted),
+        patch.object(
+            refresh_service.audit_service,
+            "record_event",
+            new=AsyncMock(side_effect=RuntimeError("audit table missing")),
+        ),
+    ):
+        with pytest.raises(RuntimeError):
+            await refresh_service.refresh_control_room_state(OPERATOR)
 
 
 @pytest.mark.asyncio
@@ -157,7 +241,8 @@ async def test_refresh_persists_audits_and_invalidates_the_read_cache():
     assert conn.statements[0].upper().startswith("SELECT SET_CONFIG")
     assert kwargs["action"] == "control_room.state.refresh"
     assert kwargs["critical"] is True
-    assert kwargs["metadata"] == {"item_count": 2}
+    assert kwargs["metadata"] == {"persisted_rows": 0, "lapsed_exceptions": 0}
+    assert "on_persisted" in persisted.await_args.kwargs
     assert kwargs["user_agent"] == "pytest"
     invalidate.assert_called_once()
 
@@ -210,6 +295,8 @@ class PersistConn:
         self.calls.append((statement, args))
         if query == PERSIST_ITEMS_SQL:
             return f"INSERT 0 {len(json.loads(args[0]))}"
+        if query == LAPSE_EXCEPTIONS_SQL:
+            return f"INSERT 0 {len(args[1])}"
         return "INSERT 0 0"
 
     def executed(self, sql: str) -> list[tuple[Any, ...]]:
@@ -260,8 +347,9 @@ async def test_a_new_observation_lapses_the_approved_exception_in_the_same_batch
     conn = PersistConn([_existing_exception("business-1", "a" * 64)])
     rows = [_prepared_row(item, "b" * 64)]
 
-    await persist_item_rows(conn, rows, owner_scope_id=9)
+    lapsed = await persist_item_rows(conn, rows, owner_scope_id=9)
 
+    assert lapsed == 1
     lapses = conn.executed(LAPSE_EXCEPTIONS_SQL)
     assert lapses == [("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", ["business-1"], 9)]
     statements = [statement for statement, _ in conn.calls]
@@ -342,3 +430,51 @@ async def test_owner_scoped_refresh_skips_rows_owned_by_someone_else():
 
     (persisted,) = conn.executed(PERSIST_ITEMS_SQL)
     assert [row["item_id"] for row in json.loads(persisted[0])] == ["business-1"]
+
+
+@pytest.mark.asyncio
+async def test_persistence_hook_runs_on_the_same_connection_with_counts():
+    mine = business_item("business-1")
+    theirs = business_item("business-2")
+    calls: list[tuple[Any, int, int]] = []
+
+    async def hook(conn: Any, persisted: int, lapsed: int) -> None:
+        calls.append((conn, persisted, lapsed))
+
+    for existing, expected in (
+        ([{"item_id": "business-2", "owner_user_id": 44}], 1),
+        (
+            [
+                {"item_id": "business-1", "owner_user_id": 44},
+                {"item_id": "business-2", "owner_user_id": 44},
+            ],
+            0,
+        ),
+    ):
+        conn = PersistConn(existing)
+
+        async def _pool(conn=conn):
+            return conn
+
+        async def _scoped(pool, user, work):
+            return await work(
+                pool,
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            )
+
+        await persist_refresh_items(
+            [mine, theirs],
+            user={**OPERATOR, "role": "analyst"},
+            tenant_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            workspace_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            actor_id=9,
+            workspace_wide=False,
+            pool_factory=_pool,
+            run_scoped=_scoped,
+            impact_builder=lambda *_args, **_kwargs: {"estimate": 1},
+            metadata_builder=lambda item, _impact: {},
+            diagnostic_builder=lambda item: {},
+            on_persisted=hook,
+        )
+        assert calls[-1] == (conn, expected, 0)

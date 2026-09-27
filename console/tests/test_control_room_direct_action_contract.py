@@ -300,12 +300,13 @@ def test_unpersisted_or_drifted_rows_ask_for_a_refresh(row_factory, expected):
     assert (contract is not None) is (expected is DirectMatch.MATCH)
 
 
-def test_stale_live_data_asks_for_a_refresh_and_monitor_alerts_stay_advisory():
+def test_stale_source_data_offers_no_action_and_monitor_alerts_stay_advisory():
     item = business_item(data_status="stale")
-    status, _ = classify_direct_action(
-        item, direct_row(item), authorization(), APPROVE, user=OPERATOR
-    )
-    assert status is DirectMatch.NEEDS_REFRESH
+    for row in (direct_row(item), None):
+        status, _ = classify_direct_action(
+            item, row, authorization(), APPROVE, user=OPERATOR
+        )
+        assert status is DirectMatch.INELIGIBLE
     alert = business_item(kind="agent_alert")
     for template in (APPROVE, PROPOSAL):
         status, _ = classify_direct_action(
@@ -513,3 +514,16 @@ async def test_binding_slot_rejects_unknown_templates():
     forged.template_id = "request_owner_review"
     with pytest.raises(RuntimeError):
         await issue_binding_slot(SlotConn(), forged, BindingIssue())
+
+
+def test_reopen_respects_the_cartridges_the_user_can_see():
+    item = exception_item()
+    row = exception_row(item)
+    assert match_reopen_item(row, authorization(), REOPEN, user=OPERATOR) is not None
+    hidden = {**OPERATOR, "allowed_cartridges": ["sap_b1"]}
+    assert match_reopen_item(row, authorization(hidden), REOPEN, user=hidden) is None
+    platform = exception_row(item, cartridge_id="platform")
+    assert (
+        match_reopen_item(platform, authorization(hidden), REOPEN, user=hidden)
+        is not None
+    )

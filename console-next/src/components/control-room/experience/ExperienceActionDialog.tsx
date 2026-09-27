@@ -230,7 +230,7 @@ function ActionDialog({
               className="mt-1 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
             />
             <p id={counterId} className="mt-1 text-xs text-muted-foreground">
-              {`${reasonLength}/${limits.max} · mínimo ${limits.min} caracteres`}
+              {`${reasonLength}/${limits.max} · mínimo ${limits.min} letras o números`}
             </p>
             {reasonHasHiddenCharacters(reason) ? (
               <p className="mt-1 text-xs font-medium text-destructive">

@@ -5126,6 +5126,7 @@ async def refresh_dashboard_state(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
     limit_per_source: int = 1000,
+    on_persisted: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     generated_at = datetime.now(UTC)
     payload = await _collect_items(
@@ -5137,6 +5138,7 @@ async def refresh_dashboard_state(
     await _persist_item_state(
         [*payload["items"], *payload.get("diagnostics", [])],
         user,
+        on_persisted=on_persisted,
     )
     return await _dashboard_from_collection(user, payload, generated_at)
 

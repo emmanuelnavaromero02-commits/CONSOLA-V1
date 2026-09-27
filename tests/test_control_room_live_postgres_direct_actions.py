@@ -586,7 +586,7 @@ def _hcm_patches(pool: asyncpg.Pool, fetcher: Any):
         patch.object(
             control_room_service,
             "refresh_dashboard_state",
-            new=lambda user: original(user, fetcher=fetcher),
+            new=lambda user, **kwargs: original(user, fetcher=fetcher, **kwargs),
         ),
     )
 
@@ -704,6 +704,18 @@ async def test_unpersisted_findings_need_the_audited_refresh_and_new_observation
             await business_state_refresh.refresh_control_room_state(user)
         lapsed = await _item_row(seed, item_id)
         assert lapsed["status"] == "open"
+        conn = await asyncpg.connect(seed.admin_dsn)
+        try:
+            last_audit = await conn.fetchval(
+                """SELECT metadata::text FROM audit_events
+                    WHERE action = 'control_room.state.refresh'
+                      AND resource_id = $1
+                    ORDER BY id DESC LIMIT 1""",
+                seed.workspace_id,
+            )
+        finally:
+            await conn.close()
+        assert json.loads(last_audit)["lapsed_exceptions"] == 1
         assert not any(key.startswith("resolution") for key in lapsed["metadata"])
         assert (
             await _count(

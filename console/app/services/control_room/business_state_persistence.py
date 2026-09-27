@@ -9,6 +9,7 @@ from app.services.control_room.business_state_rows import state_rows
 
 PoolFactory = Callable[[], Awaitable[Any]]
 ScopedRunner = Callable[..., Awaitable[Any]]
+PersistedHook = Callable[[Any, int, int], Awaitable[None]]
 
 
 async def _owner_map(
@@ -63,6 +64,7 @@ async def persist_refresh_items(
     impact_builder: Callable[..., Mapping[str, Any]],
     metadata_builder: Callable[..., Mapping[str, Any]],
     diagnostic_builder: Callable[..., Mapping[str, Any]],
+    on_persisted: PersistedHook | None = None,
 ) -> None:
     if not items:
         return
@@ -88,6 +90,8 @@ async def persist_refresh_items(
                 not in foreign
             ]
             if not scoped_items:
+                if on_persisted is not None:
+                    await on_persisted(conn, 0, 0)
                 return
 
         rows = state_rows(
@@ -100,12 +104,15 @@ async def persist_refresh_items(
             diagnostic_builder=diagnostic_builder,
             owner_by_item=owner_by_item,
         )
-        await persist_item_rows(
+        lapsed = await persist_item_rows(
             conn,
             rows,
             owner_scope_id=None if workspace_wide else actor_id,
             workspace_wide=workspace_wide,
         )
+        if on_persisted is not None:
+            # Same transaction: the audit record commits or rolls back with the rows.
+            await on_persisted(conn, len(rows), lapsed)
 
     await run_scoped(pool, dict(user), _persist)
 

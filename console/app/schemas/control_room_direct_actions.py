@@ -21,6 +21,10 @@ PROPOSAL_EXISTS_MESSAGE = (
     "La propuesta de decisión ya estaba registrada en el Consejo de Acciones."
 )
 _FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+# Characters that render blank although Unicode classes them as letters/symbols.
+BLANK_FILLERS = frozenset(
+    {"\u115f", "\u1160", "\u17b4", "\u17b5", "\u2800", "\u3164", "\uffa0"}
+)
 _HANDLE_PATTERN = r"^[a-f0-9]{64}$"
 
 
@@ -32,12 +36,17 @@ def normalize_reason(value: object, *, minimum: int, maximum: int = 500) -> str:
     if not isinstance(value, str):
         raise ValueError("reason must be a string")
     if any(
-        unicodedata.category(character) in _FORBIDDEN_CATEGORIES for character in value
+        unicodedata.category(character) in _FORBIDDEN_CATEGORIES
+        or character in BLANK_FILLERS
+        for character in value
     ):
         raise ValueError("reason contains control or invisible characters")
     normalized = value.strip()
-    if len(normalized) < minimum:
-        raise ValueError(f"reason must have at least {minimum} characters")
+    visible = sum(
+        1 for character in normalized if unicodedata.category(character)[0] in "LN"
+    )
+    if visible < minimum:
+        raise ValueError(f"reason must have at least {minimum} letters or digits")
     if len(normalized) > maximum:
         raise ValueError(f"reason exceeds {maximum} characters")
     return normalized
@@ -105,6 +114,7 @@ class StudioTargetResponse(_StrictModel):
 
 
 __all__ = (
+    "BLANK_FILLERS",
     "DecisionProposalRequest",
     "DecisionProposalResponse",
     "DirectActionHandleRequest",

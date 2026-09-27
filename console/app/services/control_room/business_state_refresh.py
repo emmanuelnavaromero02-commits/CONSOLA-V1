@@ -22,10 +22,10 @@ async def refresh_control_room_state(
     """Explicit, audited persistence of the live observations the user can see."""
     require_write(user)
     _tenant_id, workspace_id = authority_scope(user)
-    payload = await control_room_service.refresh_dashboard_state(dict(user))
-    items = payload.get("items") if isinstance(payload, Mapping) else None
+    audited = False
 
-    async def _audit(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
+    async def _audit(conn: Any, persisted: int, lapsed: int) -> None:
+        nonlocal audited
         await audit_service.record_event(
             connection=conn,
             user_id=user.get("id"),
@@ -36,11 +36,20 @@ async def refresh_control_room_state(
             ip=ip,
             user_agent=user_agent,
             status="success",
-            metadata={"item_count": len(items) if isinstance(items, list) else 0},
+            metadata={"persisted_rows": persisted, "lapsed_exceptions": lapsed},
             critical=True,
         )
+        audited = True
 
-    await run_with_db_scope(await auth.pool(), dict(user), _audit)
+    await control_room_service.refresh_dashboard_state(dict(user), on_persisted=_audit)
+    if not audited:
+
+        async def _audit_empty(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> None:
+            await _audit(conn, 0, 0)
+
+        await run_with_db_scope(await auth.pool(), dict(user), _audit_empty)
     return ControlRoomRefreshResponse(refreshed_at=datetime.now(UTC))
 
 
