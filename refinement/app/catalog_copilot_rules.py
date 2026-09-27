@@ -460,11 +460,6 @@ def normalize_name(name: str) -> str:
     return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
 
 
-def _strip_accents(text: str) -> str:
-    table = str.maketrans("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN")
-    return text.translate(table)
-
-
 def humanize_identifier(value: str) -> str:
     """Port of console semantic_humanize_identifier, kept byte-compatible."""
     text = str(value or "").strip()
