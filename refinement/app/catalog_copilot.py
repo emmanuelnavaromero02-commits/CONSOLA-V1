@@ -20,6 +20,7 @@ import os
 import queue
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -367,10 +368,12 @@ class AutonomousCatalogWorker:
             if key in self._inflight:
                 return {"processed": False, "reason": "busy"}
             self._inflight.add(key)
+        session = getattr(self.store, "session", None)
         try:
-            if subject.get("kind") == "bronze_source":
-                return self._profile_source(sec, str(subject.get("name") or ""))
-            return self._profile_dataset(sec, str(subject.get("name") or ""))
+            with session(sec) if callable(session) else nullcontext():
+                if subject.get("kind") == "bronze_source":
+                    return self._profile_source(sec, str(subject.get("name") or ""))
+                return self._profile_dataset(sec, str(subject.get("name") or ""))
         finally:
             with self._lock:
                 self._inflight.discard(key)

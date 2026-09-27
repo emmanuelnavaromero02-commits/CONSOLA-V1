@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from typing import Any, Callable
@@ -54,15 +55,39 @@ def _normalized(name: str) -> str:
 class CatalogCopilotStore:
     def __init__(self, dsn: str | Callable[[], str] | None = None) -> None:
         self._dsn = dsn
+        self._local = threading.local()
 
     def _database_url(self) -> str:
         raw = self._dsn() if callable(self._dsn) else self._dsn
         return _dsn(raw or os.environ.get("DATABASE_URL", ""))
 
     @contextmanager
+    def session(self, sec: dict[str, Any] | None) -> Iterator[None]:
+        """Reuse one connection for every statement of a profile run.
+
+        Each statement block still runs in its own transaction with the scope
+        set transaction-locally, exactly as without a session.
+        """
+        scope = _scope(sec)
+        if getattr(self._local, "conn", None) is not None:
+            yield
+            return
+        conn = psycopg2.connect(self._database_url(), connect_timeout=3)
+        self._local.conn, self._local.scope = conn, scope
+        try:
+            yield
+        finally:
+            self._local.conn = None
+            self._local.scope = None
+            conn.close()
+
+    @contextmanager
     def _cursor(self, sec: dict[str, Any] | None) -> Iterator[Any]:
         tenant_id, workspace_id = _scope(sec)
-        conn = psycopg2.connect(self._database_url(), connect_timeout=3)
+        shared = getattr(self._local, "conn", None)
+        if shared is not None and self._local.scope != (tenant_id, workspace_id):
+            raise ValueError("catalog copilot session scope mismatch")
+        conn = shared or psycopg2.connect(self._database_url(), connect_timeout=3)
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -76,7 +101,8 @@ class CatalogCopilotStore:
             conn.rollback()
             raise
         finally:
-            conn.close()
+            if shared is None:
+                conn.close()
 
     @staticmethod
     def _rows(cur: Any) -> list[dict[str, Any]]:
