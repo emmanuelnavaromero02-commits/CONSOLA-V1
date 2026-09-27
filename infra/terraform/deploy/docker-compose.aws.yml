@@ -716,7 +716,7 @@ services:
       INEGI_URL:              "${INEGI_URL:-http://inegi:8216}"
       SEC_EDGAR_URL:          "${SEC_EDGAR_URL:-http://sec-edgar:8217}"
     ports:
-      - "8082:8080"
+      - "127.0.0.1:8082:8080"
     volumes:
       - /opt/modecissions/airflow/dags:/opt/airflow/dags
       - airflow_logs:/opt/airflow/logs

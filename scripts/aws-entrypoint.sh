@@ -133,7 +133,9 @@ CONSOLE_URL="${CONSOLE_URL:-}"
 WORKSPACE_PUBLIC_URL="${WORKSPACE_PUBLIC_URL:-}"
 APP_BASE_URL="${APP_BASE_URL:-$CONSOLE_URL}"
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-$CONSOLE_URL,$WORKSPACE_PUBLIC_URL}"
-AIRFLOW_PUBLIC_URL="${AIRFLOW_PUBLIC_URL:-${CONSOLE_URL%/}/airflow}"
+# Airflow is not routed by the public load balancer: operators reach it through
+# a tunnel to the host loopback port, so its base URL stays on localhost.
+AIRFLOW_PUBLIC_URL="${AIRFLOW_PUBLIC_URL:-http://localhost:8082/airflow}"
 SUPERSET_PUBLIC_URL="${SUPERSET_PUBLIC_URL:-}"
 PUBLIC_HTTPS_DEFAULT="false"
 if [[ "$CONSOLE_URL" == https://* && "$WORKSPACE_PUBLIC_URL" == https://* ]]; then
@@ -184,7 +186,7 @@ if [[ "$APP_ENV" =~ ^(production|prod)$ ]]; then
     exit 1
   fi
   assert_release_refs_coherent
-	  for url_var in CONSOLE_URL WORKSPACE_PUBLIC_URL APP_BASE_URL AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL; do
+	  for url_var in CONSOLE_URL WORKSPACE_PUBLIC_URL APP_BASE_URL SUPERSET_PUBLIC_URL; do
 	    value="${!url_var:-}"
 	    if [[ -z "$value" ]]; then
 	      continue

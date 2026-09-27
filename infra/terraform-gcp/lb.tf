@@ -79,17 +79,6 @@ resource "google_compute_health_check" "workspace" {
   }
 }
 
-resource "google_compute_health_check" "airflow" {
-  name               = "${local.name_prefix}-airflow-health"
-  check_interval_sec = 15
-  timeout_sec        = 5
-
-  http_health_check {
-    port         = 8082
-    request_path = "/airflow/health"
-  }
-}
-
 resource "google_compute_backend_service" "console" {
   name                  = "${local.name_prefix}-console-backend"
   protocol              = "HTTP"
@@ -132,27 +121,6 @@ resource "google_compute_backend_service" "workspace" {
   }
 }
 
-resource "google_compute_backend_service" "airflow" {
-  name                  = "${local.name_prefix}-airflow-backend"
-  protocol              = "HTTP"
-  port_name             = "airflow"
-  load_balancing_scheme = "EXTERNAL_MANAGED"
-  timeout_sec           = 30
-  health_checks         = [google_compute_health_check.airflow.id]
-  security_policy       = google_compute_security_policy.public.id
-
-  log_config {
-    enable      = var.enable_lb_logging
-    sample_rate = var.lb_log_sample_rate
-  }
-
-  backend {
-    group           = google_compute_instance_group.app.id
-    balancing_mode  = "UTILIZATION"
-    capacity_scaler = 1.0
-  }
-}
-
 resource "google_compute_url_map" "public" {
   name            = "${local.name_prefix}-url-map"
   default_service = google_compute_backend_service.console.id
@@ -173,11 +141,6 @@ resource "google_compute_url_map" "public" {
   path_matcher {
     name            = "console"
     default_service = google_compute_backend_service.console.id
-
-    path_rule {
-      paths   = ["/airflow", "/airflow/*"]
-      service = google_compute_backend_service.airflow.id
-    }
   }
 
   dynamic "path_matcher" {
