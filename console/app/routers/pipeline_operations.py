@@ -51,6 +51,21 @@ def _require_cartridge_visible(user: dict[str, Any], cartridge: str | None) -> N
     raise HTTPException(403, "cartridge not allowed")
 
 
+def _visible_cartridges(user: dict[str, Any]) -> list[str] | None:
+    """Cartridges whose runs the caller may see; None means every cartridge."""
+    ctx = build_security_context(user)
+    allowed = sorted(
+        {
+            str(item).strip()
+            for item in (ctx.get("allowed_cartridges") or [])
+            if str(item).strip()
+        }
+    )
+    if is_security_admin_context(ctx) or "*" in allowed:
+        return None
+    return allowed
+
+
 def _recovery_actor(user: dict[str, Any]) -> str:
     return f"user:{user.get('id') if user.get('id') is not None else 'unknown'}"
 
@@ -109,6 +124,8 @@ async def recover_stuck_pipeline_runs(
             neutralize_airflow=True,
             expected_plan_digest=body.plan_digest if body.apply else None,
             exclude_run_ids=body.exclude_run_ids,
+            visible_cartridges=_visible_cartridges(user),
+            orphan_scan=True,
         )
     except recovery_service.PlanChanged as exc:
         raise HTTPException(

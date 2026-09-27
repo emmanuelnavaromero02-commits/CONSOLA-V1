@@ -53,6 +53,8 @@ async def _insert_run(
     status: str = "queued",
     age: timedelta = timedelta(hours=3),
     error_message: str | None = "trigger accepted",
+    cartridge: str = "sap_successfactors",
+    dag_id: str = DAG_ID,
 ) -> str:
     run_id = f"manual__recovery-{uuid.uuid4().hex}"
     conn = await asyncpg.connect(admin_dsn)
@@ -63,17 +65,18 @@ async def _insert_run(
                 run_id, dag_id, cartridge_id, entity, airflow_dag_run_id, mode,
                 status, started_at, error_message, extra, tenant_id, workspace_id
             )
-            VALUES ($1, $2, 'sap_successfactors', 'User', $1, 'incremental',
+            VALUES ($1, $2, $8, 'User', $1, 'incremental',
                     $3, NOW() - $4::interval, $5, '{"reserved": true}'::jsonb,
                     $6::uuid, $7::uuid)
             """,
             run_id,
-            DAG_ID,
+            dag_id,
             status,
             age,
             error_message,
             tenant,
             workspace,
+            cartridge,
         )
     finally:
         await conn.close()
@@ -312,5 +315,88 @@ def test_stale_plan_digest_changes_nothing(
             assert await conn.fetchval("SELECT count(*) FROM pipeline_runs") == rows_before
         finally:
             await conn.close()
+
+    asyncio.run(scenario())
+
+
+def test_visibility_filter_and_orphan_scan_run_against_the_real_schema(
+    postgres_with_real_init_schema: str, omega_console_live_dsn: str
+) -> None:
+    async def scenario() -> None:
+        admin = postgres_with_real_init_schema
+        tenant, workspace = await _workspace(admin)
+        other_tenant, other_workspace = await _workspace(admin)
+        sf_run = await _insert_run(admin, tenant=tenant, workspace=workspace)
+        replicon_run = await _insert_run(
+            admin, tenant=tenant, workspace=workspace, cartridge="replicon", dag_id="replicon_extract"
+        )
+        closed = await _insert_run(
+            admin,
+            tenant=tenant,
+            workspace=workspace,
+            status="failed",
+            dag_id="sap_successfactors_extract_all",
+        )
+        foreign_closed = await _insert_run(
+            admin,
+            tenant=other_tenant,
+            workspace=other_workspace,
+            status="failed",
+            dag_id="sap_successfactors_extract_all",
+        )
+        calls: list[tuple[str, dict]] = []
+
+        async def invoke(server, tool, args, *, user=None):
+            calls.append((tool, dict(args)))
+            if tool == "airflow_describe_dag":
+                pending = [
+                    {"dag_run_id": run_id, "state": "queued", "queued_at": "2026-01-01T00:00:00+00:00", "conf": {"tenant_id": tenant, "workspace_id": workspace}}
+                    for run_id in (closed, foreign_closed)
+                ]
+                return {"found": True, "is_paused": True, "schedule_kind": "manual", "scheduler_healthy": True, "runs": pending, "running_truncated": False, "foreign": {"queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0}}
+            if tool == "airflow_get_run_status":
+                return {"found": False, "state": "not_found"}
+            if tool == "airflow_mark_dag_run_failed":
+                return {"marked": True, "found": True, "state": "failed"}
+            raise AssertionError(tool)
+
+        audits: list[dict] = []
+
+        async def record_event(**payload):
+            audits.append(payload)
+
+        user = _user(tenant, workspace)
+        report = await _recover(
+            omega_console_live_dsn,
+            user,
+            invoke,
+            mode="dry_run",
+            visible_cartridges=["sap_successfactors"],
+            orphan_scan=True,
+            record_event=record_event,
+        )
+        planned = {run["run_id"]: run["classification"] for run in report.runs}
+        assert planned == {sf_run: "missing_in_airflow", closed: "airflow_orphan"}
+        assert replicon_run not in planned
+        assert foreign_closed not in planned
+
+        applied = await _recover(
+            omega_console_live_dsn,
+            user,
+            invoke,
+            mode="apply",
+            expected_plan_digest=report.plan_digest,
+            visible_cartridges=["sap_successfactors"],
+            orphan_scan=True,
+            record_event=record_event,
+        )
+        assert applied.counts["recovered"] == 1
+        assert applied.counts["airflow_neutralized"] == 1
+        assert (await _row(admin, closed))["status"] == "failed"
+        assert (await _row(admin, closed))["fencing_token"] == 0
+        assert (await _row(admin, replicon_run))["status"] == "queued"
+        marked = [args["dag_run_id"] for tool, args in calls if tool == "airflow_mark_dag_run_failed"]
+        assert marked == [closed]
+        assert [event["metadata"]["classification"] for event in audits] == ["missing_in_airflow", "airflow_orphan"]
 
     asyncio.run(scenario())

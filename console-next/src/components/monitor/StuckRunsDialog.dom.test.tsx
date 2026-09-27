@@ -140,6 +140,7 @@ describe("StuckRunsDialog", () => {
     expect(recoverMock).toHaveBeenLastCalledWith({ cartridge: "sap_successfactors", dag_id: undefined, apply: true, plan_digest: "a".repeat(64) });
     expect(onRecovered).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).toContain("Se cerraron 2 corridas atascadas");
+    expect(document.querySelector('[data-testid="stuck-runs-counts"]')?.textContent).toContain("Detenidas en Airflow0");
   });
 
   it("reviews again when the plan changed before confirming", async () => {

@@ -63,6 +63,7 @@ const recoveryClassification = z.enum([
   "stalled_queued_no_progress",
   "stalled_running_no_tasks",
   "unverifiable",
+  "airflow_orphan",
 ]);
 
 export const stuckRunRecoverySchema = z
@@ -100,7 +101,7 @@ export const stuckRunRecoverySchema = z
             age_minutes: z.number().int().nonnegative().nullable(),
             created_today: z.boolean(),
             classification: recoveryClassification,
-            action: z.enum(["mark_failed", "sync_terminal", "none"]),
+            action: z.enum(["mark_failed", "sync_terminal", "neutralize_airflow", "none"]),
             neutralize_airflow: z.boolean(),
             reason_es: z.string(),
           })

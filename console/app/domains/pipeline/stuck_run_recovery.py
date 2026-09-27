@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,7 @@ RECOVERY_SCHEMA_VERSION = "pipeline-recovery/v1"
 DEFAULT_THRESHOLD = timedelta(minutes=15)
 DEFAULT_MISSING_GRACE = timedelta(minutes=2)
 
+MANUAL_TRIGGER_DAG_RE = re.compile(r"^[a-z][a-z0-9_]*_extract(_all)?$")
 SYNC_NOW_DAG_ID = "sync_now"
 SYNC_NOW_ENTITY = "__sync_now__"
 LEASE_GOVERNED_DAG_IDS = frozenset({"dataset_refresh_chain"})
@@ -35,6 +37,7 @@ STALLED_QUEUED_PAUSED_DAG = "stalled_queued_paused_dag"
 STALLED_QUEUED_NO_PROGRESS = "stalled_queued_no_progress"
 STALLED_RUNNING_NO_TASKS = "stalled_running_no_tasks"
 UNVERIFIABLE = "unverifiable"
+AIRFLOW_ORPHAN = "airflow_orphan"
 
 CLASSIFICATIONS = (
     NOT_APPLICABLE,
@@ -47,6 +50,7 @@ CLASSIFICATIONS = (
     STALLED_QUEUED_NO_PROGRESS,
     STALLED_RUNNING_NO_TASKS,
     UNVERIFIABLE,
+    AIRFLOW_ORPHAN,
 )
 STALLED_CLASSES = frozenset(
     {
@@ -61,6 +65,7 @@ IN_PROGRESS_CLASSES = frozenset({TOO_RECENT, LIVE, WAITING_TURN})
 ACTION_MARK_FAILED = "mark_failed"
 ACTION_SYNC_TERMINAL = "sync_terminal"
 ACTION_NONE = "none"
+ACTION_NEUTRALIZE_AIRFLOW = "neutralize_airflow"
 
 ACTIVE_TASK_STATES = frozenset(
     {
@@ -102,6 +107,10 @@ _REASONS_ES = {
     ),
     "dag_missing": (
         "Airflow no reconoce el proceso de esta corrida; no se modifica."
+    ),
+    AIRFLOW_ORPHAN: (
+        "La consola ya cerró esta corrida, pero Airflow la mantiene pendiente con "
+        "el proceso pausado; se detiene en Airflow."
     ),
 }
 
@@ -245,6 +254,11 @@ def classify_stuck_run(
         idle = _age(now, last_activity)
         if idle is not None and idle < threshold:
             return _verdict(LIVE)
+        if truth.dag_paused is True:
+            # A paused DAG schedules no further tasks: the pause explains it.
+            return _verdict(
+                STALLED_RUNNING_NO_TASKS, action=ACTION_MARK_FAILED, neutralize=True
+            )
         if truth.scheduler_healthy is not True:
             return _verdict(
                 UNVERIFIABLE, reason_key="scheduler_unhealthy", certain=False
@@ -278,6 +292,13 @@ def classify_stuck_run(
         )
 
     return _verdict(UNVERIFIABLE, certain=False)
+
+
+def orphan_verdict() -> RunVerdict:
+    """An own Airflow run left pending in a paused DAG after the console closed it."""
+    return _verdict(
+        AIRFLOW_ORPHAN, action=ACTION_NEUTRALIZE_AIRFLOW, neutralize=True
+    )
 
 
 def recover_update_sql() -> str:
@@ -362,6 +383,9 @@ def plan_digest(entries: Iterable[Mapping[str, Any]]) -> str:
 
 __all__ = (
     "ACTION_MARK_FAILED",
+    "ACTION_NEUTRALIZE_AIRFLOW",
+    "AIRFLOW_ORPHAN",
+    "MANUAL_TRIGGER_DAG_RE",
     "ACTION_NONE",
     "ACTION_SYNC_TERMINAL",
     "AIRFLOW_TERMINAL",
@@ -387,6 +411,7 @@ __all__ = (
     "WAITING_TURN",
     "as_utc_datetime",
     "classify_stuck_run",
+    "orphan_verdict",
     "plan_digest",
     "plan_entry",
     "pre_airflow_verdict",

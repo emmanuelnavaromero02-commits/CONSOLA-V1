@@ -228,3 +228,43 @@ def test_route_is_registered_on_every_console_surface():
     assert rate_limits.RATE_LIMITS["pipeline_recover"][0] <= 10
     paths = {route.path for route in _router_module().router.routes}
     assert "/api/pipelines/recover-stuck-runs" in paths
+
+
+def test_recovery_without_a_cartridge_only_reads_visible_cartridges(recorded):
+    response = _client(OPERATOR).post("/api/pipelines/recover-stuck-runs", json={}, headers=HEADERS)
+    assert response.status_code == 200
+    call = recorded[0]
+    assert call["cartridge"] is None
+    assert call["visible_cartridges"] == ["sap_successfactors"]
+    assert call["orphan_scan"] is True
+
+
+def test_restricted_user_without_cartridges_sees_no_runs(recorded):
+    user = {**OPERATOR, "allowed_cartridges": []}
+    response = _client(user).post("/api/pipelines/recover-stuck-runs", json={}, headers=HEADERS)
+    assert response.status_code == 200
+    assert recorded[0]["visible_cartridges"] == []
+
+
+def test_wildcard_scope_is_not_filtered(recorded):
+    user = {**OPERATOR, "allowed_cartridges": ["*"]}
+    response = _client(user).post("/api/pipelines/recover-stuck-runs", json={}, headers=HEADERS)
+    assert response.status_code == 200
+    assert recorded[0]["visible_cartridges"] is None
+
+
+def test_orphan_rows_serialize_in_the_strict_response(monkeypatch):
+    module = _router_module()
+    report = _report()
+    report.runs[0].update(
+        classification="airflow_orphan", action="neutralize_airflow", status_before="failed"
+    )
+
+    async def orphan(_user, **_kwargs):
+        return report
+
+    monkeypatch.setattr(module.recovery_service, "recover_stuck_runs", orphan)
+    response = _client(OPERATOR).post("/api/pipelines/recover-stuck-runs", json={}, headers=HEADERS)
+    assert response.status_code == 200
+    run = response.json()["runs"][0]
+    assert (run["classification"], run["action"]) == ("airflow_orphan", "neutralize_airflow")

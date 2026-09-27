@@ -10,6 +10,7 @@ from fastapi import HTTPException
 TENANT = "11111111-1111-1111-1111-111111111111"
 WORKSPACE = "22222222-2222-2222-2222-222222222222"
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+OWN = {"tenant_id": TENANT, "workspace_id": WORKSPACE}
 USER = {
     "id": 9,
     "email": "ops@example.com",
@@ -151,7 +152,7 @@ async def test_foreign_backlog_blocks_resume():
 
 @pytest.mark.anyio
 async def test_own_stale_backlog_requires_recovery_before_resume():
-    stale = {"dag_run_id": "manual__old", "state": "queued", "queued_at": (NOW - timedelta(hours=5)).isoformat(), "stale": True}
+    stale = {"dag_run_id": "manual__old", "state": "queued", "queued_at": (NOW - timedelta(hours=5)).isoformat(), "stale": True, "conf": OWN}
     airflow = Airflow(_describe(runs=[stale]))
 
     async def known(_dag_id, run_ids):
@@ -165,7 +166,7 @@ async def test_own_stale_backlog_requires_recovery_before_resume():
 
 @pytest.mark.anyio
 async def test_own_stale_backlog_without_console_rows_is_foreign():
-    stale = {"dag_run_id": "manual__orphan", "state": "queued", "stale": True}
+    stale = {"dag_run_id": "manual__orphan", "state": "queued", "stale": True, "conf": OWN}
     airflow = Airflow(_describe(runs=[stale]))
 
     async def known(_dag_id, _run_ids):
@@ -178,7 +179,7 @@ async def test_own_stale_backlog_without_console_rows_is_foreign():
 
 @pytest.mark.anyio
 async def test_auto_neutralize_recovers_own_backlog_then_resumes():
-    stale = {"dag_run_id": "manual__old", "state": "queued", "stale": True}
+    stale = {"dag_run_id": "manual__old", "state": "queued", "stale": True, "conf": OWN}
     airflow = Airflow(_describe(runs=[stale]), _describe(runs=[]))
     recovered: list[str] = []
 
@@ -193,7 +194,7 @@ async def test_auto_neutralize_recovers_own_backlog_then_resumes():
 
 @pytest.mark.anyio
 async def test_auto_neutralize_that_leaves_backlog_still_blocks():
-    stale = {"dag_run_id": "manual__old", "state": "queued", "stale": True}
+    stale = {"dag_run_id": "manual__old", "state": "queued", "stale": True, "conf": OWN}
     airflow = Airflow(_describe(runs=[stale]), _describe(runs=[stale]))
 
     async def recover(_dag_id):
@@ -223,8 +224,8 @@ async def test_unpause_failure_is_reported_as_unavailable():
 @pytest.mark.anyio
 async def test_aggregate_reuses_the_live_run_instead_of_piling_up():
     runs = [
-        {"dag_run_id": "manual__queued", "state": "queued", "queued_at": (NOW - timedelta(minutes=1)).isoformat(), "stale": False, "conf": {"mode": "incremental", "target": "all"}},
-        {"dag_run_id": "manual__running", "state": "running", "conf": {"mode": "incremental", "target": "all"}},
+        {"dag_run_id": "manual__queued", "state": "queued", "queued_at": (NOW - timedelta(minutes=1)).isoformat(), "stale": False, "conf": {**OWN, "mode": "incremental", "target": "all"}},
+        {"dag_run_id": "manual__running", "state": "running", "queued_at": (NOW - timedelta(hours=2)).isoformat(), "stale": True, "conf": {**OWN, "mode": "incremental", "target": "all"}},
     ]
     airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", is_paused=False, runs=runs))
     result = await _check("sap_successfactors_extract_all", airflow, mode="incremental", target="all")
@@ -234,7 +235,7 @@ async def test_aggregate_reuses_the_live_run_instead_of_piling_up():
 
 @pytest.mark.anyio
 async def test_aggregate_does_not_reuse_a_run_with_other_parameters():
-    runs = [{"dag_run_id": "manual__full", "state": "running", "conf": {"mode": "full", "target": "all"}}]
+    runs = [{"dag_run_id": "manual__full", "state": "running", "conf": {**OWN, "mode": "full", "target": "all"}}]
     airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", is_paused=False, runs=runs))
     result = await _check("sap_successfactors_extract_all", airflow, mode="incremental", target="all")
     assert result.reuse_run_id is None
@@ -242,7 +243,7 @@ async def test_aggregate_does_not_reuse_a_run_with_other_parameters():
 
 @pytest.mark.anyio
 async def test_paused_aggregate_resumes_and_reuses_its_recent_queued_run():
-    runs = [{"dag_run_id": "manual__recent", "state": "queued", "queued_at": (NOW - timedelta(minutes=2)).isoformat(), "stale": False, "conf": {}}]
+    runs = [{"dag_run_id": "manual__recent", "state": "queued", "queued_at": (NOW - timedelta(minutes=2)).isoformat(), "stale": False, "conf": OWN}]
     airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", runs=runs))
     result = await _check("sap_successfactors_extract_all", airflow)
     assert result.unpaused is True
@@ -327,3 +328,156 @@ async def test_test_suite_stub_keeps_airflow_out_of_unrelated_tests():
         refresh_dag_run_status=None,
     )
     assert result.checked is False
+
+
+def _prod_stuck_extract_all_run():
+    """The production shape: manual, queued 07:57, started 08:17, no TI state since."""
+    return {
+        "dag_run_id": "manual__2026-09-26T07:57:00+00:00",
+        "state": "running",
+        "queued_at": "2026-09-26T07:57:00+00:00",
+        "start_date": "2026-09-26T08:17:00+00:00",
+        "stale": True,
+        "conf": {**OWN, "mode": "incremental", "target": "all"},
+    }
+
+
+@pytest.mark.anyio
+async def test_paused_dag_never_resumes_an_hours_old_running_run():
+    prod_now = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+    airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", is_paused=True, runs=[_prod_stuck_extract_all_run()]))
+
+    async def known(_dag_id, run_ids):
+        return set(run_ids)
+
+    with pytest.raises(HTTPException) as exc:
+        await _check(
+            "sap_successfactors_extract_all",
+            airflow,
+            now=prod_now,
+            auto_unpause=True,
+            auto_neutralize=False,
+            mode="incremental",
+            target="all",
+            console_run_ids=known,
+        )
+    assert _reason(exc) == "stale_runs_require_recovery"
+    assert airflow.tools() == ["airflow_describe_dag"]
+
+
+@pytest.mark.anyio
+async def test_old_running_run_is_backlog_even_without_the_tool_stale_flag():
+    prod_now = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+    run = {**_prod_stuck_extract_all_run(), "stale": False}
+    airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", runs=[run]))
+    with pytest.raises(HTTPException) as exc:
+        await _check("sap_successfactors_extract_all", airflow, now=prod_now)
+    assert _reason(exc) == "stale_runs_require_recovery"
+    assert "airflow_unpause_manual_dag" not in airflow.tools()
+
+
+@pytest.mark.anyio
+async def test_prod_shape_without_a_console_row_is_platform_backlog():
+    prod_now = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+    airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", runs=[_prod_stuck_extract_all_run()]))
+
+    async def known(_dag_id, _run_ids):
+        return set()
+
+    with pytest.raises(HTTPException) as exc:
+        await _check("sap_successfactors_extract_all", airflow, now=prod_now, console_run_ids=known)
+    assert _reason(exc) == "foreign_backlog_requires_platform_recovery"
+    assert "airflow_unpause_manual_dag" not in airflow.tools()
+
+
+@pytest.mark.anyio
+async def test_auto_neutralize_clears_the_stuck_running_run_before_resuming():
+    prod_now = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+    airflow = Airflow(
+        _describe(dag_id="sap_successfactors_extract_all", runs=[_prod_stuck_extract_all_run()]),
+        _describe(dag_id="sap_successfactors_extract_all", runs=[]),
+    )
+    recovered: list[str] = []
+
+    async def recover(dag_id):
+        recovered.append(dag_id)
+
+    result = await _check("sap_successfactors_extract_all", airflow, now=prod_now, recover=recover, auto_neutralize=True)
+    assert recovered == ["sap_successfactors_extract_all"]
+    assert result.unpaused is True
+    assert result.reuse_run_id is None
+
+
+@pytest.mark.anyio
+async def test_recent_running_run_on_a_paused_dag_may_resume_and_be_reused():
+    run = {
+        "dag_run_id": "manual__just_now",
+        "state": "running",
+        "queued_at": (NOW - timedelta(minutes=3)).isoformat(),
+        "stale": False,
+        "conf": {**OWN, "mode": "incremental", "target": "all"},
+    }
+    airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", runs=[run]))
+    result = await _check("sap_successfactors_extract_all", airflow, mode="incremental", target="all")
+    assert result.unpaused is True
+    assert result.reuse_run_id == "manual__just_now"
+
+
+@pytest.mark.anyio
+async def test_old_running_run_on_an_unpaused_dag_is_a_long_extraction_to_reuse():
+    runs = [{**_prod_stuck_extract_all_run(), "dag_run_id": "manual__long"}]
+    airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", is_paused=False, runs=runs))
+    result = await _check("sap_successfactors_extract_all", airflow, mode="incremental", target="all")
+    assert result.reuse_run_id == "manual__long"
+    assert result.unpaused is False
+
+
+@pytest.mark.anyio
+async def test_foreign_stale_running_runs_block_resume():
+    airflow = Airflow(_describe(foreign={"queued": 0, "running": 1, "stale_queued": 0, "stale_running": 1}))
+    with pytest.raises(HTTPException) as exc:
+        await _check("sap_successfactors_extract", airflow)
+    assert _reason(exc) == "foreign_backlog_requires_platform_recovery"
+    assert "airflow_unpause_manual_dag" not in airflow.tools()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("flag", ["running_truncated", "queued_truncated"])
+async def test_truncated_pending_runs_on_a_paused_dag_block_resume(flag):
+    airflow = Airflow(_describe(**{flag: True}))
+    with pytest.raises(HTTPException) as exc:
+        await _check("sap_successfactors_extract", airflow)
+    assert _reason(exc) == "foreign_backlog_requires_platform_recovery"
+    assert "airflow_unpause_manual_dag" not in airflow.tools()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "conf",
+    [
+        {"cartridge_id": "sap_successfactors", "mode": "incremental", "target": "all"},
+        {"tenant_id": TENANT, "mode": "incremental", "target": "all"},
+        {"tenant_id": TENANT, "workspace_id": "55555555-5555-5555-5555-555555555555"},
+        {},
+    ],
+)
+async def test_only_runs_scoped_to_the_caller_are_reused_or_counted_as_own(conf):
+    live = {"dag_run_id": "manual__someone_else", "state": "running", "queued_at": (NOW - timedelta(minutes=1)).isoformat(), "stale": False, "conf": conf}
+    airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", is_paused=False, runs=[live]))
+    result = await _check("sap_successfactors_extract_all", airflow, mode="incremental", target="all")
+    assert result.reuse_run_id is None
+
+    stale = {**live, "stale": True, "queued_at": (NOW - timedelta(hours=3)).isoformat()}
+    paused = Airflow(_describe(dag_id="sap_successfactors_extract_all", runs=[stale]))
+
+    async def known(_dag_id, run_ids):
+        return set(run_ids)
+
+    with pytest.raises(HTTPException) as exc:
+        await _check("sap_successfactors_extract_all", paused, console_run_ids=known)
+    assert _reason(exc) == "foreign_backlog_requires_platform_recovery"
+
+
+def test_preflight_recovery_can_close_stuck_running_runs_and_orphans():
+    classes = _tp().PREFLIGHT_RECOVERY_CLASSES
+    assert {"stalled_running_no_tasks", "stalled_queued_paused_dag", "airflow_orphan"} <= classes

@@ -24,8 +24,9 @@ RecoveryClassification = Literal[
     "stalled_queued_no_progress",
     "stalled_running_no_tasks",
     "unverifiable",
+    "airflow_orphan",
 ]
-RecoveryAction = Literal["mark_failed", "sync_terminal", "none"]
+RecoveryAction = Literal["mark_failed", "sync_terminal", "neutralize_airflow", "none"]
 
 
 class _StrictModel(BaseModel):

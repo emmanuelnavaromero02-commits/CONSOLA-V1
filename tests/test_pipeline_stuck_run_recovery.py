@@ -204,10 +204,12 @@ class _Ctx:
 
 
 class FakeConn:
-    def __init__(self, journal, *, candidates=(), cas_result="auto"):
+    def __init__(self, journal, *, candidates=(), cas_result="auto", dag_rows=(), orphan_rows=()):
         self.journal = journal
         self.candidates = list(candidates)
         self.cas_result = cas_result
+        self.dag_rows = list(dag_rows)
+        self.orphan_rows = list(orphan_rows)
         self.executed = []
         self.fetches = []
 
@@ -222,6 +224,10 @@ class FakeConn:
 
     async def fetch(self, sql, *args):
         self.fetches.append((sql, args))
+        if "SELECT DISTINCT dag_id" in sql:
+            return [dict(row) for row in self.dag_rows]
+        if "airflow_dag_run_id = ANY($4::text[])" in sql:
+            return [dict(row) for row in self.orphan_rows]
         if "FROM pipeline_runs" in sql:
             return [dict(row) for row in self.candidates]
         return []
@@ -574,3 +580,188 @@ def test_pre_trigger_recovery_swallows_scope_errors():
         )
     )
     assert result is None
+
+
+def test_running_run_in_a_paused_dag_is_stalled_even_without_scheduler_health():
+    recovery = _recovery()
+    prod_now = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+    row = _row(
+        run_id="manual__2026-09-26T07:57:00+00:00",
+        airflow_dag_run_id="manual__2026-09-26T07:57:00+00:00",
+        dag_id="sap_successfactors_extract_all",
+        entity="__extract_all__",
+        status="running",
+        started_at=datetime(2026, 9, 26, 7, 57, tzinfo=timezone.utc),
+    )
+    for healthy in (True, False, None):
+        truth = _truth(
+            state="running",
+            queued_at=datetime(2026, 9, 26, 7, 57, tzinfo=timezone.utc),
+            start_date=datetime(2026, 9, 26, 8, 17, tzinfo=timezone.utc),
+            active_tasks=0,
+            last_task_activity_at=None,
+            dag_paused=True,
+            scheduler_healthy=healthy,
+        )
+        verdict = recovery.classify_stuck_run(row, truth, now=prod_now)
+        assert verdict.classification == "stalled_running_no_tasks", healthy
+        assert verdict.action == "mark_failed"
+        assert verdict.neutralize_airflow is True
+
+
+def test_prod_shape_task_instances_without_state_are_not_active():
+    service = _service()
+    journal = []
+    run_id = "manual__2026-09-26T07:57:00+00:00"
+    row = _row(run_id=run_id, airflow_dag_run_id=run_id, dag_id="sap_successfactors_extract_all", entity="__extract_all__", status="running")
+    invoke = _invoke_factory(
+        journal,
+        describe={"sap_successfactors_extract_all": {"found": True, "is_paused": True, "schedule_kind": "manual", "scheduler_healthy": True, "runs": [{"dag_run_id": run_id, "state": "running", "queued_at": "2026-09-26T07:57:00+00:00", "conf": {}}], "running_truncated": False, "foreign": {"queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0}}},
+        statuses={run_id: {"found": True, "state": "running", "start_date": "2026-09-26T08:17:00+00:00"}},
+        tasks={run_id: {"found": True, "tasks": [{"task_id": t, "state": None, "start_date": None, "end_date": None} for t in ("plan", "extract", "summarize")]}},
+    )
+    truths = _run(service.observe_airflow_truth([row], invoke=invoke, user=_user()))
+    truth = truths[run_id]
+    assert truth.active_tasks == 0
+    assert truth.last_task_activity_at is None
+    assert truth.dag_paused is True
+    verdict = _recovery().classify_stuck_run(row, truth, now=datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc))
+    assert verdict.classification == "stalled_running_no_tasks"
+
+
+def test_truncated_running_page_without_a_visible_sibling_is_unverifiable():
+    service = _service()
+    journal = []
+    row = _row()
+    base = {"found": True, "is_paused": False, "schedule_kind": "manual", "scheduler_healthy": True, "runs": [], "foreign": {"queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0}}
+    invoke = _invoke_factory(journal, describe={"sap_successfactors_extract": {**base, "running_truncated": True}}, statuses={"manual__run-1": {"found": True, "state": "queued"}})
+    truth = _run(service.observe_airflow_truth([row], invoke=invoke, user=_user()))["manual__run-1"]
+    assert truth.sibling_running is None
+    assert _recovery().classify_stuck_run(row, truth, now=NOW).classification == "unverifiable"
+
+    invoke = _invoke_factory(journal, describe={"sap_successfactors_extract": {**base, "running_truncated": True, "foreign": {**base["foreign"], "running": 1}}}, statuses={"manual__run-1": {"found": True, "state": "queued"}})
+    truth = _run(service.observe_airflow_truth([row], invoke=invoke, user=_user()))["manual__run-1"]
+    assert truth.sibling_running is True
+    assert _recovery().classify_stuck_run(row, truth, now=NOW).classification == "waiting_turn"
+
+    invoke = _invoke_factory(journal, describe={"sap_successfactors_extract": {**base, "running_truncated": False}}, statuses={"manual__run-1": {"found": True, "state": "queued"}})
+    truth = _run(service.observe_airflow_truth([row], invoke=invoke, user=_user()))["manual__run-1"]
+    assert truth.sibling_running is False
+    assert _recovery().classify_stuck_run(row, truth, now=NOW).classification == "stalled_queued_no_progress"
+
+
+def test_candidates_are_limited_to_the_callers_visible_cartridges():
+    journal = []
+    conn = FakeConn(journal, candidates=[])
+    invoke = _invoke_factory(journal)
+    _recover(conn, invoke, mode="dry_run", visible_cartridges=["sap_successfactors"])
+    sql, args = conn.fetches[0]
+    assert "cartridge_id = ANY($4::text[])" in sql
+    assert args[3] == ["sap_successfactors"]
+    conn = FakeConn(journal, candidates=[])
+    _recover(conn, invoke, mode="dry_run", visible_cartridges=[])
+    sql, args = conn.fetches[0]
+    assert args[3] == []
+    conn = FakeConn(journal, candidates=[])
+    _recover(conn, invoke, mode="dry_run")
+    assert "cartridge_id = ANY" not in conn.fetches[0][0]
+
+
+def _orphan_describe(*, paused=True, age=timedelta(hours=10), state="queued", run_id="manual__orphan"):
+    return {
+        "found": True,
+        "is_paused": paused,
+        "schedule_kind": "manual",
+        "scheduler_healthy": True,
+        "runs": [{"dag_run_id": run_id, "state": state, "queued_at": (NOW - age).isoformat(), "conf": {"tenant_id": TENANT, "workspace_id": WORKSPACE}}],
+        "running_truncated": False,
+        "foreign": {"queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0},
+    }
+
+
+def _orphan_row(status="failed", **overrides):
+    row = _row(
+        run_id="manual__orphan",
+        airflow_dag_run_id="manual__orphan",
+        dag_id="sap_successfactors_extract_all",
+        entity="__extract_all__",
+        status=status,
+        fencing_token=4,
+    )
+    row.update(overrides)
+    return row
+
+
+def test_orphan_run_left_pending_in_a_paused_dag_is_planned_then_neutralized_with_audit():
+    journal = []
+    conn = FakeConn(journal, candidates=[], dag_rows=[{"dag_id": "sap_successfactors_extract_all"}, {"dag_id": "dataset_refresh_chain"}], orphan_rows=[_orphan_row()])
+    invoke = _invoke_factory(journal, describe={"sap_successfactors_extract_all": _orphan_describe()})
+    dry, events = _recover(conn, invoke, mode="dry_run", orphan_scan=True)
+    assert [run["classification"] for run in dry.runs] == ["airflow_orphan"]
+    assert dry.runs[0]["action"] == "neutralize_airflow"
+    assert dry.runs[0]["status_before"] == "failed"
+    assert dry.counts["recoverable"] == 1
+    assert events == []
+    assert not [entry for entry in journal if entry[0] == "neutralize"]
+    described = [args["dag_id"] for _s, tool, args in invoke.calls if tool == "airflow_describe_dag"]
+    assert described == ["sap_successfactors_extract_all"]
+
+    applied, events = _recover(conn, invoke, orphan_scan=True, expected_plan_digest=dry.plan_digest)
+    assert [entry for entry in journal if entry[0] in {"neutralize", "cas"}] == [("neutralize", "manual__orphan")]
+    assert applied.counts["airflow_neutralized"] == 1
+    assert applied.counts["recovered"] == 0
+    assert "Se detuvieron en Airflow 1" in applied.message_es
+    mark_args = next(args for _s, tool, args in invoke.calls if tool == "airflow_mark_dag_run_failed")
+    assert mark_args["expected_states"] == ["queued"]
+    assert events[0]["action"] == "pipeline_run.recover_stuck"
+    assert events[0]["critical"] is True
+    assert events[0]["metadata"]["classification"] == "airflow_orphan"
+    assert events[0]["metadata"]["console_status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "describe,rows,exclude",
+    [
+        (_orphan_describe(paused=False), [_orphan_row()], ()),
+        (_orphan_describe(age=timedelta(minutes=3)), [_orphan_row()], ()),
+        (_orphan_describe(), [_orphan_row(), _orphan_row(run_id="manual__orphan:User", status="queued")], ()),
+        (_orphan_describe(), [], ()),
+        (_orphan_describe(), [_orphan_row()], ("manual__orphan",)),
+        (_orphan_describe(state="success"), [_orphan_row()], ()),
+    ],
+    ids=["unpaused_dag", "recent_run", "open_console_row", "no_console_row", "excluded", "not_pending"],
+)
+def test_orphan_scan_only_touches_closed_runs_stuck_in_a_paused_dag(describe, rows, exclude):
+    journal = []
+    conn = FakeConn(journal, candidates=[], dag_rows=[{"dag_id": "sap_successfactors_extract_all"}], orphan_rows=rows)
+    invoke = _invoke_factory(journal, describe={"sap_successfactors_extract_all": describe})
+    report, events = _recover(conn, invoke, orphan_scan=True, exclude_run_ids=exclude)
+    assert report.runs == []
+    assert events == []
+    assert not [entry for entry in journal if entry[0] == "neutralize"]
+
+
+def test_orphan_lookup_is_scoped_and_respects_visible_cartridges():
+    journal = []
+    conn = FakeConn(journal, candidates=[], dag_rows=[{"dag_id": "sap_successfactors_extract_all"}], orphan_rows=[])
+    invoke = _invoke_factory(journal, describe={"sap_successfactors_extract_all": _orphan_describe()})
+    _recover(conn, invoke, mode="dry_run", orphan_scan=True, visible_cartridges=["sap_successfactors"], cartridge="sap_successfactors")
+    dag_sql, dag_args = next((sql, args) for sql, args in conn.fetches if "SELECT DISTINCT dag_id" in sql)
+    assert "tenant_id = $1::uuid" in dag_sql and "workspace_id = $2::uuid" in dag_sql
+    assert dag_args[:4] == (TENANT, WORKSPACE, "sap_successfactors", ["sap_successfactors"])
+    lookup_sql, lookup_args = next((sql, args) for sql, args in conn.fetches if "airflow_dag_run_id = ANY($4::text[])" in sql)
+    assert "tenant_id = $1::uuid" in lookup_sql and "cartridge_id = ANY($5::text[])" in lookup_sql
+    assert lookup_args == (TENANT, WORKSPACE, ["sap_successfactors_extract_all"], ["manual__orphan"], ["sap_successfactors"])
+    assert ("scope", (TENANT, WORKSPACE)) in journal
+
+
+def test_orphans_need_neutralization_permission_and_the_orphan_class():
+    journal = []
+    conn = FakeConn(journal, candidates=[], dag_rows=[{"dag_id": "sap_successfactors_extract_all"}], orphan_rows=[_orphan_row()])
+    invoke = _invoke_factory(journal, describe={"sap_successfactors_extract_all": _orphan_describe()})
+    report, events = _recover(conn, invoke, orphan_scan=True, neutralize_airflow=False)
+    assert report.runs[0]["action"] == "none"
+    report, events = _recover(conn, invoke, orphan_scan=True, allowed_classes={"missing_in_airflow"})
+    assert report.runs[0]["action"] == "none"
+    assert events == []
+    assert not [entry for entry in journal if entry[0] == "neutralize"]

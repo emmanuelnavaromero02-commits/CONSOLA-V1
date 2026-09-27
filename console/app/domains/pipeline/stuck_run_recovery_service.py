@@ -16,14 +16,17 @@ from app.domains.pipeline.status_transitions import (
 )
 from app.domains.pipeline.stuck_run_recovery import (
     ACTION_MARK_FAILED,
+    ACTION_NEUTRALIZE_AIRFLOW,
     ACTION_NONE,
     ACTION_SYNC_TERMINAL,
     ACTIVE_TASK_STATES,
+    AIRFLOW_ORPHAN,
     AIRFLOW_TERMINAL,
     CANDIDATE_STATUSES,
     DEFAULT_MISSING_GRACE,
     DEFAULT_THRESHOLD,
     IN_PROGRESS_CLASSES,
+    MANUAL_TRIGGER_DAG_RE,
     MARK_FAILED_CLASSES,
     MISSING_IN_AIRFLOW,
     NOT_APPLICABLE,
@@ -34,6 +37,7 @@ from app.domains.pipeline.stuck_run_recovery import (
     RunVerdict,
     as_utc_datetime,
     classify_stuck_run,
+    orphan_verdict,
     plan_digest,
     plan_entry,
     pre_airflow_verdict,
@@ -53,7 +57,11 @@ MODE_DRY_RUN = "dry_run"
 MODE_APPLY = "apply"
 MAX_CANDIDATES = 200
 AUDIT_ACTION = "pipeline_run.recover_stuck"
-DEFAULT_ALLOWED_CLASSES = frozenset({AIRFLOW_TERMINAL, *MARK_FAILED_CLASSES})
+DEFAULT_ALLOWED_CLASSES = frozenset(
+    {AIRFLOW_TERMINAL, AIRFLOW_ORPHAN, *MARK_FAILED_CLASSES}
+)
+MAX_ORPHAN_DAGS = 40
+PENDING_AIRFLOW_STATES = frozenset({"queued", "running"})
 PRE_TRIGGER_ACTOR = "system:pre-trigger-recovery"
 
 
@@ -112,6 +120,7 @@ async def load_recovery_candidates(
     exclude_run_ids: Collection[str] = (),
     max_age_seconds: int | None = None,
     limit: int = MAX_CANDIDATES,
+    visible_cartridges: Collection[str] | None = None,
 ) -> list[dict[str, Any]]:
     clauses = [
         "tenant_id = $1::uuid",
@@ -122,6 +131,9 @@ async def load_recovery_candidates(
     if cartridge:
         args.append(cartridge)
         clauses.append(f"cartridge_id = ${len(args)}")
+    if visible_cartridges is not None:
+        args.append(sorted({str(item) for item in visible_cartridges}))
+        clauses.append(f"cartridge_id = ANY(${len(args)}::text[])")
     if dag_ids:
         args.append(list(dag_ids))
         clauses.append(f"dag_id = ANY(${len(args)}::text[])")
@@ -185,6 +197,7 @@ async def observe_airflow_truth(
     user: dict | None,
     concurrency: int = 5,
     timeout: float = 20.0,
+    describe_results: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, AirflowRunTruth]:
     """One Airflow observation per run; DAG description cached per DAG."""
     semaphore = asyncio.Semaphore(max(1, int(concurrency)))
@@ -242,6 +255,9 @@ async def observe_airflow_truth(
                     and run.get("dag_run_id") != dag_run_id
                     for run in own_runs
                 )
+                if not sibling_running and dag.get("running_truncated"):
+                    # A running sibling may sit beyond the listed page.
+                    sibling_running = None
             active_tasks: int | None = None
             last_activity: datetime | None = None
             if found and state == "running":
@@ -299,10 +315,177 @@ async def observe_airflow_truth(
     try:
         results = await asyncio.gather(*(_bounded(row) for row in rows))
     finally:
-        for future in describe_futures.values():
+        for dag_id, future in describe_futures.items():
             if not future.done():
                 future.cancel()
+            elif describe_results is not None and not future.cancelled():
+                describe_results[dag_id] = future.result()
     return dict(zip(keys, results))
+
+
+async def load_orphan_dag_ids(
+    conn: Any,
+    *,
+    tenant_id: str,
+    workspace_id: str,
+    cartridge: str | None = None,
+    dag_ids: Sequence[str] | None = None,
+    visible_cartridges: Collection[str] | None = None,
+) -> list[str]:
+    """Manual extract DAGs this workspace has used, to look for Airflow orphans."""
+    clauses = ["tenant_id = $1::uuid", "workspace_id = $2::uuid"]
+    args: list[Any] = [tenant_id, workspace_id]
+    if cartridge:
+        args.append(cartridge)
+        clauses.append(f"cartridge_id = ${len(args)}")
+    if visible_cartridges is not None:
+        args.append(sorted({str(item) for item in visible_cartridges}))
+        clauses.append(f"cartridge_id = ANY(${len(args)}::text[])")
+    if dag_ids:
+        args.append(list(dag_ids))
+        clauses.append(f"dag_id = ANY(${len(args)}::text[])")
+    rows = await conn.fetch(
+        f"""
+        SELECT DISTINCT dag_id
+          FROM pipeline_runs
+         WHERE {' AND '.join(clauses)}
+         ORDER BY dag_id
+        """,
+        *args,
+    )
+    found = [
+        str(row["dag_id"])
+        for row in rows
+        if MANUAL_TRIGGER_DAG_RE.fullmatch(str(row["dag_id"] or ""))
+    ]
+    return found[:MAX_ORPHAN_DAGS]
+
+
+def _pending_age(run: Mapping[str, Any], now: datetime) -> timedelta | None:
+    anchor = as_utc_datetime(run.get("queued_at")) or as_utc_datetime(
+        run.get("start_date")
+    )
+    return None if anchor is None else now - anchor
+
+
+async def find_airflow_orphans(
+    user: dict | None,
+    *,
+    dag_ids: Sequence[str],
+    describe_results: dict[str, dict[str, Any]],
+    invoke: McpInvoke,
+    get_db_pool: GetDbPool,
+    threshold: timedelta,
+    now: datetime,
+    skip_airflow_ids: Collection[str] = (),
+    exclude_run_ids: Collection[str] = (),
+    visible_cartridges: Collection[str] | None = None,
+) -> list[tuple[dict[str, Any], AirflowRunTruth]]:
+    """Own Airflow runs left pending in a paused DAG whose console rows are closed.
+
+    Unpausing the DAG would execute them, yet the console no longer lists
+    them as candidates. Only runs whose every console row is terminal and
+    whose DAG is paused qualify; everything else stays untouched.
+    """
+    tenant_id, workspace_id = _scope(user)
+    pending: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
+    for dag_id in dict.fromkeys(dag_ids):
+        dag = describe_results.get(dag_id)
+        if dag is None:
+            try:
+                dag = await invoke(
+                    "infra", "airflow_describe_dag", {"dag_id": dag_id}, user=user
+                )
+            except Exception:  # noqa: BLE001 - an unreachable DAG adds no orphans
+                logger.debug("orphan scan could not describe %s", dag_id, exc_info=True)
+                continue
+            describe_results[dag_id] = dag if isinstance(dag, dict) else {"error": "invalid"}
+        if not isinstance(dag, dict) or dag.get("error") or dag.get("is_paused") is not True:
+            continue
+        for run in _describe_runs(dag):
+            run_id = str(run.get("dag_run_id") or "")
+            state = str(run.get("state") or "").lower()
+            age = _pending_age(run, now)
+            if (
+                run_id
+                and state in PENDING_AIRFLOW_STATES
+                and run_id not in skip_airflow_ids
+                and age is not None
+                and age >= threshold
+            ):
+                pending[run_id] = (dag_id, run, dag)
+    if not pending:
+        return []
+
+    clauses = [
+        "tenant_id = $1::uuid",
+        "workspace_id = $2::uuid",
+        "dag_id = ANY($3::text[])",
+        "airflow_dag_run_id = ANY($4::text[])",
+    ]
+    args: list[Any] = [
+        tenant_id,
+        workspace_id,
+        sorted({dag_id for dag_id, _run, _dag in pending.values()}),
+        sorted(pending),
+    ]
+    if visible_cartridges is not None:
+        args.append(sorted({str(item) for item in visible_cartridges}))
+        clauses.append(f"cartridge_id = ANY(${len(args)}::text[])")
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
+            rows = await conn.fetch(
+                f"""
+                SELECT run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                       status, started_at, finished_at, error_message, extra,
+                       fencing_token, lease_expires_at, tenant_id::text AS tenant_id,
+                       workspace_id::text AS workspace_id
+                  FROM pipeline_runs
+                 WHERE {' AND '.join(clauses)}
+                 ORDER BY started_at ASC NULLS FIRST, run_id ASC
+                """,
+                *args,
+            )
+    by_airflow_id: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_airflow_id.setdefault(str(row["airflow_dag_run_id"]), []).append(dict(row))
+
+    orphans: list[tuple[dict[str, Any], AirflowRunTruth]] = []
+    for airflow_id, console_rows in by_airflow_id.items():
+        if any(
+            normalize_pipeline_status(row.get("status")) not in PIPELINE_TERMINAL_STATUSES
+            for row in console_rows
+        ):
+            continue
+        row = next(
+            (item for item in console_rows if str(item.get("run_id")) == airflow_id),
+            console_rows[0],
+        )
+        if str(row.get("run_id") or "") in exclude_run_ids:
+            continue
+        dag_id, run, dag = pending[airflow_id]
+        orphans.append(
+            (
+                row,
+                AirflowRunTruth(
+                    found=True,
+                    state=str(run.get("state") or "").lower(),
+                    queued_at=as_utc_datetime(run.get("queued_at")),
+                    start_date=as_utc_datetime(run.get("start_date")),
+                    dag_found=True,
+                    dag_paused=True,
+                    schedule_kind=str(dag.get("schedule_kind") or "") or None,
+                    scheduler_healthy=(
+                        bool(dag.get("scheduler_healthy"))
+                        if dag.get("scheduler_healthy") is not None
+                        else None
+                    ),
+                ),
+            )
+        )
+    return orphans
 
 
 def _age_minutes(now: datetime, started_at: Any) -> int | None:
@@ -351,7 +534,9 @@ def _planned_action(
     return verdict.action, verdict.neutralize_airflow
 
 
-def _message_es(mode: str, counts: Mapping[str, int], truncated: bool) -> str:
+def _message_es(
+    mode: str, counts: Mapping[str, int], truncated: bool, *, orphans_stopped: int = 0
+) -> str:
     parts: list[str] = []
     if mode == MODE_DRY_RUN:
         if counts["recoverable"]:
@@ -371,6 +556,11 @@ def _message_es(mode: str, counts: Mapping[str, int], truncated: bool) -> str:
             f"Se cerraron {counts['recovered']} corridas atascadas y se "
             f"sincronizaron {counts['synced_terminal']} con su estado final en Airflow."
         )
+        if orphans_stopped:
+            parts.append(
+                f"Se detuvieron en Airflow {orphans_stopped} corridas que la consola "
+                "ya había cerrado."
+            )
         if counts["conflicts"]:
             parts.append(
                 f"{counts['conflicts']} cambiaron mientras se revisaban y no se tocaron."
@@ -500,6 +690,45 @@ async def _apply_mark_failed(
             return dict(updated)
 
 
+async def _audit_orphan_neutralized(
+    row: Mapping[str, Any],
+    truth: AirflowRunTruth | None,
+    *,
+    record_event: RecordEvent,
+    user: dict | None,
+    actor: str,
+    digest: str,
+) -> None:
+    try:
+        await record_event(
+            critical=True,
+            user_id=(user or {}).get("id"),
+            email=(user or {}).get("email") or actor,
+            action=AUDIT_ACTION,
+            resource_type="pipeline_run",
+            resource_id=str(row.get("run_id") or ""),
+            status="success",
+            metadata={
+                "severity": "critical",
+                "actor": actor,
+                "tenant_id": str(row.get("tenant_id") or ""),
+                "workspace_id": str(row.get("workspace_id") or ""),
+                "dag_id": str(row.get("dag_id") or ""),
+                "airflow_dag_run_id": str(row.get("airflow_dag_run_id") or ""),
+                "cartridge_id": str(row.get("cartridge_id") or ""),
+                "classification": AIRFLOW_ORPHAN,
+                "console_status": normalize_pipeline_status(row.get("status")),
+                "airflow_state": truth.state if truth else None,
+                "airflow_neutralized": True,
+                "plan_digest": digest,
+            },
+        )
+    except Exception:  # noqa: BLE001 - the Airflow run is already stopped
+        logger.error(
+            "audit of an Airflow orphan stop failed for %s", row.get("run_id"), exc_info=True
+        )
+
+
 async def _default_record_event(**kwargs: Any) -> None:
     from app.services import audit_service
 
@@ -527,6 +756,8 @@ async def recover_stuck_runs(
     max_age_seconds: int | None = None,
     concurrency: int = 5,
     observe_timeout: float = 20.0,
+    visible_cartridges: Collection[str] | None = None,
+    orphan_scan: bool = False,
 ) -> RecoveryReport:
     if mode not in {MODE_DRY_RUN, MODE_APPLY}:
         raise ValueError("mode must be dry_run or apply")
@@ -548,11 +779,25 @@ async def recover_stuck_runs(
                 exclude_run_ids=exclude_run_ids,
                 max_age_seconds=max_age_seconds,
                 limit=limit,
+                visible_cartridges=visible_cartridges,
+            )
+            orphan_dags = (
+                await load_orphan_dag_ids(
+                    conn,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    cartridge=cartridge,
+                    dag_ids=dag_ids,
+                    visible_cartridges=visible_cartridges,
+                )
+                if orphan_scan
+                else []
             )
     truncated = len(rows) > limit
     rows = rows[:limit]
 
     needs_airflow = [row for row in rows if pre_airflow_verdict(row) is None]
+    describe_results: dict[str, dict[str, Any]] = {}
     truths = (
         await observe_airflow_truth(
             needs_airflow,
@@ -560,10 +805,37 @@ async def recover_stuck_runs(
             user=user,
             concurrency=concurrency,
             timeout=observe_timeout,
+            describe_results=describe_results,
         )
         if needs_airflow
         else {}
     )
+    orphans: list[tuple[dict[str, Any], AirflowRunTruth]] = []
+    if orphan_dags:
+        try:
+            orphans = await asyncio.wait_for(
+                find_airflow_orphans(
+                    user,
+                    dag_ids=orphan_dags,
+                    describe_results=describe_results,
+                    invoke=invoke,
+                    get_db_pool=get_db_pool,
+                    threshold=threshold,
+                    now=checked_at,
+                    skip_airflow_ids={
+                        str(row.get("airflow_dag_run_id") or "") for row in rows
+                    },
+                    exclude_run_ids=exclude_run_ids,
+                    visible_cartridges=visible_cartridges,
+                ),
+                timeout=max(0.1, observe_timeout),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("orphan scan timed out; no Airflow orphans are planned")
+        room = max(0, limit - len(rows))
+        if len(orphans) > room:
+            truncated = True
+            orphans = orphans[:room]
 
     counts = _count_template()
     counts["candidates"] = len(rows)
@@ -592,12 +864,26 @@ async def recover_stuck_runs(
             counts["recoverable"] += 1
         entry = _run_entry(row, verdict, now=checked_at, action=action, neutralize=neutralize)
         planned.append((row, verdict, action, neutralize, entry))
+    for row, truth in orphans:
+        run_id = str(row.get("run_id") or "")
+        truths[run_id] = truth
+        verdict = orphan_verdict()
+        verdicts[run_id] = verdict
+        action, neutralize = _planned_action(
+            verdict, allowed_classes=allowed, neutralize_airflow=neutralize_airflow
+        )
+        counts["candidates"] += 1
+        if action != ACTION_NONE:
+            counts["recoverable"] += 1
+        entry = _run_entry(row, verdict, now=checked_at, action=action, neutralize=neutralize)
+        planned.append((row, verdict, action, neutralize, entry))
 
     digest = plan_digest(
         {**plan_entry(row, verdict), "action": action}
         for row, verdict, action, _neutralize, _entry in planned
     )
 
+    orphans_stopped = 0
     if mode == MODE_APPLY:
         if expected_plan_digest is not None and expected_plan_digest != digest:
             raise PlanChanged(digest)
@@ -607,6 +893,25 @@ async def recover_stuck_runs(
                 continue
             run_id = str(row.get("run_id") or "")
             truth = truths.get(run_id)
+            if action == ACTION_NEUTRALIZE_AIRFLOW:
+                outcome = await _neutralize(row, truth, invoke=invoke, user=user)
+                if outcome == "state_changed":
+                    counts["conflicts"] += 1
+                elif outcome == "failed":
+                    counts["airflow_neutralize_failed"] += 1
+                elif outcome == "ok":
+                    counts["airflow_neutralized"] += 1
+                    orphans_stopped += 1
+                    entry["status_after"] = normalize_pipeline_status(row.get("status"))
+                    await _audit_orphan_neutralized(
+                        row,
+                        truth,
+                        record_event=record,
+                        user=user,
+                        actor=actor,
+                        digest=digest,
+                    )
+                continue
             if action == ACTION_SYNC_TERMINAL:
                 try:
                     refreshed = await refresh_dag_run_status(dict(row), user)
@@ -665,7 +970,7 @@ async def recover_stuck_runs(
         counts=counts,
         runs=[entry for *_rest, entry in planned],
         truncated=truncated,
-        message_es=_message_es(mode, counts, truncated),
+        message_es=_message_es(mode, counts, truncated, orphans_stopped=orphans_stopped),
         verdicts=verdicts,
     )
 
@@ -793,6 +1098,8 @@ __all__ = (
     "RecoveryReport",
     "console_run_ids",
     "default_get_db_pool",
+    "find_airflow_orphans",
+    "load_orphan_dag_ids",
     "default_invoke",
     "default_refresh_dag_run_status",
     "load_recovery_candidates",

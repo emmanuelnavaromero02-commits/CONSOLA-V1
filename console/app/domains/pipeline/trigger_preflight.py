@@ -13,22 +13,30 @@ from fastapi import HTTPException
 
 from app.domains.pipeline import stuck_run_recovery_service as recovery_service
 from app.domains.pipeline.stuck_run_recovery import (
+    AIRFLOW_ORPHAN,
     AIRFLOW_TERMINAL,
+    MANUAL_TRIGGER_DAG_RE,
     MISSING_IN_AIRFLOW,
     STALLED_QUEUED_PAUSED_DAG,
+    STALLED_RUNNING_NO_TASKS,
     as_utc_datetime,
 )
 
 
 logger = logging.getLogger(__name__)
 
-MANUAL_TRIGGER_DAG_RE = re.compile(r"^[a-z][a-z0-9_]*_extract(_all)?$")
 PREFLIGHT_CACHE_TTL_SECONDS = 30.0
 DEFAULT_STALE_AFTER_SECONDS = 900
 UNPAUSE_AUDIT_ACTION = "pipeline.dag.unpause_for_manual_trigger"
 PREFLIGHT_RECOVERY_ACTOR = "system:trigger-preflight"
 PREFLIGHT_RECOVERY_CLASSES = frozenset(
-    {AIRFLOW_TERMINAL, MISSING_IN_AIRFLOW, STALLED_QUEUED_PAUSED_DAG}
+    {
+        AIRFLOW_TERMINAL,
+        MISSING_IN_AIRFLOW,
+        STALLED_QUEUED_PAUSED_DAG,
+        STALLED_RUNNING_NO_TASKS,
+        AIRFLOW_ORPHAN,
+    }
 )
 
 McpInvoke = Callable[..., Awaitable[Any]]
@@ -150,15 +158,33 @@ def _runs(info: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [run for run in info.get("runs") or [] if isinstance(run, dict)]
 
 
+PENDING_STATES = frozenset({"queued", "running"})
+
+
 def _run_is_stale(run: Mapping[str, Any], *, now: datetime, stale_after: int) -> bool:
-    if str(run.get("state") or "").lower() != "queued":
+    """A queued or running run triggered longer ago than the stale window."""
+    if str(run.get("state") or "").lower() not in PENDING_STATES:
         return False
     if run.get("stale") is True:
         return True
-    queued_at = as_utc_datetime(run.get("queued_at"))
-    if queued_at is None:
+    anchor = as_utc_datetime(run.get("queued_at")) or as_utc_datetime(
+        run.get("start_date")
+    )
+    if anchor is None:
         return False
-    return (now - queued_at).total_seconds() >= stale_after
+    return (now - anchor).total_seconds() >= stale_after
+
+
+def _owned_by(run: Mapping[str, Any], user: Mapping[str, Any] | None) -> bool:
+    """Own only when the run's conf names both the caller's tenant and workspace."""
+    _dag_id, tenant_id, workspace_id = _scope_key("", user)
+    conf = run.get("conf") if isinstance(run.get("conf"), dict) else {}
+    return bool(
+        tenant_id
+        and workspace_id
+        and str(conf.get("tenant_id") or "") == tenant_id
+        and str(conf.get("workspace_id") or "") == workspace_id
+    )
 
 
 def _conf_matches(run: Mapping[str, Any], *, mode: str | None, target: str | None) -> bool:
@@ -175,29 +201,42 @@ def _conf_matches(run: Mapping[str, Any], *, mode: str | None, target: str | Non
 def _reusable_run(
     runs: Sequence[Mapping[str, Any]],
     *,
+    user: Mapping[str, Any] | None,
+    paused: bool,
     now: datetime,
     stale_after: int,
     mode: str | None,
     target: str | None,
 ) -> str | None:
-    live = [
-        run
-        for run in runs
-        if str(run.get("state") or "").lower() in {"running", "queued"}
-        and not _run_is_stale(run, now=now, stale_after=stale_after)
-        and _conf_matches(run, mode=mode, target=target)
-        and str(run.get("dag_run_id") or "").strip()
-    ]
+    """A live own run to attach to instead of queueing another one.
+
+    On a paused DAG only a recent run qualifies: an old one cannot progress
+    and must not be resumed by the next click.
+    """
+    live = []
+    for run in runs:
+        state = str(run.get("state") or "").lower()
+        if state not in PENDING_STATES or not str(run.get("dag_run_id") or "").strip():
+            continue
+        if not _owned_by(run, user) or not _conf_matches(run, mode=mode, target=target):
+            continue
+        stale = _run_is_stale(run, now=now, stale_after=stale_after)
+        if stale and (paused or state == "queued"):
+            continue
+        live.append(run)
     live.sort(key=lambda run: 0 if str(run.get("state")).lower() == "running" else 1)
     return str(live[0]["dag_run_id"]) if live else None
 
 
 def _foreign_stale(info: Mapping[str, Any]) -> int:
     foreign = info.get("foreign") if isinstance(info.get("foreign"), dict) else {}
-    try:
-        return max(0, int(foreign.get("stale_queued") or 0))
-    except (TypeError, ValueError):
-        return 0
+    total = 0
+    for key in ("stale_queued", "stale_running"):
+        try:
+            total += max(0, int(foreign.get(key) or 0))
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 async def _describe(
@@ -278,6 +317,8 @@ async def ensure_dag_ready_for_manual_trigger(
     reuse_run_id = (
         _reusable_run(
             runs,
+            user=user,
+            paused=paused,
             now=current,
             stale_after=stale_after_seconds,
             mode=mode,
@@ -292,13 +333,19 @@ async def ensure_dag_ready_for_manual_trigger(
         return DagPreflight(dag_id, "manual", False, False, reuse_run_id=reuse_run_id)
 
     _READY_CACHE.pop(key, None)
-    stale_own = [
-        str(run.get("dag_run_id"))
+    if info.get("running_truncated") or info.get("queued_truncated"):
+        # More pending runs than one page: the backlog cannot be ruled out.
+        raise preflight_conflict("foreign_backlog_requires_platform_recovery")
+    stale_listed = [
+        run
         for run in runs
         if _run_is_stale(run, now=current, stale_after=stale_after_seconds)
         and str(run.get("dag_run_id") or "") != (reuse_run_id or "")
     ]
-    foreign_stale = _foreign_stale(info)
+    stale_own = [
+        str(run.get("dag_run_id")) for run in stale_listed if _owned_by(run, user)
+    ]
+    foreign_stale = _foreign_stale(info) + len(stale_listed) - len(stale_own)
     if stale_own:
         known = (
             await console_run_ids(dag_id, stale_own)
@@ -399,6 +446,7 @@ async def run_manual_trigger_preflight(
             threshold=timedelta(seconds=threshold_seconds),
             allowed_classes=PREFLIGHT_RECOVERY_CLASSES,
             neutralize_airflow=True,
+            orphan_scan=True,
         )
 
     async def _known(target_dag_id: str, run_ids: Sequence[str]) -> set[str]:

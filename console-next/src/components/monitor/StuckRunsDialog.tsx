@@ -26,6 +26,7 @@ function CountsSummary({ plan }: { plan: StuckRunRecovery }) {
     items.push(
       ["Cerradas", counts.recovered],
       ["Sincronizadas", counts.synced_terminal],
+      ["Detenidas en Airflow", counts.airflow_neutralized],
       ["Sin cambios por conflicto", counts.conflicts],
     );
   }

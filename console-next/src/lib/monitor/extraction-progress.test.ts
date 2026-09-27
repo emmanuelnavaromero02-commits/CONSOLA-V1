@@ -103,6 +103,26 @@ describe("extraction progress client", () => {
     expect(() => stuckRunRecoverySchema.parse({ ...recovery, plan_digest: "short" })).toThrow();
   });
 
+  it("accepts Airflow orphans that are stopped without touching the console row", () => {
+    const orphan = {
+      run_id: "manual__orphan",
+      dag_id: "sap_successfactors_extract_all",
+      cartridge: "sap_successfactors",
+      entity: "__extract_all__",
+      status_before: "failed",
+      status_after: null,
+      started_at: "2026-09-26T07:57:00Z",
+      age_minutes: 600,
+      created_today: true,
+      classification: "airflow_orphan",
+      action: "neutralize_airflow",
+      neutralize_airflow: true,
+      reason_es: "La consola ya cerró esta corrida, pero Airflow la mantiene pendiente.",
+    };
+    expect(stuckRunRecoverySchema.parse({ ...recovery, runs: [orphan] }).runs[0].action).toBe("neutralize_airflow");
+    expect(() => stuckRunRecoverySchema.parse({ ...recovery, runs: [{ ...orphan, action: "delete" }] })).toThrow();
+  });
+
   it("stops polling only when every followed run is terminal", () => {
     const data = extractionProgressSchema.parse(payload([run({ run_id: "a", terminal: true }), run({ run_id: "b" })]));
     expect(allRunsTerminal(data, ["a"])).toBe(true);
