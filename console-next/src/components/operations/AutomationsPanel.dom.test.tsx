@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Automation } from "@/lib/operations/automations-client";
 
-import { AIRFLOW_UNAVAILABLE_NOTE, AUTOMATIONS_ERROR, AutomationsPanel } from "./AutomationsPanel";
+import {
+  AIRFLOW_UNAVAILABLE_NOTE,
+  AUTOMATIONS_ERROR,
+  AutomationsPanel,
+  UNKNOWN_RUN_LABEL,
+} from "./AutomationsPanel";
 
 const boundary = vi.hoisted(() => ({ listAutomations: vi.fn() }));
 
@@ -124,6 +129,37 @@ describe("AutomationsPanel", () => {
     expect(container.querySelector('input[type="checkbox"], [role="switch"]')).toBeNull();
     expect(container.textContent).toContain("Fuente de datos");
     expect(container.textContent).not.toMatch(/cartucho/i);
+  });
+
+  it("names every run status in Spanish and never shows a raw status", async () => {
+    const statuses = {
+      partial: "Parcial",
+      cancelled: "Cancelada",
+      error: "Con error",
+      blocked: "Bloqueada",
+      noop: "Sin cambios",
+      upstream_failed: "Falló un paso previo",
+      removed: "Retirada",
+      scheduled: "Programada",
+      skipped_explicit: "Omitida",
+      unknown: UNKNOWN_RUN_LABEL,
+      mystery_state: UNKNOWN_RUN_LABEL,
+    };
+    boundary.listAutomations.mockResolvedValue({
+      schema_version: "pipeline-automations/v1",
+      checked_at: "2026-09-26T10:00:00Z",
+      airflow_available: true,
+      automations: Object.keys(statuses).map((status) => ({
+        ...SCHEDULED,
+        dag_id: `dag_${status}`,
+        last_run: { status, started_at: "2026-09-25T10:00:00Z", finished_at: null },
+      })),
+    });
+    await render();
+    for (const [status, label] of Object.entries(statuses)) {
+      const cell = container.querySelector(`[data-automation="dag_${status}"] td:last-child`);
+      expect(cell?.textContent?.split(" · ")[0]).toBe(label);
+    }
   });
 
   it("is honest when Airflow cannot be read", async () => {

@@ -46,10 +46,12 @@ class CatalogConn:
     def __init__(
         self,
         rows: list[dict[str, Any]],
-        runs: list[dict[str, Any]] | None = None,
+        active: list[dict[str, Any]] | None = None,
+        last: list[dict[str, Any]] | None = None,
     ) -> None:
         self.rows = rows
-        self.runs = runs or []
+        self.active = active or []
+        self.last = last or []
         self.statements: list[tuple[str, tuple[Any, ...]]] = []
 
     async def execute(self, query: str, *args: Any) -> str:
@@ -64,18 +66,11 @@ class CatalogConn:
         self.statements.append((statement, args))
         if "FROM pipeline_runs" in statement:
             assert args[:2] == (TENANT_ID, WORKSPACE_ID)
-            dags = set(args[2])
-            runs = [run for run in self.runs if run["dag_id"] in dags]
-            if "count(*)" in statement:
-                counts: dict[str, int] = {}
-                for run in runs:
-                    if run["status"].lower() in args[3]:
-                        counts[run["dag_id"]] = counts.get(run["dag_id"], 0) + 1
-                return [{"dag_id": dag, "active_runs": count} for dag, count in counts.items()]
-            latest: dict[str, dict[str, Any]] = {}
-            for run in sorted(runs, key=lambda run: run["started_at"], reverse=True):
-                latest.setdefault(run["dag_id"], run)
-            return list(latest.values())
+            assert "extraction_runs_mirror" in statement
+            assert "COALESCE(airflow_dag_run_id, run_id)" in statement
+            wanted = set(args[2])
+            source = self.active if "count(*) AS active_runs" in statement else self.last
+            return [row for row in source if row["dag_id"] in wanted]
         cartridges = args[0]
         return [row for row in self.rows if cartridges is None or row["cartridge_id"] in cartridges]
 
@@ -140,12 +135,22 @@ async def test_states_and_notes_come_from_airflow_and_the_registered_trigger():
         }
     )
     started = datetime(2026, 9, 26, 10, tzinfo=UTC)
-    runs = [
-        {"dag_id": "sap_sf_extract", "status": "queued", "started_at": started, "finished_at": None},
-        {"dag_id": "sap_sf_extract", "status": "RUNNING", "started_at": started - timedelta(minutes=5), "finished_at": None},
-        {"dag_id": "sap_sf_extract", "status": "success", "started_at": started - timedelta(days=1), "finished_at": started - timedelta(days=1)},
-    ]
-    conn = CatalogConn(ROWS, runs)
+    conn = CatalogConn(
+        ROWS,
+        active=[{"dag_id": "sap_sf_extract", "active_runs": 2}],
+        last=[
+            {
+                "dag_id": "sap_sf_extract",
+                "started_at": started,
+                "finished_at": None,
+                "aggregate_status": None,
+                "any_active": True,
+                "any_failed": False,
+                "any_succeeded": True,
+                "all_succeeded": False,
+            }
+        ],
+    )
     response = await _list(ADMIN, conn, invoke)
     by_id = {automation.dag_id: automation for automation in response.automations}
 
@@ -166,7 +171,7 @@ async def test_states_and_notes_come_from_airflow_and_the_registered_trigger():
     assert extract.state == "paused_manual"
     assert extract.state_note_es == "Se activa automáticamente al pulsar Extraer"
     assert extract.active_runs == 2
-    assert extract.last_run.status == "queued"
+    assert extract.last_run.status == "running"
     assert extract.last_run.started_at == started
     rebuild = by_id["sap_sf_rebuild"]
     assert rebuild.state == "unavailable" and rebuild.label == "sap_sf_rebuild"
@@ -271,3 +276,18 @@ def test_prefix_is_registered_for_rbac_and_the_route_surface():
 
     assert classify_route_surface("/api/pipelines/automations") == "frontend"
     assert main._uses_rbac_dependency("/api/pipelines/automations") is True
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    (
+        ({"aggregate_status": "failed", "all_succeeded": True}, "failed"),
+        ({"aggregate_status": None, "any_active": True}, "running"),
+        ({"aggregate_status": None, "all_succeeded": True}, "success"),
+        ({"aggregate_status": None, "any_failed": True, "any_succeeded": False}, "failed"),
+        ({"aggregate_status": None, "any_failed": True, "any_succeeded": True}, "partial"),
+    ),
+)
+def test_run_status_prefers_the_aggregate_row_then_the_entity_outcomes(row, expected):
+    assert automations.run_status(row) == expected
+

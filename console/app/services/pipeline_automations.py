@@ -27,7 +27,7 @@ PLATFORM_CARTRIDGE = "platform"
 READ_ONLY_TRANSACTION_SQL = "SET TRANSACTION READ ONLY"
 AIRFLOW_LIST_TIMEOUT_SECONDS = 8.0
 RUN_STATUS = re.compile(r"^[a-z_]{1,40}$")
-ACTIVE_RUN_STATES = frozenset({"queued", "running"})
+ACTIVE_RUN_STATES = frozenset({"queued", "running", "scheduled", "up_for_retry"})
 EXTRACT_DAG = re.compile(r"^[a-z][a-z0-9_]*_extract(_all)?$")
 CARTRIDGE_ID = re.compile(r"^[a-z0-9_]{1,120}$")
 DAG_ID = re.compile(r"^[A-Za-z0-9_.\-]{1,250}$")
@@ -38,23 +38,41 @@ SELECT cartridge_id, dag_id, description, trigger
  ORDER BY cartridge_id, dag_id
  LIMIT $2
 """
-ACTIVE_RUNS_SQL = """
+RUN_SUMMARY_CTE = """
+WITH runs AS (
+    SELECT dag_id,
+           COALESCE(airflow_dag_run_id, run_id) AS run_key,
+           min(started_at) AS started_at,
+           max(finished_at) AS finished_at,
+           max(lower(status)) FILTER (WHERE run_id = airflow_dag_run_id)
+               AS aggregate_status,
+           bool_or(lower(status) = ANY($4::text[])) AS any_active,
+           bool_or(lower(status) = ANY($5::text[])) AS any_failed,
+           bool_or(lower(status) = ANY($6::text[])) AS any_succeeded,
+           bool_and(lower(status) = ANY($6::text[])) AS all_succeeded
+      FROM pipeline_runs
+     WHERE tenant_id = $1::uuid
+       AND workspace_id = $2::uuid
+       AND dag_id = ANY($3::text[])
+       AND COALESCE(extra ->> 'source', '') <> 'extraction_runs_mirror'
+     GROUP BY dag_id, COALESCE(airflow_dag_run_id, run_id)
+)
+"""
+ACTIVE_RUNS_SQL = RUN_SUMMARY_CTE + """
 SELECT dag_id, count(*) AS active_runs
-  FROM pipeline_runs
- WHERE tenant_id = $1::uuid
-   AND workspace_id = $2::uuid
-   AND dag_id = ANY($3::text[])
-   AND lower(status) = ANY($4::text[])
+  FROM runs
+ WHERE COALESCE(aggregate_status = ANY($4::text[]), any_active)
  GROUP BY dag_id
 """
-LAST_RUNS_SQL = """
-SELECT DISTINCT ON (dag_id) dag_id, status, started_at, finished_at
-  FROM pipeline_runs
- WHERE tenant_id = $1::uuid
-   AND workspace_id = $2::uuid
-   AND dag_id = ANY($3::text[])
- ORDER BY dag_id, started_at DESC NULLS LAST
+LAST_RUNS_SQL = RUN_SUMMARY_CTE + """
+SELECT DISTINCT ON (dag_id)
+       dag_id, started_at, finished_at, aggregate_status,
+       any_active, any_failed, any_succeeded, all_succeeded
+  FROM runs
+ ORDER BY dag_id, started_at DESC NULLS LAST, run_key DESC
 """
+FAILED_RUN_STATES = frozenset({"failed", "error", "upstream_failed", "cancelled", "removed"})
+SUCCEEDED_RUN_STATES = frozenset({"success", "noop", "skipped", "skipped_explicit"})
 NOTES = {
     "unreachable": "No se pudo consultar Airflow en este momento; estado desconocido.",
     "missing": "No aparece en Airflow; no se ejecutará hasta que se despliegue.",
@@ -195,8 +213,21 @@ class RegisteredDags:
     last: dict[str, AutomationRun]
 
 
+def run_status(row: Mapping[str, Any]) -> str:
+    aggregate = str(row.get("aggregate_status") or "").strip().lower()
+    if aggregate:
+        return aggregate
+    if row.get("any_active"):
+        return "running"
+    if row.get("all_succeeded"):
+        return "success"
+    if row.get("any_failed") and not row.get("any_succeeded"):
+        return "failed"
+    return "partial"
+
+
 def _run(row: Mapping[str, Any]) -> AutomationRun | None:
-    status = str(row.get("status") or "").strip().lower()
+    status = run_status(row)
     if not RUN_STATUS.fullmatch(status):
         return None
     return AutomationRun(
@@ -250,19 +281,21 @@ async def _registered_dags(user: Mapping[str, Any]) -> RegisteredDags:
         )
         if not workspace_dags or not tenant:
             return RegisteredDags(rows, {}, {})
+        params = (
+            tenant,
+            workspace,
+            workspace_dags,
+            sorted(ACTIVE_RUN_STATES),
+            sorted(FAILED_RUN_STATES),
+            sorted(SUCCEEDED_RUN_STATES),
+        )
         active = {
             str(row["dag_id"]): int(row["active_runs"])
-            for row in await conn.fetch(
-                ACTIVE_RUNS_SQL,
-                tenant,
-                workspace,
-                workspace_dags,
-                sorted(ACTIVE_RUN_STATES),
-            )
+            for row in await conn.fetch(ACTIVE_RUNS_SQL, *params)
         }
         last = {
             str(row["dag_id"]): run
-            for row in await conn.fetch(LAST_RUNS_SQL, tenant, workspace, workspace_dags)
+            for row in await conn.fetch(LAST_RUNS_SQL, *params)
             if (run := _run(row)) is not None
         }
         return RegisteredDags(rows, active, last)

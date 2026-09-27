@@ -27,13 +27,25 @@ const STATE_TONES: Record<Automation["state"], string> = {
   unavailable: "border-destructive/30 bg-destructive/5 text-destructive",
 };
 
+export const UNKNOWN_RUN_LABEL = "Estado no reconocido";
+
 const RUN_LABELS: Record<string, string> = {
   success: "Exitosa",
+  noop: "Sin cambios",
+  partial: "Parcial",
   failed: "Fallida",
+  error: "Con error",
+  upstream_failed: "Falló un paso previo",
+  cancelled: "Cancelada",
+  removed: "Retirada",
+  blocked: "Bloqueada",
   running: "En curso",
   queued: "En cola",
+  scheduled: "Programada",
   up_for_retry: "Reintento pendiente",
   skipped: "Omitida",
+  skipped_explicit: "Omitida",
+  unknown: UNKNOWN_RUN_LABEL,
 };
 
 export const automationsQueryKey = ["operations", "automations"] as const;
@@ -54,7 +66,7 @@ function lastRun(automation: Automation): string {
   const run = automation.last_run;
   if (!automation.runs_known) return "Sin información";
   if (run === null) return "Sin ejecuciones registradas";
-  const label = RUN_LABELS[run.status] ?? run.status;
+  const label = Object.hasOwn(RUN_LABELS, run.status) ? RUN_LABELS[run.status] : UNKNOWN_RUN_LABEL;
   const when = formatDate(run.finished_at ?? run.started_at);
   return when ? `${label} · ${when}` : label;
 }
