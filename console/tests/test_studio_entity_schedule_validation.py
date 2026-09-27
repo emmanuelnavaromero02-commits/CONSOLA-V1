@@ -3,6 +3,10 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
+from app.domains.studio.ops_invoke import invoke_studio_ops_tool
+from app.services import cartridge_service
+from app.services.studio_entities import _entity_config_fields
+
 from app.domains.studio.entity_mutations import (
     ENTITY_UPDATE_FIELDS,
     update_studio_entity_payload,
@@ -168,3 +172,109 @@ async def test_update_rejects_invalid_schedule_before_writing():
         )
     assert exc.value.status_code == 400
     assert service.upserted == []
+
+
+class FakePg:
+    def __init__(self):
+        self.executed: list[tuple[str, tuple]] = []
+
+    async def fetchval(self, *args):
+        return 1
+
+    async def execute(self, sql, *params):
+        self.executed.append((sql, params))
+
+    async def close(self):
+        return None
+
+
+def _ops_kwargs(**overrides):
+    base = dict(
+        user={"id": 1},
+        cartridge_service=cartridge_service,
+        get_db_pool=None,
+        pipeline_runs_scope_predicate=None,
+        pipeline_runs_read_conn=None,
+        mcp_registry=None,
+        airflow_log_attempt=None,
+        airflow_log_task_ids=None,
+        uuid_factory=None,
+        logger_debug=lambda *a, **k: None,
+        logger_exception=lambda *a, **k: None,
+    )
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_ops_update_entity_tool_rejects_blank_cron(monkeypatch):
+    fake = FakePg()
+
+    async def _fake_pg():
+        return fake
+
+    monkeypatch.setattr(cartridge_service, "_pg", _fake_pg)
+    with pytest.raises(HTTPException) as exc:
+        await invoke_studio_ops_tool(
+            tool="update_entity",
+            args={"cartridge_id": "acme", "entity": "Invoice", "cron_expression": ""},
+            **_ops_kwargs(),
+        )
+    assert exc.value.status_code == 400
+    assert fake.executed == []
+
+
+@pytest.mark.asyncio
+async def test_ops_update_entity_tool_rejects_invalid_cron_and_timezone(monkeypatch):
+    fake = FakePg()
+
+    async def _fake_pg():
+        return fake
+
+    monkeypatch.setattr(cartridge_service, "_pg", _fake_pg)
+    for args in (
+        {"cartridge_id": "acme", "entity": "Invoice", "cron_expression": "not a cron"},
+        {"cartridge_id": "acme", "entity": "Invoice", "cron_timezone": "Nowhere/Land"},
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await invoke_studio_ops_tool(tool="update_entity", args=dict(args), **_ops_kwargs())
+        assert exc.value.status_code == 400
+    assert fake.executed == []
+
+
+@pytest.mark.asyncio
+async def test_upsert_entity_stores_null_for_cleared_cron(monkeypatch):
+    fake = FakePg()
+
+    async def _fake_pg():
+        return fake
+
+    monkeypatch.setattr(cartridge_service, "_pg", _fake_pg)
+    await cartridge_service.upsert_entity(
+        "acme", "Invoice", cron_expression="", trigger_type="manual"
+    )
+    sql, params = fake.executed[0]
+    assert "cron_expression" in sql
+    assert None in params
+    assert "" not in params
+
+
+def test_entity_spec_sync_coerces_missing_cron_to_null():
+    fields = _entity_config_fields({"name": "Invoice", "fields": []})
+    assert fields["cron_expression"] is None
+    assert _entity_config_fields({"name": "Invoice", "fields": [], "cron_expression": ""})[
+        "cron_expression"
+    ] is None
+
+
+def test_full_cartridge_manifest_seeds_null_for_missing_cron():
+    manifest, seed_sql = cartridge_service._normalize_full_cartridge_manifest(
+        {
+            "id": "canary",
+            "name": "Canary",
+            "entities": [{"entity": "Invoice", "fields": []}],
+        }
+    )
+    assert manifest["entities"][0]["cron_expression"] is None
+    row = next(line for line in seed_sql.splitlines() if "'Invoice'" in line)
+    assert "NULL" in row

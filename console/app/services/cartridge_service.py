@@ -13,7 +13,10 @@ from datetime import datetime, timezone
 import asyncpg
 import sqlglot
 
-from app.domains.studio.entity_mutations import validate_entity_dag_params
+from app.domains.studio.entity_mutations import (
+    validate_entity_dag_params,
+    validate_entity_schedule_patch,
+)
 from app.security import get_internal_api_key
 from app.services.s3_client import get_minio_client, resolve_storage_config
 from app.services.security_context import build_security_context
@@ -539,7 +542,7 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
                 "primary_key": item.get("primary_key") or "",
                 "dag_id": dag_id,
                 "trigger_type": str(item.get("trigger_type") or "manual"),
-                "cron_expression": item.get("cron_expression") or "",
+                "cron_expression": item.get("cron_expression") or None,
                 "description": str(item.get("description") or ""),
                 "dag_params": item.get("dag_params") or {},
             }
@@ -791,6 +794,9 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
+    validate_entity_schedule_patch(fields)
+    if "cron_expression" in fields and not str(fields["cron_expression"] or "").strip():
+        fields["cron_expression"] = None
 
     if "dag_params" in fields:
         fields["dag_params"] = _json.dumps(

@@ -13,6 +13,7 @@ from tests.test_operational_rls_console_refinement import postgres_with_real_ini
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATION = REPO / "infra" / "init" / "99zzzzw_entity_cron_timezone.sql"
+BLANK_CRON_MIGRATION = REPO / "infra" / "init" / "99zzzzy_entity_config_blank_cron.sql"
 MUTATIONS = REPO / "console" / "app" / "domains" / "studio" / "entity_mutations.py"
 
 
@@ -110,3 +111,48 @@ def test_live_migration_defaults_to_utc_and_rejects_malformed_zones(
     assert result["recorded"] == 1
     assert result["default_tz"] == "UTC"
     assert result["rejected"] == ["../etc/passwd", "America/Mexico_City; x", "", "UTC\n", "a" * 65]
+
+
+def test_blank_cron_migration_is_idempotent_and_recorded():
+    sql = BLANK_CRON_MIGRATION.read_text(encoding="utf-8")
+    assert "UPDATE entity_config SET cron_expression = NULL WHERE cron_expression = ''" in sql
+    assert "to_regclass('public.entity_config') IS NULL" in sql
+    assert "VALUES ('99zzzzy_entity_config_blank_cron.sql', NOW())" in sql
+    assert "ON CONFLICT (filename) DO NOTHING" in sql
+    assert not re.search(r"\b(DROP|DELETE|TRUNCATE|ALTER)\b", sql)
+
+
+async def _blank_cron_probe(dsn: str) -> dict[str, object]:
+    conn = await asyncpg.connect(dsn)
+    cartridge_id = f"blankcron_{uuid.uuid4().hex[:10]}"
+    sql = BLANK_CRON_MIGRATION.read_text(encoding="utf-8")
+    try:
+        await conn.execute(
+            "INSERT INTO entity_config (cartridge_id, entity, trigger_type, cron_expression) "
+            "VALUES ($1, 'Legacy', 'scheduled', ''), ($1, 'Kept', 'scheduled', '0 8 * * *')",
+            cartridge_id,
+        )
+        await conn.execute(sql)
+        await conn.execute(sql)
+        rows = await conn.fetch(
+            "SELECT entity, cron_expression FROM entity_config WHERE cartridge_id=$1 ORDER BY entity",
+            cartridge_id,
+        )
+        recorded = await conn.fetchval(
+            "SELECT count(*) FROM schema_migrations WHERE filename='99zzzzy_entity_config_blank_cron.sql'"
+        )
+        return {
+            "rows": {row["entity"]: row["cron_expression"] for row in rows},
+            "recorded": recorded,
+        }
+    finally:
+        await conn.execute("DELETE FROM entity_config WHERE cartridge_id=$1", cartridge_id)
+        await conn.close()
+
+
+def test_live_blank_cron_rows_become_null_without_touching_real_schedules(
+    postgres_with_real_init_schema: str,  # noqa: F811
+) -> None:
+    result = asyncio.run(_blank_cron_probe(postgres_with_real_init_schema))
+    assert result["rows"] == {"Legacy": None, "Kept": "0 8 * * *"}
+    assert result["recorded"] == 1
