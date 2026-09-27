@@ -60,15 +60,34 @@ def test_control_room_permission_is_registered_and_workspace_admin_can_operate()
     assert "control_room.execute" in workspace_admin
 
 
-def test_control_room_approve_is_only_in_dedicated_checker_role():
+def test_control_room_approve_belongs_to_workspace_administrators_and_checkers():
     assert "control_room.approve" in permissions.PERMISSION_KEYS
-    for role in (
-        "owner", "super_admin", "admin", "workspace_admin", "tenant_admin"
-    ):
+    for role in ("owner", "super_admin", "admin"):
+        assert "control_room.approve" not in permissions.ROLE_PERMISSIONS[role]
+    for role in ("workspace_admin", "tenant_admin"):
+        assert {"control_room.approve", "control_room.execute"} <= (
+            permissions.ROLE_PERMISSIONS[role]
+        )
+    for role in ("analyst", "viewer", "auditor", "workspace_user", "user"):
         assert "control_room.approve" not in permissions.ROLE_PERMISSIONS[role]
     checker = permissions.ROLE_PERMISSIONS["control_room_approver"]
     assert {"control_room.approve", "control_room.execute"} <= checker
     assert "control_room.write" not in checker
+
+
+def test_workspace_admin_membership_grants_approve_but_platform_role_alone_does_not():
+    platform_only = {"id": 1, "role": "super_admin"}
+    platform_with_workspace = {"id": 1, "role": "super_admin", "workspace_role": "admin"}
+    tenant_admin = {"id": 2, "role": "user", "workspace_role": "tenant_admin"}
+    analyst = {"id": 3, "role": "user", "workspace_role": "analyst"}
+    assert not permissions.has_permission(platform_only, "control_room.approve")
+    assert permissions.has_permission(platform_with_workspace, "control_room.approve")
+    assert permissions.has_permission(tenant_admin, "control_room.approve")
+    assert not permissions.has_permission(analyst, "control_room.approve")
+    assert permissions.canonical_workspace_role("admin") == "workspace_admin"
+    assert permissions.canonical_workspace_role("tenant_admin") == "tenant_admin"
+    assert permissions.canonical_workspace_role(None) is None
+    assert permissions.canonical_workspace_role("unknown-role") is None
 
 
 def _build_execute_permission_client(user: dict | None) -> TestClient:

@@ -205,8 +205,14 @@ describe("useControlRoomLive", () => {
   it("refreshes an experience loaded more than ten minutes ago", async () => {
     const fetcher = vi.fn(async () => freshness("a"));
     const handle = experience(Date.now() - MAX_EXPERIENCE_AGE_MS - 1);
+    handle.refetch = vi.fn(async () => {
+      handle.dataUpdatedAt = Date.now();
+      return undefined;
+    });
     await render({ workspaceId: "workspace-a", experience: handle, paused: false, fetcher });
-    await vi.waitFor(() => expect(handle.refetch).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(probe.latest?.checkedAt).not.toBeNull());
+    await act(async () => undefined);
+    expect(handle.refetch).toHaveBeenCalledTimes(1);
   });
 
   it("resets the baseline when the workspace changes", async () => {

@@ -516,3 +516,45 @@ def test_decision_idempotency_migration_is_durable_and_actor_scoped():
     assert "FOR SHARE OF followed" in migration
     assert "FOR ALL TO omega_workspace, omega_console" in migration
     assert "TO omega_workspace, omega_console" in migration
+
+
+@pytest.mark.asyncio
+async def test_council_linked_decision_delete_is_a_clear_conflict(workspace_main, monkeypatch):
+    import asyncpg
+    from contextlib import asynccontextmanager
+
+    admin = {
+        "id": 900002,
+        "email": "admin.invalid",
+        "role": "admin",
+        "workspace_role": "workspace_admin",
+        "active_tenant_id": "00000000-0000-0000-0000-000000000901",
+        "active_workspace_id": "00000000-0000-0000-0000-000000000902",
+    }
+
+    class ProtectedConn:
+        async def fetchrow(self, *_args, **_kwargs):
+            return {"id": 5, "workspace_id": admin["active_workspace_id"], "created_by_id": 900002}
+
+        async def execute(self, sql, *_args):
+            error = asyncpg.ForeignKeyViolationError(
+                "decision is linked to the Control Room or the action council"
+            )
+            error.constraint_name = "decisions_council_delete_protection"
+            raise error
+
+    @asynccontextmanager
+    async def decision_pg(_user):
+        yield ProtectedConn()
+
+    async def load(_conn, _decision_id, _user, **_kwargs):
+        return {"id": 5, "workspace_id": admin["active_workspace_id"], "created_by_id": 900002}
+
+    monkeypatch.setattr(workspace_main, "_decision_pg", decision_pg)
+    monkeypatch.setattr(workspace_main, "_dec_load_on_conn", load)
+    monkeypatch.setattr(workspace_main, "require_user", lambda _request: admin)
+
+    with pytest.raises(HTTPException) as refused:
+        await workspace_main.api_decisions_delete(SimpleNamespace(), 5)
+    assert refused.value.status_code == 409
+    assert "ciérrala en lugar de eliminarla" in refused.value.detail

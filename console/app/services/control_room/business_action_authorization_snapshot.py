@@ -7,6 +7,7 @@ from typing import Any
 from app.services.control_room.business_action_digest import action_contract_digest
 from app.services.control_room.business_access import WORKSPACE_WIDE_SCOPED_ROLES
 from app.services.permission_roles import PLATFORM_ADMIN_ROLES, ROLE_PERMISSIONS
+from app.services.permissions import canonical_workspace_role
 
 
 @dataclass(frozen=True, repr=False)
@@ -69,7 +70,8 @@ async def capture_authorization_snapshot(
     workspace_grants = [
         role
         for role in workspace_roles
-        if permission in ROLE_PERMISSIONS.get(role, set())
+        if permission
+        in ROLE_PERMISSIONS.get(canonical_workspace_role(role) or "", set())
     ]
     if not global_grant and not workspace_grants:
         return None
@@ -112,6 +114,9 @@ async def capture_authorization_snapshot(
         "roles": {
             role: sorted(ROLE_PERMISSIONS.get(role, set()))
             for role in sorted({global_role, *workspace_roles})
+        },
+        "workspace_roles": {
+            role: canonical_workspace_role(role) for role in sorted(workspace_roles)
         },
     }
     access_digest = action_contract_digest(access_revision)

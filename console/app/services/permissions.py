@@ -10,7 +10,11 @@ from app.services.permission_catalog import (
     PERMISSION_KEYS,
     RESOURCE_ACTION_PERMISSIONS,
 )
-from app.services.permission_roles import ROLE_DEFINITIONS, ROLE_PERMISSIONS
+from app.services.permission_roles import (
+    PLATFORM_ADMIN_ROLES,
+    ROLE_DEFINITIONS,
+    ROLE_PERMISSIONS,
+)
 
 
 def canonical_role(role: str | None) -> str:
@@ -24,16 +28,21 @@ def user_role(user: dict | None) -> str:
     return canonical_role(user.get("role"))
 
 
-def workspace_role(user: dict | None) -> str | None:
-
-    if not user or not user.get("workspace_role"):
+def canonical_workspace_role(role: str | None) -> str | None:
+    if not role:
         return None
-    resolved = canonical_role(user.get("workspace_role"))
-    if resolved in {"admin", "owner", "super_admin", "security_admin"}:
+    resolved = canonical_role(role)
+    if resolved in PLATFORM_ADMIN_ROLES or resolved == "security_admin":
         return "workspace_admin"
     if resolved in ROLE_PERMISSIONS:
         return resolved
     return None
+
+
+def workspace_role(user: dict | None) -> str | None:
+    if not user:
+        return None
+    return canonical_workspace_role(user.get("workspace_role"))
 
 
 def get_effective_permissions(

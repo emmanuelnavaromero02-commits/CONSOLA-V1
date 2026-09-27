@@ -6,13 +6,16 @@ import {
   Ban,
   ClipboardCheck,
   Info,
+  ListChecks,
   Loader2,
+  MousePointerClick,
   RefreshCw,
   ShieldCheck,
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
+import { EmptyState } from "@/components/EmptyState";
 import {
   getSupervisedAction,
   listSupervisedActions,
@@ -157,9 +160,7 @@ export default function SupervisedActionsPage() {
                 No se pudieron cargar las acciones.
               </div>
             ) : rows.length === 0 ? (
-              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                Sin acciones pendientes.
-              </div>
+              <EmptyState icon={ListChecks} size="sm" title="Sin acciones pendientes." className="rounded-md border border-dashed" />
             ) : (
               <div className="space-y-2">
                 {rows.map((row) => {
@@ -244,9 +245,12 @@ export default function SupervisedActionsPage() {
                 </div>
               </div>
             ) : (
-              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                Selecciona una acción para revisar su detalle.
-              </div>
+              <EmptyState
+                icon={MousePointerClick}
+                size="sm"
+                title="Selecciona una acción para revisar su detalle."
+                className="rounded-md border border-dashed"
+              />
             )}
           </section>
         </div>

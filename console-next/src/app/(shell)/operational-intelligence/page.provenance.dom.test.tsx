@@ -144,4 +144,20 @@ describe("Inteligencia Operativa: procedencia veraz", () => {
 
     expect(container.textContent).toContain("42 resultados");
   });
+
+  it("los paneles vacíos usan el estado vacío compartido sin inventar filas", async () => {
+    queryState.current = { ...queryState.current, data: { items: [] } };
+    await renderPage();
+    expect(container.querySelector('[data-testid="empty-state"]')).not.toBeNull();
+    await openTab("Planes de decisión");
+    const plans = [...container.querySelectorAll('[data-testid="empty-state"]')].map(
+      (node) => node.textContent,
+    );
+    expect(plans).toContain("Sin planes preparados.");
+    await openTab("Validación histórica");
+    const validations = [...container.querySelectorAll('[data-testid="empty-state"]')].map(
+      (node) => node.textContent,
+    );
+    expect(validations).toContain("Sin validaciones históricas.");
+  });
 });

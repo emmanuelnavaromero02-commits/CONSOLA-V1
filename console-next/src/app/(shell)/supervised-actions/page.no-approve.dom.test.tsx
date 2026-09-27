@@ -126,4 +126,16 @@ describe("SupervisedActionsPage sin camino a approve/execute (PR-A sin cablear)"
     expect(source).not.toMatch(/\/approve/);
     expect(source).not.toMatch(/\/execute/);
   });
+
+  it("sin acciones muestra el estado vacío compartido y la guía de selección", async () => {
+    clientBoundary.listSupervisedActions.mockResolvedValue({ actions: [] });
+    await renderPage();
+    const empties = [...container.querySelectorAll('[data-testid="empty-state"]')].map(
+      (node) => node.textContent,
+    );
+    expect(empties).toEqual([
+      "Sin acciones pendientes.",
+      "Selecciona una acción para revisar su detalle.",
+    ]);
+  });
 });

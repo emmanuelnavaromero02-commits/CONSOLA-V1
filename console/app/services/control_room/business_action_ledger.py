@@ -44,6 +44,12 @@ async def append_intent_event(
     workspace_id = str(intent["workspace_id"])
     intent_id = str(intent["id"])
     permission = _permission_for_event(event_type, from_state)
+    if (
+        event_type == "stale"
+        and from_state == "pending_approval"
+        and int(actor_user_id) == int(intent.get("maker_user_id") or 0)
+    ):
+        permission = "control_room.write"
     authorization = await capture_authorization_snapshot(
         conn,
         tenant_id=tenant_id,

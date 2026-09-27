@@ -103,6 +103,9 @@ def test_every_public_mutation_with_a_success_shape_is_typed_or_exactly_exempt()
         ("POST", "/actions/decision-proposal"),
         ("POST", "/actions/studio-target"),
         ("POST", "/refresh"),
+        ("POST", "/council/{proposal_id}/approve"),
+        ("POST", "/council/{proposal_id}/discard"),
+        ("POST", "/council/{proposal_id}/renew"),
     }
     retired = {
         ("POST", "/sap-successfactors/talent/actions/preview"),

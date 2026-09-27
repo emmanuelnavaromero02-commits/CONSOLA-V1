@@ -154,6 +154,7 @@ from app.domains.copilot.assistant_chat import (
     assistant_chat_payload as _assistant_chat_payload_impl,
 )
 from app.domains.decisions.access import (
+    require_decisions_page as _require_decisions_page,
     can_delete_decision as _dec_can_delete_impl,
     can_edit_decision as _dec_can_edit_impl,
     current_workspace_id as _current_workspace_id_impl,
@@ -161,6 +162,11 @@ from app.domains.decisions.access import (
     decision_load_query as _dec_load_query_impl,
     decision_visible_clause as _dec_visible_clause_impl,
     is_decision_workspace_admin as _dec_is_workspace_admin_impl,
+)
+from app.domains.decisions.council_protection import (
+    COUNCIL_DELETE_PROTECTION as _COUNCIL_DELETE_PROTECTION,
+    PROTECTED_DECISION_MESSAGE as _PROTECTED_DECISION_MESSAGE,
+    protected_decision_ids as _protected_decision_ids,
 )
 from app.domains.decisions.business_visibility import (
     fetch_business_decisions as _fetch_business_decisions,
@@ -6777,7 +6783,10 @@ def _dec_row_to_dict(row) -> dict:
     return _dec_row_to_dict_impl(row)
 
 
-@app.get("/decisions", dependencies=[Depends(require_admin)])
+@app.get(
+    "/decisions",
+    dependencies=[Depends(require_authenticated), Depends(_require_decisions_page)],
+)
 async def viewer_decisions(request: Request):
     from app.routers.pages import _console_next_response
 
@@ -7089,7 +7098,17 @@ async def api_decisions_list(
             workspace_id=workspace_id,
             tenant_id=_tenant_id,
         )
-    return {"decisions": [_dec_row_to_dict(r) for r in rows]}
+        protected = await _protected_decision_ids(
+            conn,
+            workspace_id=workspace_id,
+            decision_ids=[row["id"] for row in rows if row.get("id") is not None],
+        )
+    return {
+        "decisions": [
+            {**_dec_row_to_dict(r), "protected": r.get("id") in protected}
+            for r in rows
+        ]
+    }
 
 
 @app.post(
@@ -7146,7 +7165,10 @@ async def api_decisions_get(
             "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
             decision_id,
         )
-    out = _dec_row_to_dict(row)
+        protected = await _protected_decision_ids(
+            conn, workspace_id=row["workspace_id"], decision_ids=[decision_id]
+        )
+    out = {**_dec_row_to_dict(row), "protected": decision_id in protected}
     out["actions"] = [
         {**dict(a), "ts": a["ts"].isoformat() if a["ts"] else None} for a in actions
     ]
@@ -7259,11 +7281,20 @@ async def api_decisions_delete(
             raise HTTPException(404, f"Decision {decision_id} not found")
         if not _dec_can_delete(existing, user):
             raise HTTPException(403, "only the creator or an admin can delete a decision")
-        await conn.execute(
-            "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
-            decision_id,
-            existing["workspace_id"],
-        )
+        if await _protected_decision_ids(
+            conn, workspace_id=existing["workspace_id"], decision_ids=[decision_id]
+        ):
+            raise HTTPException(409, _PROTECTED_DECISION_MESSAGE)
+        try:
+            await conn.execute(
+                "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
+                decision_id,
+                existing["workspace_id"],
+            )
+        except _asyncpg_dec.ForeignKeyViolationError as exc:
+            if getattr(exc, "constraint_name", None) != _COUNCIL_DELETE_PROTECTION:
+                raise
+            raise HTTPException(409, _PROTECTED_DECISION_MESSAGE) from None
     return {"deleted": True, "id": decision_id}
 
 
@@ -7717,6 +7748,7 @@ from app.routers import onboarding as onboarding_router
 from app.routers import studio as studio_router
 from app.routers import sap_b1 as sap_b1_router
 from app.routers import pipeline_operations as pipeline_operations_router
+from app.routers import pipeline_automations as pipeline_automations_router
 from app.routers import (
     control_room,
     mcp,
@@ -7760,6 +7792,7 @@ app.include_router(
 app.include_router(studio_router.router)
 app.include_router(sap_b1_router.router)
 app.include_router(pipeline_operations_router.router)
+app.include_router(pipeline_automations_router.router)
 
 
 app.add_middleware(RequestIDMiddleware)

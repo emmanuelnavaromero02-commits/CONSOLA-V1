@@ -133,11 +133,7 @@ async def test_v2_route_projects_only_server_owned_authority_actions():
         OPERATOR,
         current_snapshot,
         enabled_template_ids=frozenset(
-            {
-                "create_followup_task",
-                "approve_exception",
-                "create_decision_proposal",
-            }
+            {"approve_exception", "create_decision_proposal"}
         ),
     )
     actions = [
@@ -163,7 +159,7 @@ async def test_v2_route_projects_only_server_owned_authority_actions():
 
 
 @pytest.mark.asyncio
-async def test_followup_preview_handles_keep_their_own_kind_next_to_direct_actions():
+async def test_follow_ups_moved_to_the_council_and_never_reach_v2_facts():
     item = business_item()
     producer = AsyncMock(
         return_value={
@@ -191,15 +187,12 @@ async def test_followup_preview_handles_keep_their_own_kind_next_to_direct_actio
         response = await surfaces.control_room_experience_v2(OPERATOR)
 
     assert producer.await_args.kwargs["enabled_template_ids"] == frozenset(
-        {"create_followup_task", "open_in_studio"}
+        {"open_in_studio"}
     )
     assert [
         (action.kind, action.label, action.requires_approval)
         for action in response.sections[0].facts[0].actions
-    ] == [
-        ("followup_task", "Crear seguimiento operativo", True),
-        ("studio_adjustment", "Ajustar en Estudio", False),
-    ]
+    ] == [("studio_adjustment", "Ajustar en Estudio", False)]
 
 
 @pytest.mark.asyncio

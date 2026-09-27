@@ -39,6 +39,9 @@ function statusClass(status?: string | null): string {
     : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 }
 
+export const PROTECTED_DECISION_NOTE =
+  "Ligada al Control Room o al Consejo de Acciones: ciérrala en lugar de eliminarla.";
+
 const CLOSE_BUTTON =
   "inline-flex min-h-[44px] items-center gap-2 rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 disabled:opacity-50";
 
@@ -271,16 +274,21 @@ export function DecisionsBoard() {
                 <h2 className="text-xl font-semibold tracking-tight">{selected.title}</h2>
                 <p className="text-sm text-muted-foreground">{selected.description || "Sin descripción."}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => remove.mutate(selected.id)}
-                disabled={remove.isPending}
-                className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-destructive/40 text-destructive hover:bg-destructive/10 disabled:opacity-50"
-                aria-label="Eliminar decisión"
-              >
-                <Trash2 aria-hidden className="h-4 w-4" />
-              </button>
+              {selected.protected ? null : (
+                <button
+                  type="button"
+                  onClick={() => remove.mutate(selected.id)}
+                  disabled={remove.isPending}
+                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-destructive/40 text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                  aria-label="Eliminar decisión"
+                >
+                  <Trash2 aria-hidden className="h-4 w-4" />
+                </button>
+              )}
             </div>
+            {selected.protected ? (
+              <p className="text-xs text-muted-foreground">{PROTECTED_DECISION_NOTE}</p>
+            ) : null}
 
             <dl className="grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-md bg-muted/30 p-3">

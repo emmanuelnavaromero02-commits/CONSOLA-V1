@@ -104,6 +104,7 @@ export interface Decision {
   created_by_id?: number | null;
   assignee_id?: number | null;
   visibility?: DecisionVisibility | string | null;
+  protected?: boolean;
 }
 
 export interface DecisionAction {

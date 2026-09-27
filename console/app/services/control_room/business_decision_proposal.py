@@ -25,6 +25,9 @@ from app.services.control_room.business_direct_action_authority import (
     find_direct_action_replay,
     lock_direct_action,
 )
+from app.services.control_room.business_followup_intent import (
+    prepare_followup_intent_safely,
+)
 from app.services.db_scope import run_with_db_scope
 
 
@@ -152,6 +155,7 @@ async def create_decision_proposal(
         return int(decision_id)
 
     decision_id = await run_with_db_scope(pool, dict(user), _write)
+    await prepare_followup_intent_safely(user, resolved.item_id)
     return _response(action_handle, decision_id, created=True)
 
 
