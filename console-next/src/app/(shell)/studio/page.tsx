@@ -13,6 +13,7 @@ import { RefinePanel } from "@/components/studio/RefinePanel";
 import { StudioAssistant } from "@/components/studio/StudioAssistant";
 import { StudioTopBar } from "@/components/studio/StudioTopBar";
 import { Notice } from "@/components/studio/ui";
+import { useAutoCatalog } from "@/lib/catalog/hooks";
 import { useDatasets } from "@/lib/monitor/hooks";
 import { studioErrorMessage } from "@/lib/studio/client";
 import { formatCount, plural } from "@/lib/studio/format";
@@ -74,6 +75,7 @@ export default function StudioPage() {
   const manifest = useStudioManifest(activeId);
   const graph = useDagGraph(activeId);
   const datasets = useDatasets();
+  useAutoCatalog({ cartridge: activeId });
   const activeSection = sectionById(tab);
   const counts = sectionCounts({
     cartridge: activeId,
