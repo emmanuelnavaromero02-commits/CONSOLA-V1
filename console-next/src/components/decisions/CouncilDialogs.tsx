@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import {
   normalizeReason,
   reasonHasHiddenCharacters,
+  reasonVisibleLength,
 } from "@/lib/control-room/use-control-room-experience-action";
 import {
   DISCARD_REASON_LIMITS,
@@ -121,6 +122,7 @@ export function CouncilDialog({
   const copy = COMMAND_COPY[selection.command];
   const needsReason = selection.command === "discard";
   const reasonLength = Array.from(normalizeReason(reason)).length;
+  const reasonLetters = reasonVisibleLength(reason);
   const canConfirm = !submitting && (!needsReason || discardReasonIsValid(reason));
   const opener = selection.opener;
 
@@ -215,8 +217,13 @@ export function CouncilDialog({
               className="mt-1 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
             />
             <p id={counterId} className="mt-1 text-xs text-muted-foreground">
-              {`${reasonLength}/${DISCARD_REASON_LIMITS.max} · mínimo ${DISCARD_REASON_LIMITS.min} letras o números`}
+              {`${Math.min(reasonLetters, DISCARD_REASON_LIMITS.min)}/${DISCARD_REASON_LIMITS.min} letras o números · ${reasonLength}/${DISCARD_REASON_LIMITS.max} caracteres`}
             </p>
+            {reasonLetters < DISCARD_REASON_LIMITS.min ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {`Faltan ${DISCARD_REASON_LIMITS.min - reasonLetters} letras o números; los espacios y signos no cuentan.`}
+              </p>
+            ) : null}
             {reasonHasHiddenCharacters(reason) ? (
               <p className="mt-1 text-xs font-medium text-destructive">
                 El motivo contiene caracteres invisibles o de control; escríbelo de nuevo.

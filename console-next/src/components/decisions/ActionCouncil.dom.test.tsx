@@ -255,9 +255,14 @@ describe("ActionCouncil", () => {
     expect(confirm().disabled).toBe(true);
     await type(textarea, "- - - - - - - - - - . . .");
     expect(confirm().disabled).toBe(true);
-    expect(dialog()?.textContent).toContain("mínimo 10 letras o números");
+    expect(dialog()?.textContent).toContain("0/10 letras o números · 25/500 caracteres");
+    expect(dialog()?.textContent).toContain(
+      "Faltan 10 letras o números; los espacios y signos no cuentan.",
+    );
     await type(textarea, "  La causa ya\nse corrigió en origen  ");
     expect(confirm().disabled).toBe(false);
+    expect(dialog()?.textContent).toContain("10/10 letras o números · 33/500 caracteres");
+    expect(dialog()?.textContent).not.toContain("Faltan");
     await click(confirm());
     expect(council.discardCouncilProposal).toHaveBeenCalledWith(
       SYSTEM.proposal_id,
