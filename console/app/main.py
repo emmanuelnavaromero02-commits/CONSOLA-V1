@@ -346,6 +346,7 @@ from app.domains.security.internal_auth import (
 from app.domains.security.cors import (
     allowed_origins as _allowed_origins_impl,
 )
+from app.domains.security.redirects import safe_login_next
 from app.domains.system.runtime import (
     healthz_payload as _healthz_payload,
     runtime_config_payload as _runtime_config_payload,
@@ -1350,7 +1351,9 @@ def _unauthenticated_middleware_response(
         return None
     if _is_api_like(path, request.headers.get("accept", "")):
         return _auth_middleware_error_response("authentication required", 401, path)
-    return _apply_security_headers(RedirectResponse(url=f"/login?next={path}"), path)
+    next_path = safe_login_next(path)
+    login_url = "/login" if next_path is None else f"/login?next={next_path}"
+    return _apply_security_headers(RedirectResponse(url=login_url), path)
 
 
 def _forced_password_change_middleware_response(

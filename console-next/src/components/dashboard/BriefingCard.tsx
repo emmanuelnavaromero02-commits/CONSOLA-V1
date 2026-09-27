@@ -18,6 +18,7 @@ import type {
   BriefingHighlight,
   Severity,
 } from "@/lib/copilot/types";
+import { safeInternalPath } from "@/lib/safe-redirect";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -73,21 +74,18 @@ type ClassifiedHref =
   | { kind: "external"; href: string };
 
 
+const INTERNAL_ORIGIN = "https://placeholder.local";
+
+
 function classifyHref(value: string | null): ClassifiedHref | null {
   if (!value || typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
 
-  if (trimmed.startsWith("//")) return null;
-
   if (trimmed.startsWith("/")) {
-    let canonical: URL;
-    try {
-      canonical = new URL(trimmed, "https://placeholder.local");
-    } catch {
-      return null;
-    }
-    const path = canonical.pathname + canonical.search + canonical.hash;
+    const path = safeInternalPath(trimmed, INTERNAL_ORIGIN, "");
+    if (!path) return null;
+    const canonical = new URL(path, INTERNAL_ORIGIN);
     if (canonical.pathname === "/workspace") {
       const prompt = canonical.searchParams.get("prompt");
       if (prompt) return { kind: "prompt", href: path, prompt };

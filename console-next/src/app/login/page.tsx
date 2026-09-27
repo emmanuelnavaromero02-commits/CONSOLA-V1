@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { loginUser, type LoginError } from "@/lib/auth-flow";
+import { safeInternalPath } from "@/lib/safe-redirect";
 
 export default function LoginPage() {
   return (
@@ -20,10 +21,7 @@ export default function LoginPage() {
 function safeNextPath(): string {
   if (typeof window === "undefined") return "/dashboard";
   const nextPath = new URLSearchParams(window.location.search).get("next");
-  if (!nextPath || !nextPath.startsWith("/") || nextPath.startsWith("//")) {
-    return "/dashboard";
-  }
-  return nextPath;
+  return safeInternalPath(nextPath, window.location.origin);
 }
 
 function LoginCard() {
