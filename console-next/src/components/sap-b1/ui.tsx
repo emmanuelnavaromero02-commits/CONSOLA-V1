@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 export function errorText(error: unknown): string {
   if (isApiError(error)) {
     if (error.status === 401) return "Tu sesión expiró; vuelve a iniciar sesión.";
-    if (error.status === 403) return "Sin permiso para esta sección o el cartucho no está habilitado en este workspace.";
+    if (error.status === 403) return "Sin permiso para esta sección o la fuente de datos no está habilitada en este workspace.";
     if (error.status === 404) return "Sin datos todavía.";
     if (error.status === 503) return "El servicio no está disponible por ahora.";
     return error.message;

@@ -67,7 +67,7 @@ export function DagGraph({
   if (graph.isLoading) {
     return (
       <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground" aria-busy="true">
-        <Spinner /> Cargando grafo del cartucho…
+        <Spinner /> Cargando grafo de la fuente de datos…
       </p>
     );
   }
@@ -89,7 +89,7 @@ export function DagGraph({
   }
 
   if (!layout.nodes.length) {
-    return <Notice title="Sin nodos">El cartucho no reporta entidades, DAGs ni datasets.</Notice>;
+    return <Notice title="Sin nodos">La fuente de datos no reporta entidades, automatizaciones ni datasets.</Notice>;
   }
 
   return (

@@ -93,7 +93,7 @@ export function SapB1Page() {
 
       {access.data && !installed ? (
         <div className="mt-4">
-          <Notice tone="warning" title="Cartucho no habilitado">
+          <Notice tone="warning" title="Fuente de datos no habilitada">
             SAP Business One no está instalado o no está habilitado para tu usuario en este workspace; algunas secciones no tendrán datos.
           </Notice>
         </div>

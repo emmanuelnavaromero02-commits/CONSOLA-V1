@@ -21,7 +21,7 @@ def test_no_monitor_candidates_payload_keeps_existing_contract_text():
         "completed": 0,
         "failed": 0,
         "results": [],
-        "reason": "No hay monitores activos con contrato AgentOps para este cartucho/workspace.",
+        "reason": "No hay monitores activos con contrato AgentOps para esta fuente de datos/workspace.",
     }
 
 

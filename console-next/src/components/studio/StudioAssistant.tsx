@@ -127,7 +127,7 @@ export function StudioAssistant({
             <Sparkles aria-hidden className="h-4 w-4 text-primary" /> Asistente de Studio
           </h2>
           <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <span>{cartridge ? `Cartucho ${cartridge}` : "Sin cartucho activo"}</span>
+            <span>{cartridge ? `Fuente de datos ${cartridge}` : "Sin fuente de datos activa"}</span>
             <span className="rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary">
               Sección: {section.label}
             </span>
@@ -139,7 +139,7 @@ export function StudioAssistant({
       </header>
       {!messages.length && streaming === null ? (
         <p className="px-4 py-3 text-xs text-muted-foreground">
-          Pide ayuda para revisar DAGs, entidades o datasets del cartucho activo. Las acciones que cambian datos
+          Pide ayuda para revisar automatizaciones, entidades o datasets de la fuente de datos activa. Las acciones que cambian datos
           requieren tu aprobación explícita.
         </p>
       ) : null}

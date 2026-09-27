@@ -25,6 +25,7 @@ export interface StudioManifestEntity {
   dag_id?: string | null;
   trigger_type?: string | null;
   cron_expression?: string | null;
+  cron_timezone?: string | null;
   description?: string | null;
   enabled?: boolean | null;
   [key: string]: unknown;
@@ -205,6 +206,7 @@ export interface EntityPatch {
   dag_id?: string;
   trigger_type?: string;
   cron_expression?: string | null;
+  cron_timezone?: string;
   description?: string;
 }
 

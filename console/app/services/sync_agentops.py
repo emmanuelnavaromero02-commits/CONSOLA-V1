@@ -16,7 +16,7 @@ def no_monitor_candidates_payload(checked_at: str) -> dict[str, Any]:
         "completed": 0,
         "failed": 0,
         "results": [],
-        "reason": "No hay monitores activos con contrato AgentOps para este cartucho/workspace.",
+        "reason": "No hay monitores activos con contrato AgentOps para esta fuente de datos/workspace.",
     }
 
 

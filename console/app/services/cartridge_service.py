@@ -13,7 +13,10 @@ from datetime import datetime, timezone
 import asyncpg
 import sqlglot
 
-from app.domains.studio.entity_mutations import validate_entity_dag_params
+from app.domains.studio.entity_mutations import (
+    validate_entity_dag_params,
+    validate_entity_schedule_patch,
+)
 from app.security import get_internal_api_key
 from app.services.s3_client import get_minio_client, resolve_storage_config
 from app.services.security_context import build_security_context
@@ -291,7 +294,8 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
         entities = await conn.fetch(
             "SELECT entity, display_name, mode, primary_key, watermark_field, "
             "       page_size, select_fields, protection, effective_dated, date_field, dag_id, "
-            "       trigger_type, cron_expression, description, enabled, "
+            "       trigger_type, cron_expression, "
+            "       COALESCE(cron_timezone, 'UTC') AS cron_timezone, description, enabled, "
             "       COALESCE(dag_params, '{}'::jsonb) AS dag_params "
             "FROM entity_config WHERE cartridge_id=$1 AND enabled=TRUE ORDER BY entity",
             cartridge_id,
@@ -340,6 +344,7 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
                 "dag_id": r["dag_id"] or "",
                 "trigger_type": r["trigger_type"] or "manual",
                 "cron_expression": r["cron_expression"] or "",
+                "cron_timezone": r["cron_timezone"] or "UTC",
                 "description": r["description"] or "",
                 "enabled": r["enabled"],
                 "dag_params": _entity_dag_params(r["dag_params"]),
@@ -537,7 +542,7 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
                 "primary_key": item.get("primary_key") or "",
                 "dag_id": dag_id,
                 "trigger_type": str(item.get("trigger_type") or "manual"),
-                "cron_expression": item.get("cron_expression") or "",
+                "cron_expression": item.get("cron_expression") or None,
                 "description": str(item.get("description") or ""),
                 "dag_params": item.get("dag_params") or {},
             }
@@ -781,6 +786,7 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
         "dag_id",
         "trigger_type",
         "cron_expression",
+        "cron_timezone",
         "description",
         "enabled",
         "dag_params",
@@ -788,6 +794,9 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
+    validate_entity_schedule_patch(fields)
+    if "cron_expression" in fields and not str(fields["cron_expression"] or "").strip():
+        fields["cron_expression"] = None
 
     if "dag_params" in fields:
         fields["dag_params"] = _json.dumps(
@@ -820,9 +829,9 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
                 """
                 INSERT INTO entity_config
                     (cartridge_id, entity, display_name, mode, primary_key,
-                     dag_id, trigger_type, cron_expression, description, enabled,
-                     dag_params)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+                     dag_id, trigger_type, cron_expression, cron_timezone,
+                     description, enabled, dag_params)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
                 """,
                 cartridge_id,
                 entity,
@@ -832,6 +841,7 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
                 fields.get("dag_id"),
                 fields.get("trigger_type", "manual"),
                 fields.get("cron_expression"),
+                fields.get("cron_timezone") or "UTC",
                 fields.get("description", ""),
                 fields.get("enabled", True),
                 fields.get("dag_params", "{}"),

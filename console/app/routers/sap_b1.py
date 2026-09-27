@@ -171,7 +171,7 @@ async def overview(user: dict = Depends(require_permission("datasets.read"))) ->
         status_response = await _cartridge("GET", "/connector/status", user=user)
         connector = status_response.json() if status_response.status_code < 400 else {"present": False, "error": _detail(status_response)}
     except httpx.HTTPError:
-        connector = {"present": False, "error": "el cartucho sap_b1 no respondió"}
+        connector = {"present": False, "error": "la fuente de datos sap_b1 no respondió"}
     return {
         "installed": installed,
         "connection": {"present": connection is not None},

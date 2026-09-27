@@ -47,7 +47,7 @@ function DashboardContent() {
         <div className="space-y-1">
           <h1 className="text-3xl font-semibold tracking-tight">Panel</h1>
           <p className="text-sm text-muted-foreground">
-            Estado de cartuchos, extracciones y copiloto (actualizado cada 30 s).
+            Estado de fuentes de datos, extracciones y copiloto (actualizado cada 30 s).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -89,7 +89,7 @@ function DashboardContent() {
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
       >
         <KpiCard
-          label="Cartuchos conectados"
+          label="Fuentes de datos conectadas"
           value={
             view
               ? view.cartridges.connected != null && view.cartridges.total != null

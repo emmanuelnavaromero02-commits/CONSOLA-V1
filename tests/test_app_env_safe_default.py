@@ -253,7 +253,7 @@ def test_studio_gates_every_dev_only_action():
     assert "return;" in request_deploy[blocked:request_deploy.index("setPendingDeploy(")]
     assert "deploy.mutate" not in request_deploy
     assert "PACKAGED_DAG_REASON" in panel.split("const deployBlockReason", 1)[1].split(";", 1)[0]
-    assert "DAG empaquetado por el cartucho" in panel
+    assert "Automatización instalada por la fuente de datos" in panel
 
     confirm_deploy = panel.split("function confirmDeploy() {", 1)[1].split("\n  }\n", 1)[0]
     assert "deploy.mutate(request" in confirm_deploy

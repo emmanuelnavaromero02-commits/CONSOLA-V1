@@ -15,7 +15,7 @@ function AnalyticsShell() {
         </p>
         <h1 className="text-2xl font-semibold tracking-tight">Aplicaciones analíticas</h1>
         <p className="text-sm text-muted-foreground">
-          Dashboards publicados por los cartuchos activos. Para lo que requiere tu
+          Dashboards publicados por las fuentes de datos activas. Para lo que requiere tu
           atención ahora, usa el Control Room.
         </p>
       </header>

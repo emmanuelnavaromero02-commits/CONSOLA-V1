@@ -67,7 +67,7 @@ def _entity_config_fields(spec: dict[str, Any]) -> dict[str, Any]:
         "primary_key": primary_key,
         "dag_id": spec.get("dag_id") or "",
         "trigger_type": spec.get("trigger_type") or "manual",
-        "cron_expression": spec.get("cron_expression") or "",
+        "cron_expression": spec.get("cron_expression") or None,
         "description": spec.get("description") or "",
         "enabled": bool(spec.get("enabled", True)),
     }

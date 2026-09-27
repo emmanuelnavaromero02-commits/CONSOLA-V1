@@ -211,7 +211,7 @@ export function VaultConnectionsTable() {
     const payload = buildVaultConnectionPayload(connForm);
     if (payload === null) return;
     if (!selectedCartridge) {
-      toast.error("No hay cartucho activo para guardar la conexión.");
+      toast.error("No hay fuente de datos activa para guardar la conexión.");
       return;
     }
     saveConnection.mutate(
@@ -228,7 +228,7 @@ export function VaultConnectionsTable() {
 
   function confirmDeleteConnection(connId: string) {
     if (!selectedCartridge) {
-      toast.error("No hay cartucho activo para eliminar la conexión.");
+      toast.error("No hay fuente de datos activa para eliminar la conexión.");
       return;
     }
     removeConnection.mutate(
@@ -354,7 +354,7 @@ export function VaultConnectionsTable() {
                 {cartridgeOptions.length ? cartridgeOptions.map((item) => (
                   <option key={item.id} value={item.id}>{item.label} ({item.id})</option>
                 )) : (
-                  <option value="">Sin cartuchos instalados</option>
+                  <option value="">Sin fuentes de datos instaladas</option>
                 )}
               </select>
             ) : (
@@ -366,7 +366,7 @@ export function VaultConnectionsTable() {
                   resetSecretForm();
                 }}
                 className="min-h-[44px] rounded-md border bg-background px-3 text-sm"
-                placeholder="platform o cartucho"
+                placeholder="platform o fuente de datos"
               />
             )}
             <button
@@ -384,7 +384,7 @@ export function VaultConnectionsTable() {
       {tab === "connections" ? (
         !selectedCartridge ? (
           <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
-            No hay cartuchos activos en este workspace.
+            No hay fuentes de datos activas en este workspace.
           </p>
         ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -440,7 +440,7 @@ export function VaultConnectionsTable() {
                 </table>
               </div>
             ) : (
-              <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">Sin conexiones para este cartucho.</p>
+              <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">Sin conexiones para esta fuente de datos.</p>
             )}
           </section>
           <ConnectionForm
@@ -606,7 +606,7 @@ export function ConnectionForm({
           <input type="password" value={form.token} onChange={(event) => setForm({ ...form, token: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" autoComplete="off" />
         </Field>
       ) : null}
-      <Field label="Campos extra JSON">
+      <Field label="Campos adicionales">
         <textarea value={form.extraJson} onChange={(event) => setForm({ ...form, extraJson: event.target.value })} className="min-h-28 rounded-md border bg-background px-3 py-2 font-mono text-xs" placeholder='{"username":"user@company.com"}' />
       </Field>
       <div className="flex flex-wrap gap-2">

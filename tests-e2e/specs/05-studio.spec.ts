@@ -102,7 +102,7 @@ test.describe("Studio (Next.js, /studio)", () => {
     expect(href).toMatch(/\/dags\/.+\/grid$/);
   });
 
-  test("Deploy a Airflow opens a confirmation that cancels without POST, or is disabled with a reason", async ({
+  test("Publicar automatización opens a confirmation that cancels without POST, or is disabled with a reason", async ({
     authedPage: page,
   }) => {
     const deployRequests: string[] = [];
@@ -111,11 +111,11 @@ test.describe("Studio (Next.js, /studio)", () => {
     });
     await openStudio(page);
     await openTab(page, /^Automatizaciones$/);
-    await page.getByRole("button", { name: /Nuevo DAG/ }).click();
+    await page.getByRole("button", { name: /Nueva automatización/ }).click();
     const cartridge = await page.getByTestId("cartridge-picker").inputValue();
     await page.getByRole("textbox", { name: "dag_id" }).fill(`${cartridge}_e2e_probe`);
     await page.getByRole("textbox", { name: "Código Python" }).fill("# e2e: never deployed\n");
-    const deploy = page.getByRole("button", { name: /Deploy a Airflow/ });
+    const deploy = page.getByRole("button", { name: /Publicar automatización/ });
     await expect(deploy).toBeVisible();
     if (await deploy.isDisabled()) {
       const reason = (await deploy.getAttribute("data-disabled-reason")) || "";
@@ -185,7 +185,7 @@ test.describe("Studio (Next.js, /studio)", () => {
     const panel = page.getByTestId("studio-assistant");
     await expect(panel).toBeVisible();
     const input = panel.getByRole("textbox", { name: "Mensaje para el asistente de Studio" });
-    await input.fill("¿Qué DAGs tiene este cartucho?");
-    await expect(input).toHaveValue("¿Qué DAGs tiene este cartucho?");
+    await input.fill("¿Qué automatizaciones tiene esta fuente de datos?");
+    await expect(input).toHaveValue("¿Qué automatizaciones tiene esta fuente de datos?");
   });
 });

@@ -15,19 +15,19 @@ export function notifyDeployResult(result: DeployDagResult, dagId: string): void
   const id = result.dag_id || dagId;
   switch (result.status) {
     case "deployed":
-      toast.success(`DAG ${id} desplegado en Airflow.`);
+      toast.success(`Automatización ${id} publicada en Airflow.`);
       return;
     case "managed":
-      toast.info(result.message || `DAG ${id} empaquetado: se gestiona desde el cartucho.`);
+      toast.info(result.message || `La fuente de datos instala y gestiona la automatización ${id}.`);
       return;
     case "needs_input":
-      toast.warning(result.message || "Faltan datos para desplegar el DAG.");
+      toast.warning(result.message || "Faltan datos para publicar la automatización.");
       return;
     case "failed":
-      toast.error(`No se pudo desplegar ${id}: ${result.error || "Airflow rechazó el DAG."}`);
+      toast.error(`No se pudo publicar ${id}: ${result.error || "Airflow rechazó la automatización."}`);
       return;
     default:
-      toast.error(`Respuesta inesperada del deploy (${result.status || "sin estado"}).`);
+      toast.error(`Respuesta inesperada al publicar (${result.status || "sin estado"}).`);
   }
 }
 
@@ -50,14 +50,14 @@ export function DeployDialog({
   return (
     <ConfirmDialog
       open={Boolean(request)}
-      title={renaming ? "Confirmar renombrado del DAG" : "Confirmar deploy a Airflow"}
+      title={renaming ? "Confirmar renombrado de la automatización" : "Confirmar publicación en Airflow"}
       description={
         renaming
-          ? "Se desplegará una copia con el nuevo dag_id y, si Airflow la acepta, se eliminará el DAG anterior."
-          : "El código se escribirá en Airflow para este cartucho. Revisa los datos antes de continuar."
+          ? "Se publicará una copia con el nuevo dag_id y, si Airflow la acepta, se eliminará la automatización anterior."
+          : "El código se escribirá en Airflow para esta fuente de datos. Revisa los datos antes de continuar."
       }
-      confirmLabel={renaming ? "Renombrar" : "Desplegar"}
-      pendingLabel={renaming ? "Renombrando…" : "Desplegando…"}
+      confirmLabel={renaming ? "Renombrar" : "Publicar"}
+      pendingLabel={renaming ? "Renombrando…" : "Publicando…"}
       pending={pending}
       onConfirm={onConfirm}
       onCancel={onCancel}
@@ -65,11 +65,11 @@ export function DeployDialog({
     >
       {request ? (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
-          <dt className="text-muted-foreground">Cartucho</dt>
+          <dt className="text-muted-foreground">Fuente de datos</dt>
           <dd className="break-all font-mono">{request.cartridge}</dd>
           {renaming ? (
             <>
-              <dt className="text-muted-foreground">DAG actual</dt>
+              <dt className="text-muted-foreground">Automatización actual</dt>
               <dd className="break-all font-mono">{request.renameFrom}</dd>
             </>
           ) : null}

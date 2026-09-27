@@ -94,6 +94,13 @@ async function click(element: Element | null | undefined) {
   });
 }
 
+function browserTimeZone(timeZone: string) {
+  const original = Intl.DateTimeFormat.prototype.resolvedOptions;
+  vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockImplementation(function (this: Intl.DateTimeFormat) {
+    return { ...original.call(this), timeZone };
+  });
+}
+
 async function typeInto(element: HTMLInputElement | HTMLTextAreaElement | null, value: string) {
   expect(element).toBeTruthy();
   await act(async () => {
@@ -165,6 +172,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.restoreAllMocks();
 });
 
 describe("LayersPanel", () => {
@@ -248,16 +256,66 @@ describe("EntitiesPanel", () => {
   });
 
   it("patches only the edited fields", async () => {
+    browserTimeZone("UTC");
     const update = state.hooks.useUpdateEntity as Mutation;
     await render(<EntitiesPanel cartridge="acme" />);
     await click(byText("button", /^Editar/));
-    await typeInto(container.querySelector<HTMLInputElement>('input[name="cron_expression"]'), "0 8 * * *");
+    expect(container.querySelector('input[name="cron_expression"]')).toBeNull();
+    await click(byText("label", /Diario a primera hora \(08:00\)/));
     await click(byText("button", /Guardar cambios/));
     expect(update.mutate.mock.calls[0][0]).toEqual({
       cartridge: "acme",
       entity: "Invoice",
       patch: { cron_expression: "0 8 * * *", trigger_type: "scheduled" },
     });
+  });
+
+  it("sends the browser time zone when a first schedule is chosen", async () => {
+    browserTimeZone("America/Mexico_City");
+    const update = state.hooks.useUpdateEntity as Mutation;
+    await render(<EntitiesPanel cartridge="acme" />);
+    await click(byText("button", /^Editar/));
+    await click(byText("label", /Al finalizar la jornada laboral \(19:00\)/));
+    expect(container.querySelector("[data-frequency-summary]")?.textContent).toBe(
+      "Al finalizar la jornada laboral · 19:00, lunes a viernes (Ciudad de México)",
+    );
+    await click(byText("button", /Guardar cambios/));
+    expect(update.mutate.mock.calls[0][0].patch).toEqual({
+      cron_expression: "0 19 * * 1-5",
+      trigger_type: "scheduled",
+      cron_timezone: "America/Mexico_City",
+    });
+  });
+
+  it("keeps a registered custom schedule and its time zone untouched", async () => {
+    browserTimeZone("America/Mexico_City");
+    const update = state.hooks.useUpdateEntity as Mutation;
+    const manifest = {
+      id: "acme",
+      entities: [{ entity: "Invoice", trigger_type: "scheduled", cron_expression: "*/15 * * * *", cron_timezone: "UTC" }],
+    };
+    await render(<EntitiesPanel cartridge="acme" manifest={manifest} />);
+    await click(byText("button", /^Editar/));
+    const custom = container.querySelector<HTMLInputElement>('input[name="entity_frequency_custom"]');
+    expect(custom?.value).toBe("*/15 * * * *");
+    expect(container.querySelector<HTMLSelectElement>('select[name="entity_frequency_timezone"]')?.value).toBe("UTC");
+    await click(byText("label", /Cada hora/));
+    await click(byText("label", /Programación personalizada/));
+    expect(container.querySelector<HTMLInputElement>('input[name="entity_frequency_custom"]')?.value).toBe("*/15 * * * *");
+    await typeInto(container.querySelector<HTMLInputElement>('input[name="display_name"]'), "Facturas emitidas");
+    await click(byText("button", /Guardar cambios/));
+    expect(update.mutate.mock.calls[0][0].patch).toEqual({ display_name: "Facturas emitidas" });
+  });
+
+  it("shows an inactive registered frequency as on demand", async () => {
+    const manifest = {
+      id: "acme",
+      entities: [{ entity: "Invoice", trigger_type: "manual", cron_expression: "0 8 * * *", cron_timezone: "UTC" }],
+    };
+    await render(<EntitiesPanel cartridge="acme" manifest={manifest} />);
+    await click(byText("button", /^Editar/));
+    const manual = container.querySelector<HTMLInputElement>('input[name="entity_frequency"][value="manual"]');
+    expect(manual?.checked).toBe(true);
   });
 
   it("renders the bronze schema for an entity", async () => {

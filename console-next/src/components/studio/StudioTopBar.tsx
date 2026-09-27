@@ -36,7 +36,7 @@ export function StudioHealth({
   const health = cartridgeHealth({ cartridge, manifest, summary, datasets: loaded ? datasets.data : null });
   if (!cartridge) return null;
   return (
-    <dl aria-label="Salud del cartucho" data-testid="studio-health" className="flex flex-wrap gap-2">
+    <dl aria-label="Salud de la fuente de datos" data-testid="studio-health" className="flex flex-wrap gap-2">
       {health.tables !== null ? (
         <Metric id="tables" label="Total tablas">
           {formatCount(health.tables)}
@@ -99,7 +99,7 @@ export function StudioTopBar({
             <Rocket aria-hidden className="h-4 w-4" /> Desplegar a Airflow
           </button>
           <span id="studio-deploy-hint" className="sr-only">
-            Abre Automatizaciones para elegir el DAG y confirmar el despliegue.
+            Abre Automatizaciones para elegir la automatización y confirmar la publicación.
           </span>
           <button
             type="button"

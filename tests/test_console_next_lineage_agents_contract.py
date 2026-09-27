@@ -24,7 +24,7 @@ def test_lineage_viewer_keeps_directional_graph_and_node_details():
 
 def test_agents_console_restores_editor_tools_schedule_runs_and_test_flow():
     src = read("console-next/src/components/agents/AgentsConsole.tsx")
-    for label in ("Configuración", "Tools", "RAG", "Tareas", "Ejecuciones", "Probar"):
+    for label in ("Configuración", "Herramientas", "Conocimiento", "Tareas", "Ejecuciones", "Probar"):
         assert label in src
     for helper in (
         "listAgentToolCatalog",

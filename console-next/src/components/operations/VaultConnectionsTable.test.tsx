@@ -72,7 +72,7 @@ describe("VaultConnectionsTable", () => {
     expect(markup).toContain("bearer_token");
     expect(markup).toContain("••••••••••");
     expect(markup).toContain("Nueva conexión");
-    expect(markup).toContain("Campos extra JSON");
+    expect(markup).toContain("Campos adicionales");
     expect(markup).toContain("Revelar secreto");
   });
 

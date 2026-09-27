@@ -64,17 +64,17 @@ export default function CartridgesPage() {
       const status = result.installation?.status || result.installation?.access_status || "solicitado";
       toast.success(`${META[id]?.name ?? id}: activación enviada (${status}).`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo activar el cartucho.");
+      toast.error(error instanceof Error ? error.message : "No se pudo activar la fuente de datos.");
     }
   };
 
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
       <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">Monitor técnico de cartuchos</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Monitor técnico de fuentes de datos</h1>
         <p className="text-sm text-muted-foreground">
           Supervisa conectividad, pruebas en vivo y estado técnico de los
-          cartuchos ya integrados.
+          fuentes de datos ya integradas.
         </p>
       </header>
 
@@ -85,7 +85,7 @@ export default function CartridgesPage() {
           className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm"
         >
           <p className="font-medium text-destructive">
-            No se pudieron cargar los cartuchos.
+            No se pudieron cargar las fuentes de datos.
           </p>
           <button
             type="button"
@@ -98,7 +98,7 @@ export default function CartridgesPage() {
       ) : null}
 
       <section
-        aria-label="Listado de cartuchos"
+        aria-label="Listado de fuentes de datos"
         aria-busy={list.isLoading}
         className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
       >

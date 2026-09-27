@@ -52,13 +52,14 @@ def public_url(
     *,
     fallback_env: str | None = None,
     development_default: str = "",
+    allow_private: bool = False,
 ) -> str:
     raw = os.environ.get(env_name)
     if not raw and fallback_env:
         raw = os.environ.get(fallback_env)
     if raw:
         value = raw.rstrip("/")
-        if is_production_env() and is_private_public_url(value):
+        if is_production_env() and not allow_private and is_private_public_url(value):
             logger.warning(
                 "%s points at a private/local address in production; omitting public URL",
                 env_name,

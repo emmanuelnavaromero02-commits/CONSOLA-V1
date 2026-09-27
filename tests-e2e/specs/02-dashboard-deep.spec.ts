@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 
 const EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
 const KPI_LABELS = [
-  "Cartuchos conectados",
+  "Fuentes de datos conectadas",
   "Extracciones hoy",
   "Usuarios activos",
   "Acciones copiloto",
@@ -24,7 +24,7 @@ test.describe("Dashboard layout", () => {
     await page.goto("/dashboard");
     await expect(
       page.getByText(
-        /estado de cartuchos, extracciones y copiloto \(actualizado cada 30 s\)\./i,
+        /estado de fuentes de datos, extracciones y copiloto \(actualizado cada 30 s\)\./i,
       ).first(),
     ).toBeVisible();
   });
@@ -85,7 +85,7 @@ test.describe("Dashboard — KPI tiles", () => {
     await page.setViewportSize({ width: 400, height: 900 });
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    const tile = kpiCard(page, "Cartuchos conectados");
+    const tile = kpiCard(page, "Fuentes de datos conectadas");
     const box = await tile.boundingBox();
     expect(box?.width,
       "on mobile the KPI tile should be near-full-width (≥ 280 px)",

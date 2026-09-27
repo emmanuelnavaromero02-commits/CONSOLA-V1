@@ -446,6 +446,7 @@ def _root_test_targets(files: list[str]) -> str:
         r"^mcp-infra/app/tools/control_room\.py$",
         r"^console-next/src/app/\(shell\)/studio/page\.tsx$",
         r"^console-next/src/lib/studio/sections\.ts$",
+        r"^console-next/src/lib/glossary\.ts$",
         r"^scripts/deploy_main_aws\.py$",
         r"^infra/terraform/deploy/docker-compose\.(aws|cartridges)\.ya?ml$",
     ):

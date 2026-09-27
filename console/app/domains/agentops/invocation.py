@@ -90,13 +90,10 @@ def agent_schedule_due(
     try:
         tz = ZoneInfo(str(schedule.get("tz") or "UTC"))
         if scheduled_fire_at is not None:
+            from app.services.scheduled_runtime import cron_fires_at
+
             fire_utc = scheduled_fire_at.astimezone(_tz.utc)
-            iterator = croniter(cron_expr, fire_utc.astimezone(tz) - _td(seconds=1))
-            next_fire = iterator.get_next(_dt)
-            if next_fire.tzinfo is None:
-                next_fire = next_fire.replace(tzinfo=tz)
-            next_fire_utc = next_fire.astimezone(_tz.utc)
-            return abs((next_fire_utc - fire_utc).total_seconds()) <= 1
+            return cron_fires_at(cron_expr, schedule.get("tz"), fire_utc)
 
         now_utc = _dt.now(_tz.utc)
         window_start_utc = now_utc - _td(

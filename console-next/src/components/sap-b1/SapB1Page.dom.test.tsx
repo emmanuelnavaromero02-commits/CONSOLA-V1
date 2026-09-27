@@ -207,7 +207,7 @@ describe("SapB1Page", () => {
     await render(<SapB1Page />);
     expect(tab("Puesta en marcha")?.getAttribute("aria-selected")).toBe("true");
     const text = container.textContent ?? "";
-    expect(text).toContain("Cartucho instalado");
+    expect(text).toContain("Fuente de datos instalada");
     expect(text).toContain("Faltan 1: margin_min_pct");
     expect(text).toContain("Último heartbeat hace 2 min");
     expect(text).toContain("Completa: 24 meses");

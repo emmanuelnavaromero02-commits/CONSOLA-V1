@@ -221,15 +221,15 @@ export default function StudioPage() {
           >
             {!activeId ? (
               cartridges.isLoading ? (
-                <p className="text-sm text-muted-foreground">Cargando cartuchos…</p>
+                <p className="text-sm text-muted-foreground">Cargando fuentes de datos…</p>
               ) : (
-                <Notice>No hay cartuchos visibles para tu usuario. Crea o importa uno para empezar.</Notice>
+                <Notice>No hay fuentes de datos visibles para tu usuario. Crea o importa una para empezar.</Notice>
               )
             ) : (
               <>
                 {manifest.isError ? (
                   <div className="mb-4">
-                    <Notice tone="warning" title="No se pudo leer el manifiesto del cartucho.">
+                    <Notice tone="warning" title="No se pudo leer el manifiesto de la fuente de datos.">
                       {studioErrorMessage(manifest.error, "Error al consultar /studio/cartridges/{id}.")}
                     </Notice>
                   </div>
@@ -263,7 +263,7 @@ export default function StudioPage() {
         {assistantOpen ? (
           <div id="studio-assistant-region">
             <StudioAssistant
-              key={activeId ?? "sin-cartucho"}
+              key={activeId ?? "sin-fuente"}
               cartridge={activeId}
               step={activeSection.step}
               manifest={manifest.data}

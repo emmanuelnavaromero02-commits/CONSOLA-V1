@@ -273,7 +273,7 @@ export function GraphCanvas({
         ref={canvasRef}
         data-testid="dag-graph"
         role="group"
-        aria-label={`Grafo del cartucho ${cartridge}`}
+        aria-label={`Grafo de la fuente de datos ${cartridge}`}
         className={cn("block h-full w-full touch-none select-none", dragging ? "cursor-grabbing" : "cursor-grab")}
         onPointerMove={movePan}
         onPointerUp={endPan}

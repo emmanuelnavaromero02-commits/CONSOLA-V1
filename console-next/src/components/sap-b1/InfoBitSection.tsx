@@ -51,7 +51,7 @@ function ConnectorCard({ connector }: { connector: SapB1ConnectorState }) {
       </div>
       {!connector.present ? (
         <Notice tone="empty" title="El conector todavía no reporta">
-          {connector.error ? `Respuesta del cartucho: ${connector.error}` : "No hay heartbeat del agente en este workspace."}
+          {connector.error ? `Respuesta de la fuente de datos: ${connector.error}` : "No hay heartbeat del agente en este workspace."}
         </Notice>
       ) : (
         <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -190,7 +190,7 @@ export function InfoBitSection() {
       >
         {mapping.isPending ? <LoadingBlock label="Leyendo el mapeo…" /> : null}
         {mapping.isError ? <QueryError error={mapping.error} onRetry={() => void mapping.refetch()} /> : null}
-        {mapping.data && rows.length === 0 ? <Notice tone="empty" title="Sin tablas en el catálogo del cartucho" /> : null}
+        {mapping.data && rows.length === 0 ? <Notice tone="empty" title="Sin tablas en el catálogo de la fuente de datos" /> : null}
         {rows.length ? (
           <TableShell label="Mapeo de tablas de Business One">
             <thead>

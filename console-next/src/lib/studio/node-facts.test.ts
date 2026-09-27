@@ -115,21 +115,28 @@ describe("node facts", () => {
   it("describes a schedule only when the entity scheduler would fire it", () => {
     const scheduled = { trigger_type: "scheduled", cron_expression: "0 8 * * *", dag_id: "acme_invoice", enabled: true };
     expect(scheduleIsActive(scheduled)).toBe(true);
-    expect(scheduleText(scheduled)).toBe("Diaria a las 08:00 UTC (cron 0 8 * * *)");
+    expect(scheduleText(scheduled)).toBe("Diario a primera hora · 08:00 (UTC)");
+    expect(scheduleText({ ...scheduled, cron_timezone: "America/Mexico_City" })).toBe(
+      "Diario a primera hora · 08:00 (Ciudad de México)",
+    );
+    expect(scheduleText({ ...scheduled, cron_expression: "0 19 * * 1-5", cron_timezone: "America/Bogota" })).toBe(
+      "Al finalizar la jornada laboral · 19:00, lunes a viernes (Bogotá)",
+    );
+    expect(scheduleText({ ...scheduled, cron_expression: "30 6 * * *" })).toBe("Diario · 06:30 (UTC)");
     expect(scheduleText({ ...scheduled, trigger_type: "Scheduled", cron_expression: "*/15 * * * *" })).toBe(
-      "Programada en UTC (cron */15 * * * *)",
+      "Programación personalizada (UTC)",
     );
     expect(scheduleText({ ...scheduled, trigger_type: "manual" })).toBe(
-      "Sin programación activa (cron 0 8 * * * registrado sin activar)",
+      "Bajo demanda (hay una frecuencia registrada sin activar)",
     );
     expect(scheduleText({ ...scheduled, enabled: false })).toBe(
-      "Sin programación activa (cron 0 8 * * * registrado sin activar)",
+      "Bajo demanda (hay una frecuencia registrada sin activar)",
     );
     expect(scheduleText({ ...scheduled, dag_id: "" })).toBe(
-      "Sin programación activa (cron 0 8 * * * registrado sin activar)",
+      "Bajo demanda (hay una frecuencia registrada sin activar)",
     );
-    expect(scheduleText({ trigger_type: "manual", cron_expression: "" })).toBe("Sin programación activa");
-    expect(scheduleText({ trigger_type: "scheduled", cron_expression: null, dag_id: "x" })).toBe("Sin programación activa");
+    expect(scheduleText({ trigger_type: "manual", cron_expression: "" })).toBe("Bajo demanda");
+    expect(scheduleText({ trigger_type: "scheduled", cron_expression: null, dag_id: "x" })).toBe("Bajo demanda");
     expect(scheduleIsActive(undefined)).toBe(false);
     expect(scheduleText(undefined)).toBeNull();
   });

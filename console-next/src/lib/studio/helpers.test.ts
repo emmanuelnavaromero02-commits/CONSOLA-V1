@@ -78,6 +78,7 @@ describe("validation", () => {
       primary_key: "id",
       dag_id: "acme_invoice",
       cron_expression: "0 8 * * *",
+      cron_timezone: "UTC",
       description: "",
     };
     expect(changedEntityFields(before, before)).toEqual({});
@@ -90,6 +91,30 @@ describe("validation", () => {
       display_name: "Facturas",
       cron_expression: "0 9 * * *",
       trigger_type: "scheduled",
+    });
+  });
+
+  it("sends the time zone only when it changes on an active schedule", () => {
+    const before: EntityDraft = {
+      display_name: "Factura",
+      mode: "full",
+      primary_key: "id",
+      dag_id: "acme_invoice",
+      cron_expression: "0 8 * * *",
+      cron_timezone: "UTC",
+      description: "",
+    };
+    expect(changedEntityFields(before, { ...before, cron_timezone: "America/Mexico_City" })).toEqual({
+      cron_timezone: "America/Mexico_City",
+    });
+    expect(
+      changedEntityFields(before, { ...before, cron_expression: "", cron_timezone: "America/Mexico_City" }),
+    ).toEqual({ cron_expression: null, trigger_type: "manual" });
+    const manual = { ...before, cron_expression: "" };
+    expect(changedEntityFields(manual, { ...manual, cron_expression: "0 19 * * 1-5", cron_timezone: "America/Bogota" })).toEqual({
+      cron_expression: "0 19 * * 1-5",
+      trigger_type: "scheduled",
+      cron_timezone: "America/Bogota",
     });
   });
 });

@@ -341,7 +341,7 @@ def sync_start_step_updates() -> dict[str, dict[str, Any]]:
         "connection": {
             "label": "Conexión",
             "status": "running",
-            "detail": "Validando scope y conexión del cartucho.",
+            "detail": "Validando scope y conexión de la fuente de datos.",
         }
     }
 

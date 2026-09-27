@@ -34,6 +34,7 @@ def runtime_config_payload(
         "airflow_url": public_url(
             "AIRFLOW_PUBLIC_URL",
             development_default="http://localhost:8082",
+            allow_private=True,
         ),
         "superset_url": public_url(
             "SUPERSET_PUBLIC_URL",

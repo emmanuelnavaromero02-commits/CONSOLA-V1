@@ -78,7 +78,7 @@ export function AppViewer({ appName }: { appName: string | null }) {
       <ViewerFrame>
         <h1 className="text-xl font-semibold">Aplicación no disponible</h1>
         <p role="alert" className="text-sm text-muted-foreground">
-          No está publicada para este workspace, o su cartucho no tiene conexión activa.
+          No está publicada para este workspace, o su fuente de datos no tiene conexión activa.
         </p>
       </ViewerFrame>
     );

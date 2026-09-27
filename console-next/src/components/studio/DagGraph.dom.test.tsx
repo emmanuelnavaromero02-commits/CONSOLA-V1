@@ -380,7 +380,7 @@ describe("DagGraph node drawer", () => {
     expect(detail?.querySelector("h2")?.textContent).toBe("Facturas");
     expect(detail?.textContent).toContain("Entradas (1) · Salidas (2)");
     expect(detail?.textContent).toContain("Facturas emitidas a clientes");
-    expect(detail?.textContent).toContain("Diaria a las 08:00 UTC (cron 0 8 * * *)");
+    expect(detail?.textContent).toContain("Diario a primera hora · 08:00 (UTC)");
     const load = detail?.querySelector("[data-bronze-load]");
     expect(load?.textContent).toContain("1,200 registros");
     expect(load?.textContent).toMatch(/Cargados el 26 sept?\.? 2026/);
@@ -416,7 +416,7 @@ describe("DagGraph node drawer", () => {
     expect(detail?.querySelector('time[dateTime="2026-09-26T11:30:00Z"]')).toBeTruthy();
     expect(detail?.querySelector("[data-node-status]")?.textContent).toBe("Requiere revisión");
     expect(detail?.textContent).toContain("timeout al leer la fuente");
-    expect(detail?.textContent).toContain("Sin programación activa (cron 0 8 * * * registrado sin activar)");
+    expect(detail?.textContent).toContain("Bajo demanda (hay una frecuencia registrada sin activar)");
   });
 
   it("says so when a fact is missing instead of inventing it", async () => {

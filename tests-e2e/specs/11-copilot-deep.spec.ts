@@ -295,7 +295,7 @@ test.describe("Copilot streaming + chat UI", () => {
       '[data-testid="chat-messages"], [aria-label*="mensajes" i]',
     ).first();
     const beforeText = await messageRegion.innerText().catch(() => "");
-    await input.fill("Cuántos cartuchos hay configurados?");
+    await input.fill("Cuántas fuentes de datos hay configuradas?");
     await page.getByRole("button", { name: /enviar|send/i }).click();
     await expect.poll(
       async () => (await messageRegion.innerText().catch(() => "")).length,

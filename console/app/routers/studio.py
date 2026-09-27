@@ -2060,7 +2060,7 @@ async def dag_delete(
         if "ALLOW_RCE_TOOLS" in str(result.get("error")):
             raise HTTPException(
                 403,
-                "Eliminar DAG requiere ALLOW_RCE_TOOLS=true en el entorno local.",
+                "Eliminar automatización requiere ALLOW_RCE_TOOLS=true en el entorno local.",
             )
         raise HTTPException(502, f"Airflow delete failed: {result['error']}")
     await audit_service.record_event(
@@ -2119,7 +2119,7 @@ async def dag_deploy(
         return {
             "status": "managed",
             "dag_id": safe_dag_id,
-            "message": "DAG empaquetado: se gestiona desde el cartucho, no desde airflow/dags.",
+            "message": "La fuente de datos instala y gestiona esta automatización.",
         }
     if not safe_dag_id.startswith(f"{safe_cartridge}_"):
         raise HTTPException(403, f"DAG '{safe_dag_id}' does not belong to cartridge '{safe_cartridge}'")
@@ -2142,7 +2142,7 @@ async def dag_deploy(
         if "ALLOW_RCE_TOOLS" in str(result.get("error")):
             raise HTTPException(
                 403,
-                "Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local.",
+                "Publicar automatización requiere ALLOW_RCE_TOOLS=true en el entorno local.",
             )
         return {"status": "failed", "dag_id": safe_dag_id, "error": result["error"]}
     await audit_service.record_event(

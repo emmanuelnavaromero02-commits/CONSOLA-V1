@@ -2,7 +2,7 @@ import { test, expect } from "../fixtures/auth";
 import type { Page } from "@playwright/test";
 
 const KPI_LABELS = [
-  "Cartuchos conectados",
+  "Fuentes de datos conectadas",
   "Extracciones hoy",
   "Usuarios activos",
   "Acciones copiloto",
@@ -33,11 +33,11 @@ test.describe("Dashboard (Next.js, /dashboard)", () => {
     });
   });
 
-  test("'Cartuchos conectados' renders a numeric value", async ({
+  test("'Fuentes de datos conectadas' renders a numeric value", async ({
     authedPage: page,
   }) => {
     await page.goto("/dashboard");
-    const value = kpiCard(page, "Cartuchos conectados")
+    const value = kpiCard(page, "Fuentes de datos conectadas")
       .getByTestId("kpi-card-value");
     await expect(value).toHaveAttribute("data-numeric-value", /^\d+$/, {
       timeout: 15_000,

@@ -172,7 +172,7 @@ def test_sync_start_step_updates_marks_connection_running():
 
     connection = next(step for step in steps if step["id"] == "connection")
     assert connection["status"] == "running"
-    assert connection["detail"] == "Validando scope y conexión del cartucho."
+    assert connection["detail"] == "Validando scope y conexión de la fuente de datos."
 
 
 def test_sync_dataset_seed_failure_step_updates_fail_downstream_steps():

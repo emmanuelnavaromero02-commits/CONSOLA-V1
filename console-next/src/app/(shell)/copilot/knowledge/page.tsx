@@ -416,7 +416,7 @@ export default function KnowledgePage() {
                     <option value="raw">raw</option>
                   </select>
                 </Field>
-                <Field label="Cartucho">
+                <Field label="Fuente de datos">
                   <select
                     value={reindexForm.cartridge}
                     onChange={(event) => setReindexForm((current) => ({ ...current, cartridge: event.target.value }))}

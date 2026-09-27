@@ -93,9 +93,9 @@ export function CartridgeBar({
     try {
       const { blob, filename } = await exportCartridge(activeId);
       saveBlob(blob, filename);
-      toast.success(`Cartucho ${activeId} exportado como ${filename}.`);
+      toast.success(`Fuente de datos ${activeId} exportada como ${filename}.`);
     } catch (err) {
-      toast.error(studioErrorMessage(err, "No se pudo exportar el cartucho."));
+      toast.error(studioErrorMessage(err, "No se pudo exportar la fuente de datos."));
     } finally {
       setExporting(false);
     }
@@ -105,7 +105,7 @@ export function CartridgeBar({
     if (!file) return;
     importZip.mutate(file, {
       onSuccess: (manifest) => {
-        toast.success(manifest?.id ? `Cartucho ${manifest.id} importado.` : "Cartucho importado.");
+        toast.success(manifest?.id ? `Fuente de datos ${manifest.id} importada.` : "Fuente de datos importada.");
         if (manifest?.id) onSelect(manifest.id);
       },
       onError: (err) => toast.error(studioErrorMessage(err, "No se pudo importar el ZIP.")),
@@ -120,20 +120,20 @@ export function CartridgeBar({
     }
     create.mutate(form, {
       onSuccess: (manifest) => {
-        toast.success(`Cartucho ${manifest?.id ?? form.id} creado.`);
+        toast.success(`Fuente de datos ${manifest?.id ?? form.id} creada.`);
         setCreating(false);
         setForm(EMPTY_FORM);
         onSelect(manifest?.id ?? form.id.trim());
       },
-      onError: (err) => toast.error(studioErrorMessage(err, "No se pudo crear el cartucho.")),
+      onError: (err) => toast.error(studioErrorMessage(err, "No se pudo crear la fuente de datos.")),
     });
   }
 
   return (
-    <section aria-label="Cartucho activo" className="min-w-0 flex-1">
+    <section aria-label="Fuente de datos activa" className="min-w-0 flex-1">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <label htmlFor="studio-cartridge" className="flex min-w-[220px] flex-1 flex-col gap-0.5 text-sm sm:max-w-xs">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Cartucho activo</span>
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fuente de datos activa</span>
           <span className="relative block">
             <Plug aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
             <select
@@ -145,7 +145,7 @@ export function CartridgeBar({
               onChange={(event) => onSelect(event.target.value)}
               className={cn(inputClass, "appearance-none truncate pl-9 pr-9 font-medium")}
             >
-              {!cartridges.length ? <option value="">{loading ? "Cargando cartuchos…" : "Sin cartuchos"}</option> : null}
+              {!cartridges.length ? <option value="">{loading ? "Cargando fuentes de datos…" : "Sin fuentes de datos"}</option> : null}
               {cartridges.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.name ? `${item.name} (${item.id})` : item.id}
@@ -171,7 +171,7 @@ export function CartridgeBar({
         </div>
         <div className="flex flex-wrap gap-2 self-end">
           <button type="button" className={buttonClass} onClick={() => setCreating(true)}>
-            <Plus aria-hidden className="h-4 w-4" /> Nuevo cartucho
+            <Plus aria-hidden className="h-4 w-4" /> Nueva fuente de datos
           </button>
           <button
             type="button"
@@ -194,7 +194,7 @@ export function CartridgeBar({
             type="file"
             accept=".zip,application/zip"
             className="sr-only"
-            aria-label={`Archivo ZIP del cartucho (máximo ${MAX_IMPORT_ZIP_BYTES / (1024 * 1024)} MB)`}
+            aria-label={`Archivo ZIP de la fuente de datos (máximo ${MAX_IMPORT_ZIP_BYTES / (1024 * 1024)} MB)`}
             onChange={(event) => {
               handleImport(event.target.files?.[0]);
               event.target.value = "";
@@ -206,7 +206,7 @@ export function CartridgeBar({
         <div className="mt-3">
           <Notice
             tone="error"
-            title="No se pudieron cargar los cartuchos."
+            title="No se pudieron cargar las fuentes de datos."
             action={
               <button type="button" className={buttonClass} onClick={onRetry}>
                 <RefreshCw aria-hidden className="h-4 w-4" /> Reintentar
@@ -220,9 +220,9 @@ export function CartridgeBar({
 
       <ConfirmDialog
         open={creating}
-        title="Nuevo cartucho"
-        description="Registra un cartucho vacío; después podrás agregar entidades, DAGs y datasets."
-        confirmLabel="Crear cartucho"
+        title="Nueva fuente de datos"
+        description="Registra una fuente de datos vacía; después podrás agregar entidades, automatizaciones y datasets."
+        confirmLabel="Crear fuente de datos"
         pendingLabel="Creando…"
         pending={create.isPending}
         confirmDisabled={Boolean(idError) || !form.id.trim() || !form.name.trim()}
@@ -239,7 +239,7 @@ export function CartridgeBar({
             value={form.id}
             onChange={(event) => setForm((current) => ({ ...current, id: event.target.value }))}
             className={inputClass}
-            placeholder="mi_cartucho"
+            placeholder="mi_fuente_de_datos"
             aria-invalid={Boolean(idError)}
             aria-describedby={idError ? "create-cartridge-id-error" : undefined}
           />

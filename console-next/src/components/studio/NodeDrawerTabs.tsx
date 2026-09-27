@@ -406,7 +406,7 @@ export function LineagePanel({
         ids={neighbours.incoming}
         byId={byId}
         manifest={manifest}
-        empty="Nada lo alimenta dentro de este cartucho."
+        empty="Nada lo alimenta dentro de esta fuente de datos."
         onSelect={onSelect}
       />
       <NeighbourList
@@ -415,7 +415,7 @@ export function LineagePanel({
         ids={neighbours.outgoing}
         byId={byId}
         manifest={manifest}
-        empty="Ningún nodo de este cartucho lo usa todavía."
+        empty="Ningún nodo de esta fuente de datos lo usa todavía."
         onSelect={onSelect}
       />
       <section className="space-y-2">

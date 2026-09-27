@@ -21,6 +21,7 @@ WORKSPACE_ASSISTANT = REPO / "workspace" / "app" / "services" / "consumer_assist
 AGENT_RUNTIME = REPO / "console" / "app" / "services" / "agent_runtime.py"
 DEPLOY = REPO / "infra" / "terraform" / "deploy"
 STUDIO_SECTIONS = REPO / "console-next" / "src" / "lib" / "studio" / "sections.ts"
+GLOSSARY = REPO / "console-next" / "src" / "lib" / "glossary.ts"
 CONNECTOR = CONFIG / "connector.yaml"
 STUDIO_TOOL_STEPS = {
     "query_dataset": {4, 5},
@@ -243,8 +244,13 @@ def _studio_module(monkeypatch):
 
 def _studio_tabs() -> dict[int, str]:
     source = STUDIO_SECTIONS.read_text(encoding="utf-8")
-    tabs = re.findall(r'id: "\w+",\s*label: "([^"]+)",\s*step: (\d+)', source)
-    return {int(step): label for label, step in tabs}
+    glossary = GLOSSARY.read_text(encoding="utf-8")
+    layer_block = glossary.split("LAYER_LABELS = {", 1)[1].split("}", 1)[0]
+    layers = dict(re.findall(r'(\w+): "([^"]+)"', layer_block))
+    tabs = re.findall(
+        r'id: "\w+",\s*label: (?:"([^"]+)"|LAYER_LABELS\.(\w+)),\s*step: (\d+)', source
+    )
+    return {int(step): label or layers[key] for label, key, step in tabs}
 
 
 def test_hints_route_studio_to_the_steps_that_expose_each_tool(monkeypatch):

@@ -452,7 +452,7 @@ export function CompaniesConsole() {
             <div className="space-y-1">
               <h2 className="text-base font-semibold">Selecciona una empresa</h2>
               <p className="max-w-3xl text-sm text-muted-foreground">
-                El panel operativo aparece aquí con workspaces, tenant admins, cartuchos instalados,
+                El panel operativo aparece aquí con workspaces, tenant admins, fuentes de datos instaladas,
                 peticiones pendientes y acciones contextuales de la empresa.
               </p>
             </div>
@@ -483,7 +483,7 @@ export function CompaniesConsole() {
                 <p className="text-xl font-semibold">{selectedTenant.user_count}</p>
               </div>
               <div>
-                <p className="text-xs uppercase text-muted-foreground">Cartuchos</p>
+                <p className="text-xs uppercase text-muted-foreground">Fuentes de datos</p>
                 <p className="text-xl font-semibold">{tenantInstallations.length}</p>
               </div>
             </div>
@@ -604,14 +604,14 @@ export function CompaniesConsole() {
                   Usa el panel izquierdo para crear workspaces o resetear el acceso temporal del tenant admin.
                 </p>
                 <p>
-                  Usa “Cartuchos y peticiones” para pausar, reactivar o revocar licencias del workspace seleccionado.
+                  Usa “Fuentes de datos y peticiones” para pausar, reactivar o revocar licencias del workspace seleccionado.
                 </p>
               </div>
             </section>
 
             <section className="rounded-lg border bg-card shadow-sm">
               <header className="border-b px-4 py-3">
-                <h2 className="text-base font-semibold">Cartuchos y peticiones</h2>
+                <h2 className="text-base font-semibold">Fuentes de datos y peticiones</h2>
                 <p className="text-xs text-muted-foreground">
                   {selectedWorkspace
                     ? `${selectedTenant.name} / ${selectedWorkspace.name}`
@@ -678,7 +678,7 @@ export function CompaniesConsole() {
                 </div>
               ) : (
                 <div className="p-4 text-sm text-muted-foreground">
-                  No hay cartuchos ni peticiones para este workspace.
+                  No hay fuentes de datos ni peticiones para este workspace.
                 </div>
               )}
             </section>
@@ -686,7 +686,7 @@ export function CompaniesConsole() {
             {blockedInstallations > 0 ? (
               <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
                 <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
-                <p>Hay cartuchos bloqueados o fallidos para esta empresa. Revisa credenciales, Vault y logs antes de reactivar.</p>
+                <p>Hay fuentes de datos bloqueadas o fallidas para esta empresa. Revisa credenciales, Vault y logs antes de reactivar.</p>
               </div>
             ) : null}
           </aside>

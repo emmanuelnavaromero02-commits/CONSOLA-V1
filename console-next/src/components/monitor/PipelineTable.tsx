@@ -238,7 +238,7 @@ export function PipelineTable({
   if (!rows.length) {
     return (
       <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
-        No hay entidades para este cartucho.
+        No hay entidades para esta fuente de datos.
       </p>
     );
   }

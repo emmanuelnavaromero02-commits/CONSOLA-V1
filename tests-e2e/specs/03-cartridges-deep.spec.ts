@@ -8,10 +8,10 @@ const cartridgeViewerLinks =
   'a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]';
 
 test.describe("Cartridges grid — coverage of all 5", () => {
-  test("renders the 'Cartuchos' h1", async ({ page }) => {
+  test("renders the data sources h1", async ({ page }) => {
     await page.goto("/cartridges");
     await expect(
-      page.getByRole("heading", { name: /cartuchos/i, level: 1 }),
+      page.getByRole("heading", { name: /fuentes de datos/i, level: 1 }),
     ).toBeVisible({ timeout: 10_000 });
   });
 

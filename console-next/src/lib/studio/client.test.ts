@@ -106,7 +106,7 @@ describe("error mapping", () => {
   });
 
   it("passes a safe 403 detail from the deploy gate through to the user", async () => {
-    stubFetch(jsonResponse({ detail: "Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local." }, 403));
+    stubFetch(jsonResponse({ detail: "Publicar automatización requiere ALLOW_RCE_TOOLS=true en el entorno local." }, 403));
     const error = await deployDag({ cartridge: "acme", entity: "Invoice", dag_id: "acme_x", code: "x" }).catch(
       (err: unknown) => err,
     );

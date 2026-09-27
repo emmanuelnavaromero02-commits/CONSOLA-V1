@@ -161,7 +161,7 @@ export function ExtractionTracker({ cartridge, launch }: { cartridge: string; la
     <div data-testid="extraction-tracker" className="rounded-md border bg-muted/20 p-3">
       <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
         Extracción de {launch.entity}
-        {launch.dagId ? ` · DAG ${launch.dagId}` : ""}
+        {launch.dagId ? ` · automatización ${launch.dagId}` : ""}
       </p>
       {launch.runId ? (
         <DagRunTracker cartridge={cartridge} launch={launch} />

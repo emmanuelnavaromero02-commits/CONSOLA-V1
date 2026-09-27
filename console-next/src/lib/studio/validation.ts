@@ -44,16 +44,16 @@ export interface DeployGate {
 }
 
 export function deployGate(info: SystemInfo | null | undefined, failed: boolean): DeployGate {
-  if (failed) return { enabled: false, reason: "No se pudo leer /api/system/info; deploy y borrado deshabilitados." };
-  if (!info) return { enabled: false, reason: "Verificando si el entorno permite desplegar DAGs…" };
+  if (failed) return { enabled: false, reason: "No se pudo leer /api/system/info; publicación y borrado deshabilitados." };
+  if (!info) return { enabled: false, reason: "Verificando si el entorno permite publicar automatizaciones…" };
   if (info.dag_deploy_enabled) return { enabled: true, reason: null };
   if (!info.dev_mode) {
     return {
       enabled: false,
-      reason: "Deploy deshabilitado: solo se permite en entornos de desarrollo; en producción los DAGs llegan por CI/CD.",
+      reason: "Publicación deshabilitada: solo se permite en entornos de desarrollo; en producción las automatizaciones llegan por CI/CD.",
     };
   }
-  return { enabled: false, reason: "Deploy deshabilitado: falta ALLOW_RCE_TOOLS=true en el entorno local." };
+  return { enabled: false, reason: "Publicación deshabilitada: falta ALLOW_RCE_TOOLS=true en el entorno local." };
 }
 
 export interface EntityDraft {
@@ -62,6 +62,7 @@ export interface EntityDraft {
   primary_key: string;
   dag_id: string;
   cron_expression: string;
+  cron_timezone: string;
   description: string;
 }
 
@@ -76,6 +77,9 @@ export function changedEntityFields(before: EntityDraft, after: EntityDraft): En
     const cron = after.cron_expression.trim();
     patch.cron_expression = cron || null;
     patch.trigger_type = cron ? "scheduled" : "manual";
+  }
+  if (after.cron_expression.trim() && after.cron_timezone !== before.cron_timezone) {
+    patch.cron_timezone = after.cron_timezone;
   }
   return patch;
 }

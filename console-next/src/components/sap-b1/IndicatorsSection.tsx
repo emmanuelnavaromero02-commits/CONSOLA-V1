@@ -97,7 +97,7 @@ export function IndicatorsSection() {
     >
       {catalog.isPending ? <LoadingBlock label="Leyendo el catálogo de indicadores…" /> : null}
       {catalog.isError ? <QueryError error={catalog.error} onRetry={() => void catalog.refetch()} /> : null}
-      {catalog.data && !indicators.length ? <Notice tone="empty" title="El cartucho no publica indicadores" /> : null}
+      {catalog.data && !indicators.length ? <Notice tone="empty" title="La fuente de datos no publica indicadores" /> : null}
       {indicators.length ? (
         <div className="space-y-6">
           {CASES.map((item) => {

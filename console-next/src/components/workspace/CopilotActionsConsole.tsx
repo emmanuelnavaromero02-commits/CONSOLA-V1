@@ -73,7 +73,7 @@ function shortDate(value?: string | null) {
 }
 
 function compactListLabel(items: string[] | undefined) {
-  if (!items || items.length === 0) return "sin cartuchos explícitos";
+  if (!items || items.length === 0) return "sin fuentes de datos explícitas";
   return items.slice(0, 3).join(", ");
 }
 

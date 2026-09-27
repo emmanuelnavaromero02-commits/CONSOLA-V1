@@ -208,12 +208,12 @@ export function MeAccessPanel() {
         </article>
 
         <article className="space-y-3 rounded-lg border bg-card p-5">
-          <h2 className="text-base font-semibold">Cartuchos</h2>
+          <h2 className="text-base font-semibold">Fuentes de datos</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Permitidos</p>
               {allowed.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Sin cartuchos visibles.</p>
+                <p className="text-sm text-muted-foreground">Sin fuentes de datos visibles.</p>
               ) : (
                 <ul className="space-y-2">
                   {allowed.map((item) => (

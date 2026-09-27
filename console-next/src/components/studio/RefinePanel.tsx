@@ -195,7 +195,7 @@ export function RefinePanel({
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-      <section aria-label="Datasets del cartucho" className="space-y-2">
+      <section aria-label="Datasets de la fuente de datos" className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold">Datasets</h3>
           <button type="button" className={buttonClass} onClick={() => select(NEW_DATASET)}>
