@@ -129,7 +129,9 @@ def test_http_keeps_public_contract_and_emits_operational_signal(
         patch.object(
             surfaces,
             "load_enabled_action_template_ids",
-            new=AsyncMock(return_value=frozenset({"create_followup_task"})),
+            new=AsyncMock(
+                return_value=frozenset({"approve_exception", "create_followup_task"})
+            ),
         ),
         patch.object(producer.auth, "pool", new=AsyncMock(return_value=object())),
         patch.object(

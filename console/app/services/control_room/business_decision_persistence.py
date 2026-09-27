@@ -68,6 +68,7 @@ async def create_and_link_decision(
     workspace_id: str,
     ensure_item_row: ItemWriter,
     record_item_event: ItemWriter,
+    system_maker: str | None = None,
 ) -> Any:
     owner_user_id = expected_item_owner(item, user)
     existing_state = await conn.fetchrow(
@@ -168,13 +169,15 @@ async def create_and_link_decision(
     title, description, kpis = _decision_fields(item)
     row = await conn.fetchrow(
         """INSERT INTO decisions
-              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
-           VALUES ($1, $2, CURRENT_DATE + 7, $3::jsonb, $4, NULL, 'shared', $5)
+              (title, description, commitment_date, kpis, created_by_id, created_by,
+               assignee_id, visibility, workspace_id)
+           VALUES ($1, $2, CURRENT_DATE + 7, $3::jsonb, $4, $5, NULL, 'shared', $6)
            RETURNING *""",
         title,
         description,
         json.dumps(kpis),
-        user["id"],
+        None if system_maker else user["id"],
+        system_maker,
         workspace_id,
     )
     await conn.fetchrow(
@@ -184,7 +187,7 @@ async def create_and_link_decision(
         row["id"],
         "Decision creada desde Sala de Control",
         item["recommendation"],
-        user.get("email") or "user",
+        system_maker or user.get("email") or "user",
     )
     await link_control_room_decision(
         conn,
@@ -199,7 +202,11 @@ async def create_and_link_decision(
         user=dict(user),
         item=dict(item),
         event_type="decision_created",
-        metadata={"decision_id": row["id"]},
+        metadata=(
+            {"decision_id": row["id"], "maker": system_maker}
+            if system_maker
+            else {"decision_id": row["id"]}
+        ),
     )
     return row
 

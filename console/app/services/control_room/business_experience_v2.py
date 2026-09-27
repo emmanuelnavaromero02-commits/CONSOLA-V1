@@ -48,6 +48,7 @@ from app.services.control_room.surface_snapshot import (
 
 
 _CLOSED_STATUSES = frozenset({"dismissed", "resolved"})
+_COUNCIL_OR_RECORD_KINDS = frozenset({"exception_reopen", "followup_task"})
 _OLDEST = datetime.min.replace(tzinfo=UTC)
 
 
@@ -135,7 +136,7 @@ def build_business_experience_v2(
             [
                 action
                 for action in actions_by_item.get(item_id, ())
-                if action.kind != "exception_reopen"
+                if action.kind not in _COUNCIL_OR_RECORD_KINDS
             ]
             if actions_by_item is not None
             else resolve_business_experience_actions(

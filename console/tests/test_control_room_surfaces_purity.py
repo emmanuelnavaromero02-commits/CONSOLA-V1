@@ -19,6 +19,7 @@ SURFACE_PATHS = (
     "/api/control-room/experience/v2",
     "/api/control-room/experience/v2/freshness",
     "/api/control-room/diagnostics",
+    "/api/control-room/council",
 )
 
 

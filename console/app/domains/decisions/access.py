@@ -5,6 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from fastapi import HTTPException, Request
+
+from app.services.permissions import has_permission
+
+DECISIONS_PLATFORM_ROLES = frozenset({"admin", "owner", "super_admin"})
+DECISIONS_PERMISSIONS = ("control_room.approve", "control_room.write")
+
 
 def current_workspace_id(user: Mapping[str, Any]) -> str | None:
     return user.get("active_workspace_id") or user.get("workspace_id")
@@ -98,3 +105,20 @@ def can_delete_decision(
     if is_workspace_admin:
         return True
     return row.get("created_by_id") == user["id"]
+
+
+def can_view_decisions(user: Mapping[str, Any] | None) -> bool:
+    if not user:
+        return False
+    if str(user.get("role") or "") in DECISIONS_PLATFORM_ROLES:
+        return True
+    return any(has_permission(dict(user), key) for key in DECISIONS_PERMISSIONS)
+
+
+def require_decisions_page(request: Request) -> dict:
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(401, "authentication required")
+    if not can_view_decisions(user):
+        raise HTTPException(403, "decisions access required")
+    return user

@@ -10,6 +10,9 @@ from app.schemas.control_room_surfaces import (
 from app.schemas.control_room_experience_actions import (
     ControlRoomExperienceV2Response,
 )
+from app.services.control_room.business_action_authority_policy import (
+    EXECUTABLE_TEMPLATE_ID,
+)
 from app.services.control_room.business_action_catalog import (
     load_enabled_action_template_ids,
 )
@@ -65,7 +68,7 @@ async def control_room_experience_v2(
     actions_by_item = await issue_action_bindings(
         user,
         snapshot,
-        enabled_template_ids=enabled_template_ids,
+        enabled_template_ids=frozenset(enabled_template_ids) - {EXECUTABLE_TEMPLATE_ID},
     )
     approved_exceptions = await load_approved_exceptions(user)
     reopen_actions = await issue_reopen_bindings(

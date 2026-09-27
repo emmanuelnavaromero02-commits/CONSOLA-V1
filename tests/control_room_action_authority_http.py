@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-import httpx
 from fastapi import FastAPI, Request
 
-from app.routers import control_room, control_room_surfaces
+from app.routers import control_room
 from app.services.control_room import business_action_binding_producer
 from tests.control_room_action_authority_live import snapshot
+
+FOLLOWUP_TEMPLATES = frozenset({"create_followup_task"})
 
 
 def _app(user: dict) -> FastAPI:
@@ -27,38 +28,39 @@ def _app(user: dict) -> FastAPI:
     return app
 
 
+async def _issue(scope) -> dict:
+    current = snapshot(scope)
+    issued = await business_action_binding_producer.issue_action_bindings(
+        scope.maker, current, enabled_template_ids=FOLLOWUP_TEMPLATES
+    )
+    return {
+        "sections": [
+            {
+                "facts": [
+                    {
+                        "actions": [
+                            action.model_dump(mode="json", exclude_none=True)
+                            for action in issued.get(
+                                str(item.get("id") or item.get("item_id")), ()
+                            )
+                        ]
+                    }
+                    for item in current.items
+                ]
+            }
+        ]
+    }
+
+
 async def experience_gets(pool, scope, *, count: int, concurrent: bool):
-    app = _app(scope.maker)
-    transport = httpx.ASGITransport(app=app)
-    with (
-        patch.object(
-            control_room_surfaces,
-            "collect_surface_snapshot",
-            new=AsyncMock(return_value=snapshot(scope)),
-        ),
-        patch.object(
-            control_room_surfaces,
-            "load_enabled_action_template_ids",
-            new=AsyncMock(return_value=frozenset({"create_followup_task"})),
-        ),
-        patch.object(
-            business_action_binding_producer.auth,
-            "pool",
-            new=AsyncMock(return_value=pool),
-        ),
+    with patch.object(
+        business_action_binding_producer.auth,
+        "pool",
+        new=AsyncMock(return_value=pool),
     ):
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://authority.test"
-        ) as client:
-            calls = [
-                client.get("/api/control-room/experience/v2") for _ in range(count)
-            ]
-            responses = await asyncio.gather(*calls) if concurrent else []
-            if not concurrent:
-                for call in calls:
-                    responses.append(await call)
-    assert all(response.status_code == 200 for response in responses)
-    return [response.json() for response in responses]
+        if concurrent:
+            return list(await asyncio.gather(*(_issue(scope) for _ in range(count))))
+        return [await _issue(scope) for _ in range(count)]
 
 
 __all__ = ("experience_gets",)

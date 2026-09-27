@@ -154,6 +154,7 @@ from app.domains.copilot.assistant_chat import (
     assistant_chat_payload as _assistant_chat_payload_impl,
 )
 from app.domains.decisions.access import (
+    require_decisions_page as _require_decisions_page,
     can_delete_decision as _dec_can_delete_impl,
     can_edit_decision as _dec_can_edit_impl,
     current_workspace_id as _current_workspace_id_impl,
@@ -6777,7 +6778,10 @@ def _dec_row_to_dict(row) -> dict:
     return _dec_row_to_dict_impl(row)
 
 
-@app.get("/decisions", dependencies=[Depends(require_admin)])
+@app.get(
+    "/decisions",
+    dependencies=[Depends(require_authenticated), Depends(_require_decisions_page)],
+)
 async def viewer_decisions(request: Request):
     from app.routers.pages import _console_next_response
 

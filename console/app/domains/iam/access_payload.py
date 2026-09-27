@@ -79,7 +79,11 @@ def access_ui_capabilities(
         "can_view_cartridges": _can("cartridges.read"),
         "can_view_settings": _can("settings.read") and is_platform_admin,
         "can_view_security": _can("security.audit.read") and is_platform_admin,
-        "can_view_decisions": is_platform_admin,
+        "can_view_decisions": (
+            is_platform_admin
+            or _can("control_room.approve")
+            or _can("control_room.write")
+        ),
     }
 
 
