@@ -75,6 +75,7 @@ APP_BASE_URL=${public_console_url}
 AIRFLOW_PUBLIC_URL=http://localhost:8082/airflow
 SUPERSET_PUBLIC_URL=http://$APP_PRIVATE_IP:8088
 ALLOWED_ORIGINS=${public_console_url},${public_workspace_url}
+TRUSTED_PROXY_IPS=${trusted_proxy_ips}
 EMAIL_PROVIDER=${email_provider}
 SMTP_HOST=${smtp_host}
 SMTP_PORT=${smtp_port}

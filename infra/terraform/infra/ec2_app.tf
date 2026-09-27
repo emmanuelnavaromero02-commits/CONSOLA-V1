@@ -40,6 +40,7 @@ resource "aws_instance" "app" {
     smtp_from_domain             = var.smtp_from_domain
     smtp_use_tls                 = var.smtp_use_tls ? "true" : "false"
     secret_arns                  = { for key, secret in aws_secretsmanager_secret.app : key => secret.arn }
+    trusted_proxy_ips            = join(",", [aws_subnet.public.cidr_block, aws_subnet.public_secondary.cidr_block])
   })
 
   depends_on = [

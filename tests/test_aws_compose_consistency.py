@@ -482,3 +482,16 @@ def test_aws_compose_does_not_default_public_urls_to_localhost():
         "should come from CONSOLE_URL / WORKSPACE_PUBLIC_URL / *_PUBLIC_URL, "
         "and internal calls should use compose service DNS."
     )
+
+
+def test_console_receives_trusted_proxies_only_in_the_aws_stack():
+    import yaml
+
+    aws_console = yaml.safe_load(AWS.read_text(encoding="utf-8"))["services"]["console"]
+    assert aws_console["environment"]["TRUSTED_PROXY_IPS"] == "${TRUSTED_PROXY_IPS:-}"
+    local_console = yaml.safe_load(LOCAL.read_text(encoding="utf-8"))["services"]["console"]
+    assert "TRUSTED_PROXY_IPS" not in (local_console.get("environment") or {})
+    env_example = (REPO / "infra/.env.example").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^TRUSTED_PROXY_IPS=$", env_example)
+    aws_example = (REPO / "infra/terraform/deploy/.env.example").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^TRUSTED_PROXY_IPS=10\.0\.1\.0/24,10\.0\.4\.0/24$", aws_example)
