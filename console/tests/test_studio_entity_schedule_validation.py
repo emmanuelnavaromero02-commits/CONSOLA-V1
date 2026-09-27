@@ -81,6 +81,54 @@ def test_scheduled_trigger_with_empty_cron_is_rejected():
     assert exc.value.detail == "Una frecuencia programada necesita una programación."
 
 
+@pytest.mark.parametrize("cron", ["", "   "])
+def test_bare_empty_cron_without_trigger_is_rejected(cron):
+    with pytest.raises(HTTPException) as exc:
+        validate_entity_schedule_patch({"cron_expression": cron})
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Una frecuencia programada necesita una programación."
+
+
+def test_null_cron_alone_is_a_valid_clear():
+    validate_entity_schedule_patch({"cron_expression": None})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"cron_expression": "", "trigger_type": "manual"},
+        {"cron_expression": None, "trigger_type": "manual"},
+        {"cron_expression": None},
+    ],
+)
+async def test_cleared_cron_is_stored_as_null_never_empty_string(body):
+    service = FakeCartridgeService()
+    result = await update_studio_entity_payload(
+        cartridge_id="sap_successfactors",
+        entity="User",
+        body=body,
+        cartridge_service=service,
+    )
+    assert result["cron_expression"] is None
+    stored = service.upserted[0][2]
+    assert stored["cron_expression"] is None
+
+
+@pytest.mark.asyncio
+async def test_bare_empty_cron_patch_is_rejected_before_writing():
+    service = FakeCartridgeService()
+    with pytest.raises(HTTPException) as exc:
+        await update_studio_entity_payload(
+            cartridge_id="sap_successfactors",
+            entity="User",
+            body={"cron_expression": ""},
+            cartridge_service=service,
+        )
+    assert exc.value.status_code == 400
+    assert service.upserted == []
+
+
 @pytest.mark.asyncio
 async def test_update_persists_a_valid_schedule_with_its_timezone():
     service = FakeCartridgeService()

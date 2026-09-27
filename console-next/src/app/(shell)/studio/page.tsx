@@ -223,7 +223,7 @@ export default function StudioPage() {
               cartridges.isLoading ? (
                 <p className="text-sm text-muted-foreground">Cargando fuentes de datos…</p>
               ) : (
-                <Notice>No hay fuentes de datos visibles para tu usuario. Crea o importa uno para empezar.</Notice>
+                <Notice>No hay fuentes de datos visibles para tu usuario. Crea o importa una para empezar.</Notice>
               )
             ) : (
               <>

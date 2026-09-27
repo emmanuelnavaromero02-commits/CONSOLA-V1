@@ -160,7 +160,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     await expect(dialog).toBeVisible();
     expect(posted).toBeNull();
     const response = page.waitForResponse((res) => new URL(res.url()).pathname === "/api/studio/dag-deploy");
-    await dialog.getByRole("button", { name: "Desplegar" }).click();
+    await dialog.getByRole("button", { name: "Publicar" }).click();
     await response;
     expect(posted).toMatchObject({
       cartridge: "acme",
@@ -181,7 +181,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
     await page.getByRole("button", { name: /Publicar automatización/ }).click();
-    await page.getByTestId("deploy-dialog").getByRole("button", { name: "Desplegar" }).click();
+    await page.getByTestId("deploy-dialog").getByRole("button", { name: "Publicar" }).click();
     await expect(page.getByText("Publicar automatización requiere ALLOW_RCE_TOOLS=true en el entorno local.")).toBeVisible();
   });
 

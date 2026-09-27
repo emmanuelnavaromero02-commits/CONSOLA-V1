@@ -92,12 +92,11 @@ def validate_entity_schedule_patch(patch: dict[str, Any]) -> None:
         shape_ok = len(fields) == 5 or (len(fields) == 1 and cron.startswith("@"))
         if not shape_ok or not croniter.is_valid(cron):
             raise HTTPException(400, _INVALID_CRON)
-    if (
-        patch.get("trigger_type") == "scheduled"
-        and "cron_expression" in patch
-        and not cron
-    ):
-        raise HTTPException(400, _MISSING_CRON)
+    if "cron_expression" in patch and not cron:
+        if patch.get("trigger_type") == "scheduled" or (
+            patch["cron_expression"] is not None and "trigger_type" not in patch
+        ):
+            raise HTTPException(400, _MISSING_CRON)
 
 
 def manifest_entity_names(manifest: dict[str, Any] | None) -> list[str]:
@@ -147,6 +146,8 @@ async def update_studio_entity_payload(
     if not updates:
         raise HTTPException(400, "No valid fields to update")
     validate_entity_schedule_patch(updates)
+    if "cron_expression" in updates and not str(updates["cron_expression"] or "").strip():
+        updates["cron_expression"] = None
 
     await cartridge_service.upsert_entity(cartridge_id, entity, **updates)
     return {"updated": True, "entity": entity, **updates}
