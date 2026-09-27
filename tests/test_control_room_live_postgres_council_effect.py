@@ -456,6 +456,68 @@ async def test_system_suggestion_is_made_by_the_system_and_checked_by_a_person(
 
 
 @pytest.mark.asyncio
+async def test_platform_admin_outside_the_tenant_approves_without_becoming_assignee(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    scope = seed.first
+    suffix = uuid.uuid4().hex[:8]
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        platform_id = int(
+            await conn.fetchval(
+                """INSERT INTO users(email, password_hash, role, tenant_id, is_active)
+                   VALUES ($1, 'x', 'super_admin', NULL, TRUE) RETURNING id""",
+                f"platform-{suffix}@example.test",
+            )
+        )
+        await conn.execute(
+            """INSERT INTO user_workspace_roles(user_id, workspace_id, role_id)
+               SELECT $1, $2::uuid, id FROM roles WHERE name = 'workspace_admin'""",
+            platform_id,
+            scope.workspace_id,
+        )
+    finally:
+        await conn.close()
+    platform_admin = {
+        "id": platform_id,
+        "email": f"platform-{suffix}@example.test",
+        "role": "super_admin",
+        "workspace_role": "workspace_admin",
+        "active_tenant_id": scope.tenant_id,
+        "active_workspace_id": scope.workspace_id,
+        "allowed_cartridges": ["sap_hcm"],
+    }
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        live = await _open_item(seed, scope, pool, "platform-checker")
+        with _patched(pool, _snapshot(scope, live)):
+            suggestion = await _proposal(platform_admin, origin="system")
+            assert suggestion.can_approve is True
+            approved = await business_council_commands.approve_council_proposal(
+                platform_admin, suggestion.proposal_id, idempotency_key="platform-1"
+            )
+        assert approved.status == "approved_with_followup"
+        decision = (
+            await _fetch(
+                seed,
+                "SELECT created_by, assignee_id, status FROM decisions WHERE id = $1",
+                approved.decision_id,
+            )
+        )[0]
+        assert decision == {
+            "created_by": SYSTEM_MAKER,
+            "assignee_id": None,
+            "status": "open",
+        }
+        row = await _item_row(seed, scope, str(live["id"]))
+        assert row["status"] == "approved"
+        assert row["execution_status"] == "executed"
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
 async def test_discard_needs_a_reason_and_closes_the_decision(
     council_seed: AuthoritySeed,
 ):

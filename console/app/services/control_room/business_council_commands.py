@@ -107,6 +107,16 @@ ASSIGN_CHECKER_SQL = """
 UPDATE decisions
    SET assignee_id = $3
  WHERE id = $1 AND workspace_id = $2 AND assignee_id IS NULL
+   AND EXISTS (
+       SELECT 1
+         FROM users u
+         JOIN user_workspace_roles uwr ON uwr.user_id = u.id
+         JOIN workspaces w ON w.id = $2
+        WHERE u.id = $3
+          AND u.tenant_id = w.tenant_id
+          AND u.is_active = TRUE
+          AND uwr.workspace_id = $2
+   )
 """
 INSERT_DECISION_ACTION_SQL = """
 INSERT INTO decision_actions (decision_id, action_text, note, actor)
@@ -475,10 +485,7 @@ async def _approve_system(
     decision_id = int(decision["id"]) if decision and decision.get("id") else 0
     if decision_id <= 0:
         raise proposal_changed()
-    assigned = await conn.execute(
-        ASSIGN_CHECKER_SQL, decision_id, workspace_id, checker_id
-    )
-    require_exact_count(assigned, "UPDATE")
+    await conn.execute(ASSIGN_CHECKER_SQL, decision_id, workspace_id, checker_id)
     linked = await fetch_authoritative_row_for_update(
         conn,
         tenant_id=tenant_id,
