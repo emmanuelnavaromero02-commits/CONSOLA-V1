@@ -3187,7 +3187,7 @@
     },
     {
       "path": "console/tests/test_pipeline_trigger_preflight.py",
-      "sha256": "3d31a4b052af78be2eeeb68c70eecbdbfa855cbdba585387d097e2d39391f0a6"
+      "sha256": "497a23168d7f9e1a3058d891297ab6bb934db9a5fb4f910b767b6254be788ea8"
     },
     {
       "path": "console/tests/test_platform_admin_db_scope.py",
@@ -5151,7 +5151,7 @@
     },
     {
       "path": "tests/test_mcp_airflow_recovery_tools.py",
-      "sha256": "f6eb59451a20e5fc9f39c6d54f4144e5be1bc084e8b1b8b2bd974a486e3cf25d"
+      "sha256": "3dd2d40a8c58d41842cab1f9e3b117b98dddf3e37f181f38a0325275c54a9f1a"
     },
     {
       "path": "tests/test_mcp_airflow_tool_classification.py",
