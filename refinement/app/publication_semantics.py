@@ -8,6 +8,9 @@ from typing import Any
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
+_CARDINALITIES = frozenset({"1:1", "1:N", "N:1", "N:N"})
+# Tags the template enrichment writes; a tag set carrying them is inference.
+_INFERRED_TAG_MARKERS = frozenset({"auto_described", "semantic_enrichment"})
 
 
 def _text(value: object) -> str:
@@ -31,13 +34,12 @@ def _examples(value: object) -> list[object]:
 
 
 def _column(row: dict[str, Any]) -> dict[str, Any]:
+    tags = [str(tag) for tag in list(row.get("tags") or [])[:16]]
+    if _INFERRED_TAG_MARKERS & set(tags):
+        tags = []
     return {
         "description": _text(row.get("description")),
-        "tags": [
-            str(tag)
-            for tag in list(row.get("tags") or [])[:16]
-            if _TAG.fullmatch(str(tag))
-        ],
+        "tags": [tag for tag in tags if _TAG.fullmatch(tag)],
         "is_key": bool(row.get("is_key")),
         "is_metric": bool(row.get("is_metric")),
         "example_values": _examples(row.get("example_values")),
@@ -60,6 +62,9 @@ def _relationship(row: dict[str, Any], dataset: str) -> dict[str, str] | None:
         return None
     if values["join_hint"] not in {"", "INNER", "LEFT", "RIGHT", "FULL"}:
         values["join_hint"] = ""
+    cardinality = str(row.get("cardinality") or "")
+    if cardinality in _CARDINALITIES:
+        values["cardinality"] = cardinality
     return values
 
 
@@ -86,9 +91,13 @@ def snapshot_public_semantics(
                     "set_config('app.workspace_id',%s,true)",
                     (tenant_id, workspace_id),
                 )
+                # Only authored semantics enter attested evidence: Copilot
+                # descriptions, classifications and edges stay live-only.
                 cur.execute(
-                    """SELECT column_name,description,example_values,tags,
-                              is_key,is_metric
+                    """SELECT column_name,
+                              CASE WHEN description_origin='copilot' THEN ''
+                                   ELSE description END AS description,
+                              example_values,tags,is_key,is_metric
                          FROM data_catalog
                         WHERE tenant_id=%s::uuid AND workspace_id=%s::uuid
                           AND dataset=%s AND scope_status='scoped'""",
@@ -101,10 +110,12 @@ def snapshot_public_semantics(
                     for _row in cur.fetchall()
                 }
                 cur.execute(
-                    """SELECT from_column,to_dataset,to_column,join_hint,description
+                    """SELECT from_column,to_dataset,to_column,join_hint,
+                              description,cardinality
                          FROM data_relationships
                         WHERE tenant_id=%s::uuid AND workspace_id=%s::uuid
-                          AND from_dataset=%s AND scope_status='scoped'""",
+                          AND from_dataset=%s AND scope_status='scoped'
+                          AND origin<>'copilot' AND status='active'""",
                     (tenant_id, workspace_id, name),
                 )
                 relationships = [

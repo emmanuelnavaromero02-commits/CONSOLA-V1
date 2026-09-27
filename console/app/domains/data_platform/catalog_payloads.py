@@ -10,8 +10,11 @@ def catalog_query_args(
     cartridge: str = "",
     tags: str = "",
     datasets: str = "",
+    include_sources: bool = False,
 ) -> dict[str, Any]:
     args: dict[str, Any] = {}
+    if include_sources:
+        args["include_sources"] = True
     if layer:
         args["layer"] = layer
     if cartridge:

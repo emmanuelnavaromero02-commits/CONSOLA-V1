@@ -47,9 +47,11 @@ async def semantic_enrich_payload(
             candidate_payload=candidate_payload,
         )
 
+    # Template text is inference: written with the Copilot origin it never
+    # replaces an authored description and stays out of attested evidence.
     result = await refinement_invoke(
         "upsert_catalog_entries",
-        {"entries": entries},
+        {"entries": entries, "origin": "copilot"},
         timeout=45,
         user=user,
     )

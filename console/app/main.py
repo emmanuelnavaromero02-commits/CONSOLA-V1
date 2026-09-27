@@ -202,6 +202,9 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
     catalog_query_args as _catalog_query_args,
 )
+from app.domains.data_platform.catalog_copilot_requests import (
+    catalog_annotation_epoch as _catalog_annotation_epoch,
+)
 from app.domains.data_platform.catalog_requests import (
     catalog_get_payload as _catalog_get_payload_impl,
     catalog_relationship_payload as _catalog_relationship_payload_impl,
@@ -6539,6 +6542,7 @@ async def api_catalog_get(
     cartridge: str = "",
     tags: str = "",
     datasets: str = "",
+    include_sources: bool = False,
     user: dict = Depends(require_permission("datasets.read")),
 ):
     return await _catalog_get_payload_impl(
@@ -6546,6 +6550,8 @@ async def api_catalog_get(
         cartridge=cartridge,
         tags=tags,
         datasets=datasets,
+        include_sources=include_sources,
+        annotation_epoch=await _catalog_annotation_epoch(user),
         user=user,
         scope_catalog_cartridge_arg=_scope_catalog_cartridge_arg,
         user_allowed_cartridges=_user_allowed_cartridges,
@@ -7749,6 +7755,7 @@ from app.routers import studio as studio_router
 from app.routers import sap_b1 as sap_b1_router
 from app.routers import pipeline_operations as pipeline_operations_router
 from app.routers import pipeline_automations as pipeline_automations_router
+from app.routers import catalog_copilot as catalog_copilot_router
 from app.routers import (
     control_room,
     mcp,
@@ -7793,6 +7800,7 @@ app.include_router(studio_router.router)
 app.include_router(sap_b1_router.router)
 app.include_router(pipeline_operations_router.router)
 app.include_router(pipeline_automations_router.router)
+app.include_router(catalog_copilot_router.router)
 
 
 app.add_middleware(RequestIDMiddleware)

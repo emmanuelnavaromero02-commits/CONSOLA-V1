@@ -18,18 +18,29 @@ async def catalog_get_payload(
     refinement_invoke: Callable[..., Any],
     raise_for_refinement_payload_error: Callable[[Any, str], None],
     scoped_read_cache_get_or_set: Callable[..., Any],
+    include_sources: bool = False,
+    annotation_epoch: str | None = None,
 ) -> dict[str, Any]:
     scoped_cartridge = await scope_catalog_cartridge_arg(user, cartridge)
     if not scoped_cartridge and user_allowed_cartridges(user) is not None:
         return empty_catalog_payload()
 
-    args = catalog_query_args(
-        layer=layer,
-        cartridge=scoped_cartridge,
-        tags=tags,
-        datasets=datasets,
+    query = {
+        "layer": layer,
+        "cartridge": scoped_cartridge,
+        "tags": tags,
+        "datasets": datasets,
+    }
+    if include_sources:
+        query["include_sources"] = True
+    args = catalog_query_args(**query)
+    # The Copilot annotation epoch joins the key so a new profile is served at
+    # once instead of waiting for the scoped cache to expire.
+    cache_args = (
+        (catalog_cache_key(args),)
+        if annotation_epoch is None
+        else (catalog_cache_key(args), annotation_epoch)
     )
-    cache_args = catalog_cache_key(args)
 
     async def load_catalog() -> Any:
         result = await refinement_invoke("get_data_catalog", args, user=user)
@@ -37,7 +48,7 @@ async def catalog_get_payload(
         return result
 
     return await scoped_read_cache_get_or_set(
-        "catalog", user, (cache_args,), load_catalog
+        "catalog", user, cache_args, load_catalog
     )
 
 
