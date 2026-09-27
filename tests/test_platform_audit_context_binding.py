@@ -338,3 +338,102 @@ def test_live_mcp_infra_and_refinement_unscoped_admin_paths_still_read_legacy_ro
     assert columns(lambda cur: store._apply_scope(cur, None, None, platform_admin=True)) == {"legacy_col"}
     assert columns(lambda cur: store._apply_scope(cur, None, None, platform_admin=False)) == set()
     assert columns(lambda cur: store._apply_scope(cur, tenant, workspace)) == {"scoped_col"}
+
+
+def _seed_run_logs(dsn: str, suffix: str, run_id: str) -> tuple[str, str]:
+    async def seed() -> tuple[str, str]:
+        admin = await asyncpg.connect(dsn)
+        try:
+            scopes = []
+            for name in (f"logs-{suffix}", f"logs-other-{suffix}"):
+                tenant = await admin.fetchval(
+                    "INSERT INTO tenants (name, slug) VALUES ($1, $1) RETURNING id::text", name
+                )
+                workspace = await admin.fetchval(
+                    "INSERT INTO workspaces (tenant_id, name) VALUES ($1::uuid, $2) RETURNING id::text", tenant, name
+                )
+                scopes.append((tenant, workspace))
+            (tenant, workspace), (other_tenant, other_workspace) = scopes
+            await admin.execute(
+                """INSERT INTO pipeline_runs (run_id, dag_id, cartridge_id, entity, status, tenant_id, workspace_id)
+                   VALUES ($1, 'sap_b1_extract', 'sap_b1', 'OINV', 'success', $2::uuid, $3::uuid)""",
+                run_id,
+                tenant,
+                workspace,
+            )
+            await admin.execute(
+                """INSERT INTO run_logs (run_id, cartridge, entity, message, scope_status, tenant_id, workspace_id)
+                   VALUES ($1, 'sap_b1', 'OINV', 'legacy', 'legacy_unscoped', NULL, NULL),
+                          ($1, 'sap_b1', 'OINV', 'scoped', 'scoped', $2::uuid, $3::uuid),
+                          ($1, 'sap_b1', 'OINV', 'other', 'scoped', $4::uuid, $5::uuid)""",
+                run_id,
+                tenant,
+                workspace,
+                other_tenant,
+                other_workspace,
+            )
+        finally:
+            await admin.close()
+        return tenant, workspace
+
+    return asyncio.run(seed())
+
+
+def test_live_mcp_infra_run_logs_follow_the_gateway_scope(postgres_with_real_init_schema, monkeypatch):
+    import importlib
+    from urllib.parse import urlsplit
+
+    from fastapi import HTTPException
+
+    from tests.test_mcp_domain_kpi_tools import SIGNING_KEY, _signed
+
+    suffix = uuid.uuid4().hex[:10]
+    run_id = f"logs-{suffix}"
+    tenant, workspace = _seed_run_logs(postgres_with_real_init_schema, suffix, run_id)
+    url = urlsplit(postgres_with_real_init_schema)
+    main = _load_service_module(
+        monkeypatch,
+        "mcp-infra",
+        "app.main",
+        {
+            "APP_ENV": "test",
+            "SECURITY_CONTEXT_SIGNING_KEY": SIGNING_KEY,
+            "INTERNAL_API_KEY": "legacy_transport_key_64_chars_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA": "console_to_mcp_key_64_chars_cccccccccccccccccccccc",
+            "INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE": "mcp_to_console_key_64_chars_dddddddddddddddddddddd",
+            "INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT": "mcp_to_refinement_key_64_chars_eeeeeeeeeeeeeeeeeee",
+            "AIRFLOW_USER": "airflow",
+            "AIRFLOW_PASSWORD": "airflow",
+            "SUPERSET_USER": "admin",
+            "SUPERSET_PASSWORD": "admin",
+            "MINIO_SECRET_KEY": "miniosecret",
+            "PG_HOST": str(url.hostname),
+            "PG_PORT": str(url.port),
+            "PG_DB": url.path.lstrip("/"),
+            "PG_USER": "omega_mcp_infra",
+            "PG_PASSWORD": "test_omega_mcp_infra_password",
+        },
+    )
+    cartridges = importlib.import_module("app.tools.cartridges")
+
+    def read(ctx: dict, args: dict | None = None) -> set[str]:
+        req = main.InvokeRequest(
+            tool="cartridge_get_run_logs", args=args or {"run_id": run_id}, security_context=_signed(ctx)
+        )
+        main._enforce_data_scope(req, "console")
+        return {row["message"] for row in cartridges.cartridge_get_run_logs(**req.args)}
+
+    base = {"trusted": True, "source": "console", "permissions": ["cartridges.read"]}
+    scoped = {**base, "role": "analyst", "tenant_id": tenant, "workspace_id": workspace, "allowed_cartridges": ["sap_b1"]}
+    admin = {**base, "role": "admin", "allowed_cartridges": ["*"]}
+    assert read(scoped) == {"scoped"}
+    assert read(admin) == {"legacy"}
+    for denied in ({**base, "role": "analyst", "allowed_cartridges": ["*"]}, {**base, "role": "admin", "allowed_cartridges": ["sap_b1"]}):
+        with pytest.raises(HTTPException) as exc:
+            read(denied)
+        assert exc.value.status_code == 403
+    with pytest.raises(HTTPException) as exc:
+        read(scoped, {"run_id": run_id, "security_context": {**admin, "_unscoped_admin": True}})
+    assert exc.value.status_code == 403
+    for ctx in (None, {"trusted": True, "role": "analyst"}, {"trusted": True, "role": "admin", "allowed_cartridges": ["*"]}):
+        assert cartridges.cartridge_get_run_logs(run_id, security_context=ctx) == []

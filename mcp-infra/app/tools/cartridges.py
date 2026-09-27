@@ -1050,9 +1050,34 @@ async def cartridge_extract_all(
         "required": ["run_id"],
     },
 )
-def cartridge_get_run_logs(run_id: str, limit: int = 50) -> list[dict[str, Any]]:
+def _set_run_scope(cur: Any, security_context: dict[str, Any] | None) -> bool:
+    tenant_id, workspace_id = _scope_values(security_context)
+    scoped = bool(tenant_id and workspace_id)
+    platform = (
+        not scoped
+        and isinstance(security_context, dict)
+        and bool(security_context.get("trusted"))
+        and security_context.get("_unscoped_admin") is True
+    )
+    if not (scoped or platform):
+        return False
+    cur.execute(
+        "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true), "
+        "set_config('app.platform_admin', %s, true)",
+        (tenant_id or "", workspace_id or "", "true" if platform else "false"),
+    )
+    return True
+
+
+def cartridge_get_run_logs(
+    run_id: str,
+    limit: int = 50,
+    security_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     limit = min(limit, 200)
     with _conn() as c, c.cursor() as cur:
+        if not _set_run_scope(cur, security_context):
+            return []
         cur.execute(
             "SELECT entity, level, message, detail, ts "
             "FROM run_logs WHERE run_id=%s "
