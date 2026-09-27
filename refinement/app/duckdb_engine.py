@@ -2094,7 +2094,7 @@ class DuckDBEngine:
                              null_rate, distinct_count, min_value, max_value, profiled_at,
                              tenant_id, workspace_id, scope_status, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s,
-                                CASE WHEN %s <> '' THEN 'manual' ELSE NULL END,
+                                CASE WHEN %s <> '' THEN 'packaged' ELSE NULL END,
                                 %s, %s, %s, %s, CASE WHEN %s THEN NOW() ELSE NULL END,
                                 %s::uuid, %s::uuid, 'scoped', NOW())
                         ON CONFLICT (workspace_id, dataset, column_name) WHERE workspace_id IS NOT NULL
@@ -2102,14 +2102,22 @@ class DuckDBEngine:
                             SET data_type   = EXCLUDED.data_type,
                                 layer       = EXCLUDED.layer,
                                 cartridge   = EXCLUDED.cartridge,
-                                -- A mapping description is authored in the dataset
-                                -- definition: it is manual and outranks the Copilot.
+                                -- Mapping text ships with the dataset definition: it is
+                                -- packaged. It outranks the Copilot and refreshes an
+                                -- older packaged text, but never replaces a
+                                -- description a person wrote in the catalog.
                                 description = CASE
-                                    WHEN EXCLUDED.description != '' THEN EXCLUDED.description
+                                    WHEN EXCLUDED.description != ''
+                                     AND COALESCE(data_catalog.description_origin, 'packaged')
+                                         IN ('packaged', 'copilot')
+                                    THEN EXCLUDED.description
                                     ELSE data_catalog.description
                                 END,
                                 description_origin = CASE
-                                    WHEN EXCLUDED.description != '' THEN 'manual'
+                                    WHEN EXCLUDED.description != ''
+                                     AND COALESCE(data_catalog.description_origin, 'packaged')
+                                         IN ('packaged', 'copilot')
+                                    THEN 'packaged'
                                     ELSE data_catalog.description_origin
                                 END,
                                 -- keep prior stats when this run did not profile

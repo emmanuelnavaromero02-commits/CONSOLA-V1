@@ -22,11 +22,18 @@ class _Cursor:
         if "FROM data_catalog" in sql:
             self.description = [
                 SimpleNamespace(name=name)
-                for name in ("column_name", "description", "example_values", "tags", "is_key", "is_metric")
+                for name in (
+                    "column_name", "description", "description_origin",
+                    "example_values", "tags", "is_key", "is_metric",
+                )
             ]
             self._rows = [
-                ("authored", "Autorizado", [1, 2], ["finance"], True, True),
-                ("templated", "", None, ["semantic_enrichment", "auto_described", "key"], True, True),
+                ("authored", "Autorizado", "manual", [1, 2], ["finance"], True, True),
+                ("templated", "", "copilot", None,
+                 ["semantic_enrichment", "auto_described", "key"], True, True),
+                # A person rewrote the template text but the form kept the tags.
+                ("rewritten", "Texto revisado por RH", "manual", None,
+                 ["semantic_enrichment", "auto_described"], True, False),
             ]
         elif "FROM data_relationships" in sql:
             self.description = [
@@ -79,6 +86,13 @@ def test_snapshot_keeps_copilot_inference_out_of_evidence():
         "description": "",
         "tags": [],
         "is_key": False,
+        "is_metric": False,
+        "example_values": [],
+    }
+    assert semantics["columns"]["rewritten"] == {
+        "description": "Texto revisado por RH",
+        "tags": ["semantic_enrichment", "auto_described"],
+        "is_key": True,
         "is_metric": False,
         "example_values": [],
     }

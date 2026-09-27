@@ -9,8 +9,6 @@ from typing import Any
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 _CARDINALITIES = frozenset({"1:1", "1:N", "N:1", "N:N"})
-# Tags the template enrichment writes; a tag set carrying them is inference.
-_INFERRED_TAG_MARKERS = frozenset({"auto_described", "semantic_enrichment"})
 
 
 def _text(value: object) -> str:
@@ -34,14 +32,13 @@ def _examples(value: object) -> list[object]:
 
 
 def _column(row: dict[str, Any]) -> dict[str, Any]:
-    tags = [str(tag) for tag in list(row.get("tags") or [])[:16]]
-    # A row written by the template enrichment carries inferred tags and
-    # flags; none of that inference may enter attested evidence.
-    inferred = bool(_INFERRED_TAG_MARKERS & set(tags))
-    if inferred:
-        tags = []
+    # A row whose description the Copilot (or the old template enrichment)
+    # wrote also carries inferred tags and flags; none of that inference may
+    # enter attested evidence. Provenance decides, not the tags themselves.
+    inferred = row.get("description_origin") == "copilot"
+    tags = [] if inferred else [str(tag) for tag in list(row.get("tags") or [])[:16]]
     return {
-        "description": _text(row.get("description")),
+        "description": "" if inferred else _text(row.get("description")),
         "tags": [tag for tag in tags if _TAG.fullmatch(tag)],
         "is_key": bool(row.get("is_key")) and not inferred,
         "is_metric": bool(row.get("is_metric")) and not inferred,
@@ -100,7 +97,7 @@ def snapshot_public_semantics(
                     """SELECT column_name,
                               CASE WHEN description_origin='copilot' THEN ''
                                    ELSE description END AS description,
-                              example_values,tags,is_key,is_metric
+                              description_origin,example_values,tags,is_key,is_metric
                          FROM data_catalog
                         WHERE tenant_id=%s::uuid AND workspace_id=%s::uuid
                           AND dataset=%s AND scope_status='scoped'""",

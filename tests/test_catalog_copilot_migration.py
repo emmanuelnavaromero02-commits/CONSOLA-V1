@@ -75,6 +75,46 @@ def test_state_table_is_tenant_scoped_with_forced_rls_and_no_service_deletes():
     assert "GRANT DELETE" not in code
 
 
+def test_edge_uniqueness_is_workspace_scoped_only():
+    code = _code(_sql())
+    assert (
+        "DROP CONSTRAINT IF EXISTS data_relationships_from_dataset_from_column_to_dataset_to_c_key"
+        in code
+    )
+    assert "DROP INDEX IF EXISTS data_relationships_edge_uq;" in code
+    assert "ADD PRIMARY KEY (id)" in code
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS data_relationships_scoped_key" in code
+    assert "WHERE workspace_id IS NOT NULL" in code
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS data_relationships_legacy_key" in code
+
+
+def test_only_unchanged_enrichment_templates_are_backfilled_as_inferred():
+    code = _code(_sql())
+    for template in (
+        "Identificador de % usado para relacionar registros del dataset % en la capa %.",
+        "Fecha o marca temporal asociada a % dentro del dataset %; se usa para ordenar, "
+        "filtrar o auditar cambios.",
+        "Estado operativo de % en %; permite segmentar registros activos, cerrados, "
+        "bloqueados o pendientes segun el origen.",
+        "Metrica o valor cuantitativo de % en %; se usa para agregaciones, KPIs y "
+        "analisis operativo.",
+        "Atributo descriptivo de % proveniente de %; aporta contexto de negocio para "
+        "analisis y busqueda semantica.",
+    ):
+        assert f"LIKE '{template}'" in code
+    enrichment = (
+        REPO / "console/app/domains/data_platform/semantic_enrichment.py"
+    ).read_text(encoding="utf-8")
+    for fixed in (
+        "usado para relacionar registros del dataset",
+        "se usa para ordenar, filtrar o auditar cambios.",
+        "registros activos, cerrados, bloqueados o pendientes segun el origen.",
+        "para agregaciones, KPIs y analisis operativo.",
+        "aporta contexto de negocio para analisis y busqueda semantica.",
+    ):
+        assert fixed in enrichment, "backfill templates must track the enrichment text"
+
+
 def test_backfills_are_bounded_to_legacy_values():
     code = _code(_sql())
     assert "WHEN 'many_to_one' THEN 'N:1'" in code

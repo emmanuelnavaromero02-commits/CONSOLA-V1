@@ -16,7 +16,7 @@ import os
 import threading
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 import psycopg2
 
@@ -42,6 +42,11 @@ def _scope(sec: dict[str, Any] | None) -> tuple[str, str]:
     if not tenant_id or not workspace_id:
         raise ValueError("catalog copilot requires tenant and workspace scope")
     return tenant_id, workspace_id
+
+
+class WriteResult(NamedTuple):
+    written: int
+    failed: int
 
 
 def edge_key(edge: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -164,7 +169,8 @@ class CatalogCopilotStore:
                      FROM data_catalog
                     WHERE workspace_id = %s::uuid
                       AND scope_status = 'scoped'
-                      AND dataset = ANY(%s::text[])""",
+                      AND dataset = ANY(%s::text[])
+                    ORDER BY dataset, column_name""",
                 (workspace_id, names),
             )
             out: dict[str, dict[str, dict[str, Any]]] = {}
@@ -208,7 +214,10 @@ class CatalogCopilotStore:
                      FROM entity_config
                     WHERE (cartridge_id, entity) IN (
                         SELECT * FROM unnest(%s::text[], %s::text[]))""",
-                ([cartridge for cartridge, _entity in pairs], [entity for _c, entity in pairs]),
+                (
+                    [cartridge for cartridge, _entity in pairs],
+                    [entity for _c, entity in pairs],
+                ),
             )
             protection: dict[str, str] = {}
             for (value,) in cur.fetchall():
@@ -237,16 +246,49 @@ class CatalogCopilotStore:
         layer: str,
         cartridge: str,
         annotations: list[dict[str, Any]],
-    ) -> int:
+    ) -> WriteResult:
         tenant_id, workspace_id = _scope(sec)
-        written = 0
+        for item in annotations:
+            if not evidence_is_counts_only(dict(item.get("evidence") or {})):
+                raise ValueError("copilot evidence must hold counts only")
+        written = failed = 0
         with self._cursor(sec) as cur:
             for item in annotations:
                 evidence = dict(item.get("evidence") or {})
-                if not evidence_is_counts_only(evidence):
-                    raise ValueError("copilot evidence must hold counts only")
-                cur.execute(
-                    """
+                cur.execute("SAVEPOINT copilot_column")
+                try:
+                    count = self._upsert_column(
+                        cur,
+                        item,
+                        evidence,
+                        dataset=dataset,
+                        layer=layer,
+                        cartridge=cartridge,
+                        tenant_id=tenant_id,
+                        workspace_id=workspace_id,
+                    )
+                except psycopg2.IntegrityError:
+                    cur.execute("ROLLBACK TO SAVEPOINT copilot_column")
+                    failed += 1
+                    continue
+                cur.execute("RELEASE SAVEPOINT copilot_column")
+                written += count
+        return WriteResult(written, failed)
+
+    @staticmethod
+    def _upsert_column(
+        cur: Any,
+        item: dict[str, Any],
+        evidence: dict[str, Any],
+        *,
+        dataset: str,
+        layer: str,
+        cartridge: str,
+        tenant_id: str,
+        workspace_id: str,
+    ) -> int:
+        cur.execute(
+            """
                     INSERT INTO data_catalog
                         (dataset, layer, cartridge, column_name, data_type,
                          description, description_origin, semantic_type,
@@ -295,38 +337,37 @@ class CatalogCopilotStore:
                         scope_status = 'scoped',
                         updated_at = NOW()
                     """,
-                    (
-                        dataset,
-                        layer,
-                        cartridge,
-                        str(item["column"]),
-                        str(item.get("data_type") or ""),
-                        str(item.get("description") or "")[:600],
-                        item.get("semantic_type"),
-                        list(item.get("classifications") or []),
-                        item.get("classification_origin")
-                        if item.get("classifications")
-                        else None,
-                        json.dumps(evidence, sort_keys=True),
-                        item.get("confidence"),
-                        tenant_id,
-                        workspace_id,
-                    ),
-                )
-                written += max(cur.rowcount, 0)
-        return written
+            (
+                dataset,
+                layer,
+                cartridge,
+                str(item["column"]),
+                str(item.get("data_type") or ""),
+                str(item.get("description") or "")[:600],
+                item.get("semantic_type"),
+                list(item.get("classifications") or []),
+                item.get("classification_origin")
+                if item.get("classifications")
+                else None,
+                json.dumps(evidence, sort_keys=True),
+                item.get("confidence"),
+                tenant_id,
+                workspace_id,
+            ),
+        )
+        return max(cur.rowcount or 0, 0)
 
     def upsert_copilot_edges(
         self, sec: dict[str, Any], edges: list[dict[str, Any]]
-    ) -> int:
+    ) -> WriteResult:
         tenant_id, workspace_id = _scope(sec)
         if not edges:
-            return 0
+            return WriteResult(0, 0)
         datasets = {edge["from_dataset"] for edge in edges} | {
             edge["to_dataset"] for edge in edges
         }
         existing = {edge_key(row): row for row in self.load_edges(sec, datasets)}
-        written = 0
+        written = failed = 0
         with self._cursor(sec) as cur:
             for edge in edges:
                 key = edge_key(edge)
@@ -344,10 +385,16 @@ class CatalogCopilotStore:
                 if blocked:
                     continue
                 basis = dict(edge.get("basis") or {})
-                if {"values", "examples", "sample", "samples", "min", "max"} & set(basis):
+                if {"values", "examples", "sample", "samples", "min", "max"} & set(
+                    basis
+                ):
                     raise ValueError("relationship basis must hold counts only")
-                cur.execute(
-                    """
+                # One conflicting edge must not cost the others: each write is
+                # isolated in a savepoint and a constraint violation skips it.
+                cur.execute("SAVEPOINT copilot_edge")
+                try:
+                    cur.execute(
+                        """
                     INSERT INTO data_relationships
                         (from_dataset, from_column, to_dataset, to_column,
                          join_hint, description, origin, status, cardinality,
@@ -375,50 +422,45 @@ class CatalogCopilotStore:
                     WHERE data_relationships.origin = 'copilot'
                       AND data_relationships.status IN ('active', 'retired')
                     """,
-                    (
-                        key[0],
-                        key[1],
-                        key[2],
-                        key[3],
-                        str(edge.get("description") or "")[:500],
-                        edge.get("cardinality"),
-                        edge.get("confidence"),
-                        json.dumps(basis, sort_keys=True),
-                        edge.get("rules_version") or RULES_VERSION,
-                        tenant_id,
-                        workspace_id,
-                        key[2],
-                        workspace_id,
-                        key[0],
-                        workspace_id,
-                    ),
-                )
-                written += max(cur.rowcount, 0)
-        return written
+                        (
+                            key[0],
+                            key[1],
+                            key[2],
+                            key[3],
+                            str(edge.get("description") or "")[:500],
+                            edge.get("cardinality"),
+                            edge.get("confidence"),
+                            json.dumps(basis, sort_keys=True),
+                            edge.get("rules_version") or RULES_VERSION,
+                            tenant_id,
+                            workspace_id,
+                            key[2],
+                            workspace_id,
+                            key[0],
+                            workspace_id,
+                        ),
+                    )
+                    count = max(cur.rowcount or 0, 0)
+                except psycopg2.IntegrityError:
+                    cur.execute("ROLLBACK TO SAVEPOINT copilot_edge")
+                    failed += 1
+                    continue
+                cur.execute("RELEASE SAVEPOINT copilot_edge")
+                written += count
+        return WriteResult(written, failed)
 
     def retire_copilot_edges(
         self,
         sec: dict[str, Any],
-        *,
-        dataset: str,
-        keep: set[tuple[str, str, str, str]],
-        visible: set[str],
+        keys: set[tuple[str, str, str, str]],
     ) -> int:
+        """Retire exactly the Copilot edges a profile re-evaluated and dropped."""
         _tenant_id, workspace_id = _scope(sec)
-        stale = [
-            edge_key(row)
-            for row in self.load_edges(sec, [dataset])
-            if row.get("origin") == "copilot"
-            and row.get("status") == "active"
-            and edge_key(row) not in keep
-            and str(row.get("from_dataset")) in visible
-            and str(row.get("to_dataset")) in visible
-        ]
-        if not stale:
+        if not keys:
             return 0
         retired = 0
         with self._cursor(sec) as cur:
-            for key in stale:
+            for key in sorted(keys):
                 cur.execute(
                     """UPDATE data_relationships
                           SET status = 'retired', updated_at = NOW()
@@ -500,8 +542,10 @@ class CatalogCopilotStore:
                     state["fingerprint"],
                     state.get("rules_version") or RULES_VERSION,
                     state["status"],
-                    (state.get("display_name") or None) and str(state["display_name"])[:200],
-                    (state.get("description") or None) and str(state["description"])[:600],
+                    (state.get("display_name") or None)
+                    and str(state["display_name"])[:200],
+                    (state.get("description") or None)
+                    and str(state["description"])[:600],
                     json.dumps(summary, sort_keys=True, default=str),
                     state.get("error_code"),
                     state.get("duration_ms"),
@@ -585,4 +629,4 @@ class CatalogCopilotStore:
             return str(row[0]) if row and row[0] else None
 
 
-__all__ = ["CatalogCopilotStore", "edge_key"]
+__all__ = ["CatalogCopilotStore", "WriteResult", "edge_key"]

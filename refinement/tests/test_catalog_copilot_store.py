@@ -157,9 +157,46 @@ def test_rejected_or_authored_edges_block_copilot_writes(connections, monkeypatc
         {"from_dataset": "a", "from_column": "z", "to_dataset": "b", "to_column": "z",
          "cardinality": "N:1", "confidence": 0.9, "basis": {"codes": ["name:exact"]}},
     ]
-    assert store.upsert_copilot_edges(SEC, edges) == 1
+    assert store.upsert_copilot_edges(SEC, edges) == (1, 0)
     inserts = [params for sql, params in log if "INSERT INTO data_relationships" in sql]
     assert [params[1] for params in inserts] == ["z"]
     assert "WHERE data_relationships.origin = 'copilot'" in next(
         sql for sql, _ in log if "INSERT INTO data_relationships" in sql
     )
+
+
+class _ConflictCursor(_Cursor):
+    def execute(self, sql, params=None):
+        super().execute(sql, params)
+        if "INSERT INTO data_relationships" in sql and params and params[1] == "boom":
+            raise store_module.psycopg2.IntegrityError("duplicate key")
+
+
+class _ConflictConn(_Conn):
+    def cursor(self):
+        return _ConflictCursor(self)
+
+
+def test_one_conflicting_edge_is_skipped_inside_a_savepoint(monkeypatch):
+    log: list = []
+    monkeypatch.setattr(store_module.psycopg2, "connect", lambda *a, **k: _ConflictConn(log))
+    store = CatalogCopilotStore("postgresql://x")
+    monkeypatch.setattr(store, "load_edges", lambda sec, datasets: [])
+    edges = [
+        {"from_dataset": "a", "from_column": "boom", "to_dataset": "b", "to_column": "boom"},
+        {"from_dataset": "a", "from_column": "ok", "to_dataset": "b", "to_column": "ok"},
+    ]
+    assert store.upsert_copilot_edges(SEC, edges) == (1, 1)
+    statements = [sql for sql, _ in log]
+    assert "ROLLBACK TO SAVEPOINT copilot_edge" in statements
+    assert statements.count("SAVEPOINT copilot_edge") == 2
+
+
+def test_retirement_touches_only_the_given_copilot_edges(connections):
+    _, log = connections
+    store = CatalogCopilotStore("postgresql://x")
+    assert store.retire_copilot_edges(SEC, set()) == 0
+    store.retire_copilot_edges(SEC, {("a", "x", "b", "x"), ("a", "y", "c", "y")})
+    updates = [(sql, params) for sql, params in log if "UPDATE data_relationships" in sql]
+    assert len(updates) == 2
+    assert all("origin = 'copilot' AND status = 'active'" in sql for sql, _ in updates)

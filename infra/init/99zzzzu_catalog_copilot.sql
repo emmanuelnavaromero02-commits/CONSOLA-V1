@@ -18,6 +18,63 @@
 -- bounded backfills, CHECKs added NOT VALID and validated afterwards.
 
 -- ---------------------------------------------------------------------------
+-- Workspace-scoped uniqueness only
+-- ---------------------------------------------------------------------------
+-- 13_data_catalog.sql declared UNIQUE (from_dataset, from_column, to_dataset,
+-- to_column); Postgres truncated its name, so 99w's drop of the untruncated
+-- name was a no-op, and 67 added data_relationships_edge_uq on the same
+-- columns. Both are global: the second workspace that registers the same edge
+-- between identically named datasets fails with a unique violation. Beta
+-- databases created by 19_operational_stability_hotfix.sql carry the same
+-- global key as a composite primary key. Only the workspace-scoped partial
+-- index (data_relationships_scoped_key) and the legacy partial index for
+-- unscoped rows (data_relationships_legacy_key) stay.
+ALTER TABLE data_relationships
+    DROP CONSTRAINT IF EXISTS data_relationships_from_dataset_from_column_to_dataset_to_c_key;
+ALTER TABLE data_relationships
+    DROP CONSTRAINT IF EXISTS data_relationships_from_dataset_from_column_to_dataset_to_column_key;
+DROP INDEX IF EXISTS data_relationships_edge_uq;
+
+DO $catalog_copilot_primary_keys$
+DECLARE
+    tbl TEXT;
+    pk_name TEXT;
+    pk_columns TEXT[];
+BEGIN
+    FOREACH tbl IN ARRAY ARRAY['data_relationships', 'data_catalog']
+    LOOP
+        SELECT c.conname,
+               array_agg(a.attname::text ORDER BY a.attnum)
+          INTO pk_name, pk_columns
+          FROM pg_constraint c
+          JOIN pg_attribute a
+            ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+         WHERE c.conrelid = format('public.%I', tbl)::regclass
+           AND c.contype = 'p'
+         GROUP BY c.conname;
+        IF pk_name IS NOT NULL
+           AND pk_columns <> ARRAY['id']::text[]
+           AND EXISTS (
+               SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = tbl AND column_name = 'id'
+           ) THEN
+            EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT %I', tbl, pk_name);
+            EXECUTE format('ALTER TABLE public.%I ADD PRIMARY KEY (id)', tbl);
+        END IF;
+        pk_name := NULL;
+        pk_columns := NULL;
+    END LOOP;
+END
+$catalog_copilot_primary_keys$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS data_relationships_scoped_key
+    ON data_relationships (workspace_id, from_dataset, from_column, to_dataset, to_column)
+ WHERE workspace_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS data_relationships_legacy_key
+    ON data_relationships (from_dataset, from_column, to_dataset, to_column)
+ WHERE workspace_id IS NULL;
+
+-- ---------------------------------------------------------------------------
 -- data_relationships: origin, lifecycle and cardinality
 -- ---------------------------------------------------------------------------
 ALTER TABLE data_relationships
@@ -141,12 +198,22 @@ ALTER TABLE data_catalog
     ADD COLUMN IF NOT EXISTS copilot_confidence NUMERIC(4,3),
     ADD COLUMN IF NOT EXISTS copilot_at TIMESTAMPTZ;
 
--- Template text written by the old semantic enrichment is machine-inferred;
--- every other non-empty description was authored and stays authoritative.
+-- Only text that still matches one of the fixed templates of the old semantic
+-- enrichment (semantic_build_column_description) is machine-inferred. The old
+-- form kept the template tags when a person rewrote the text, so tags alone
+-- prove nothing: every other non-empty description is authored and stays
+-- authoritative.
 UPDATE data_catalog
    SET description_origin = CASE
            WHEN COALESCE(tags, '{}'::text[])
                 && ARRAY['auto_described', 'semantic_enrichment']::text[]
+            AND (
+                btrim(description) LIKE 'Identificador de % usado para relacionar registros del dataset % en la capa %.'
+                OR btrim(description) LIKE 'Fecha o marca temporal asociada a % dentro del dataset %; se usa para ordenar, filtrar o auditar cambios.'
+                OR btrim(description) LIKE 'Estado operativo de % en %; permite segmentar registros activos, cerrados, bloqueados o pendientes segun el origen.'
+                OR btrim(description) LIKE 'Metrica o valor cuantitativo de % en %; se usa para agregaciones, KPIs y analisis operativo.'
+                OR btrim(description) LIKE 'Atributo descriptivo de % proveniente de %; aporta contexto de negocio para analisis y busqueda semantica.'
+            )
            THEN 'copilot'
            ELSE 'manual'
        END
