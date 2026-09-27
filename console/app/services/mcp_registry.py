@@ -682,8 +682,14 @@ async def invoke(
         return data.get("result", data)
     except HTTPException:
         raise
-    except (egress_guard.EgressGuardError, asyncio.TimeoutError) as exc:
+    except egress_guard.EgressResponseTimeout as exc:
+        raise HTTPException(504, f"MCP tool timeout: {server_id}/{tool}") from exc
+    except egress_guard.EgressGuardError as exc:
+        if exc.request_dispatched:
+            raise HTTPException(502, f"MCP transport failed: {server_id}/{tool}") from exc
         raise HTTPException(403, f"MCP egress blocked: {exc}") from exc
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        raise HTTPException(504, f"MCP tool timeout: {server_id}/{tool}") from exc
     except httpx.TimeoutException as exc:
         raise HTTPException(504, f"MCP tool timeout: {server_id}/{tool}") from exc
     except httpx.HTTPStatusError as exc:
