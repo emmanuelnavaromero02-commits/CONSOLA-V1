@@ -360,7 +360,7 @@ def test_mcp_kb_tool_does_not_return_duckdb_secret_error(monkeypatch):
             return None
 
         def fetchone(self):
-            return ("SELECT 1", None, None)
+            return ("SELECT 1", None)
 
     class FakeConnection:
         def __enter__(self):

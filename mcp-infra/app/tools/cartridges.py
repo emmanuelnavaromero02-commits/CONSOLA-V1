@@ -12,7 +12,6 @@ import duckdb
 import httpx
 import pandas as pd
 from fastapi import HTTPException
-from sqlalchemy import create_engine, text
 
 from app.config import settings
 from app.duckdb_runtime import connect_duckdb_runtime
@@ -1217,7 +1216,7 @@ def cartridge_list_kbs(
     name="cartridge_run_kb",
     description=(
         "Execute a Knowledge Bit: runs its SQL via DuckDB against Bronze "
-        "Parquet, writes results to Silver Parquet (MinIO) and Postgres."
+        "Parquet and writes results to tenant-scoped Parquet (MinIO)."
     ),
     input_schema={
         "type": "object",
@@ -1245,7 +1244,7 @@ def cartridge_run_kb(
         }
     with _conn() as c, c.cursor() as cur:
         cur.execute(
-            "SELECT sql, pg_table, output_path FROM kb_config "
+            "SELECT sql, output_path FROM kb_config "
             "WHERE cartridge_id=%s AND kb_id=%s AND enabled=TRUE",
             (cartridge_id, kb_id),
         )
@@ -1255,7 +1254,7 @@ def cartridge_run_kb(
             "error": f"Knowledge Bit '{kb_id}' not found in cartridge '{cartridge_id}'"
         }
 
-    sql, pg_table, output_path = row
+    sql, output_path = row
     sql = _scope_cartridge_sql(
         sql,
         cartridge_id,
@@ -1302,79 +1301,12 @@ def cartridge_run_kb(
                 "rows": len(df),
             }
 
-    if pg_table:
-        try:
-            url = (
-                f"postgresql+psycopg2://{settings.pg_user}:{settings.pg_password}"
-                f"@{settings.pg_host}:{settings.pg_port}/{settings.pg_db}"
-            )
-            engine = create_engine(url)
-            try:
-                tenant, workspace = _scope_values(security_context)
-                if tenant and workspace:
-                    scoped_df = df.copy()
-                    scoped_df["tenant_id"] = tenant
-                    scoped_df["workspace_id"] = workspace
-                    safe_table = validate_identifier(pg_table, "pg_table")
-                    table_name = f'knowledge_bits."{safe_table}"'
-                    with engine.begin() as conn:
-                        conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
-                        exists = conn.execute(
-                            text("SELECT to_regclass(:table_name)"),
-                            {"table_name": f"knowledge_bits.{safe_table}"},
-                        ).scalar()
-                        if exists:
-                            conn.execute(
-                                text(
-                                    f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS tenant_id TEXT"
-                                )
-                            )
-                            conn.execute(
-                                text(
-                                    f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS workspace_id TEXT"
-                                )
-                            )
-                            conn.execute(
-                                text(
-                                    f"DELETE FROM {table_name} WHERE tenant_id=:tenant_id AND workspace_id=:workspace_id"
-                                ),
-                                {"tenant_id": tenant, "workspace_id": workspace},
-                            )
-                    scoped_df.to_sql(
-                        safe_table,
-                        engine,
-                        schema="knowledge_bits",
-                        if_exists="append",
-                        index=False,
-                    )
-                else:
-                    with engine.begin() as conn:
-                        conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
-                    df.to_sql(
-                        pg_table,
-                        engine,
-                        schema="knowledge_bits",
-                        if_exists="replace",
-                        index=False,
-                    )
-            finally:
-                engine.dispose()
-        except Exception as exc:
-            return {
-                "kb_id": kb_id,
-                "status": "partial",
-                "error": f"Parquet ok but Postgres write failed: {exc}",
-                "rows": len(df),
-                "storage_uri": storage_uri,
-            }
-
     return {
         "kb_id": kb_id,
         "cartridge_id": cartridge_id,
         "status": "success",
         "rows": len(df),
         "storage_uri": storage_uri,
-        "pg_table": f"knowledge_bits.{pg_table}" if pg_table else None,
     }
 
 

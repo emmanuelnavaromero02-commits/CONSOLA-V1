@@ -171,6 +171,7 @@ FOCAL_TESTS = (
 LIVE_POSTGRES_TESTS = (
     "tests/test_dataset_refresh_admission_live.py",
     "tests/test_gold_refresh_binding_crash_matrix_live.py",
+    "tests/test_omega_cartridge_kit_kb_sink.py",
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
@@ -178,6 +179,7 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_operational_truth_scope_authority_live.py",
     "tests/test_operational_truth_scope_upgrade_live.py",
     "tests/test_pipeline_run_save_authority_live.py",
+    "tests/test_platform_audit_context_binding.py",
     "tests/test_scheduled_effect_authority_live.py",
     "tests/test_staged_publication_acceptance.py",
     "tests/test_staged_publication_authority_live.py",

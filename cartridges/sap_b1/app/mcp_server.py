@@ -317,7 +317,7 @@ def list_kbs() -> list[dict[str, Any]]:
 def run_kb(kb_id: str) -> dict[str, Any]:
     """
     Execute a Knowledge Bit: runs its SQL against Bronze Parquet data,
-    writes results to Silver Parquet (MinIO) and PostgreSQL.
+    writes results to Silver Parquet (MinIO).
 
     Args:
         kb_id: Knowledge Bit ID as listed by list_kbs() (e.g. "kb_sales_by_company_month")

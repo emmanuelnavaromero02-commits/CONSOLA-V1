@@ -348,7 +348,7 @@ def list_kbs() -> list[dict[str, Any]]:
 def run_kb(kb_id: str) -> dict[str, Any]:
     """
     Execute a Knowledge Bit: runs its SQL against Bronze Parquet data,
-    writes results to Silver Parquet (MinIO) and PostgreSQL.
+    writes results to Silver Parquet (MinIO).
 
     Args:
         kb_id: Knowledge Bit ID as listed by list_kbs() (e.g. "timesheet_summary")
@@ -364,7 +364,7 @@ def run_all_kb() -> list[dict[str, Any]]:
     """
     Execute ALL registered Knowledge Bits in sequence.
     Each KB's SQL runs against Bronze Parquet data; results are written to
-    Silver Parquet (MinIO) and PostgreSQL.
+    Silver Parquet (MinIO).
     Returns a list of per-KB results with status, records, and storage_uri.
     """
     try:
