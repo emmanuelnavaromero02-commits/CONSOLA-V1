@@ -703,3 +703,51 @@ async def test_delete_decision_404_when_cross_workspace(console_main, monkeypatc
     with pytest.raises(HTTPException) as exc_info:
         await console_main.api_decisions_delete(decision_id=42, user=user)
     assert exc_info.value.status_code == 404
+
+
+class _ProtectedPool(_FakePool):
+    async def fetch(self, sql, *params):
+        self.calls.append(("fetch", sql, params))
+        if "FROM decisions AS decision" in sql and "LIKE ANY" in sql:
+            return [{"id": 1}]
+        return await super().fetch(sql, *params)
+
+
+@pytest.mark.asyncio
+async def test_delete_refuses_decisions_linked_to_the_council(console_main, monkeypatch):
+    from fastapi import HTTPException
+
+    existing = _fake_decision_row("workspace-A")
+    existing["created_by_id"] = 7
+    fake = _ProtectedPool(fetchrow_result=existing)
+
+    async def _factory():
+        return fake
+
+    monkeypatch.setattr(console_main, "_dec_pool", _factory)
+    user = {"id": 7, "role": "user", "active_workspace_id": "workspace-A"}
+
+    with pytest.raises(HTTPException) as refused:
+        await console_main.api_decisions_delete(decision_id=1, user=user)
+    assert refused.value.status_code == 409
+    assert "ciérrala en lugar de eliminarla" in str(refused.value.detail)
+    assert not any("DELETE FROM decisions" in call[1] for call in fake.calls)
+    protected_sql, params = next(
+        (call[1], call[2]) for call in fake.calls if "LIKE ANY" in call[1]
+    )
+    assert "control_room_items" in protected_sql
+    assert params[0] == "workspace-A" and params[1] == [1]
+    assert "Seguimiento operativo Control Room: %" in params[2]
+
+
+@pytest.mark.asyncio
+async def test_get_decision_reports_whether_it_is_protected(console_main, monkeypatch):
+    fake = _ProtectedPool(fetchrow_result=_fake_decision_row("workspace-A"))
+
+    async def _factory():
+        return fake
+
+    monkeypatch.setattr(console_main, "_dec_pool", _factory)
+    user = {"id": 7, "role": "user", "active_workspace_id": "workspace-A"}
+    out = await console_main.api_decisions_get(decision_id=1, user=user)
+    assert out["protected"] is True

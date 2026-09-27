@@ -163,6 +163,10 @@ from app.domains.decisions.access import (
     decision_visible_clause as _dec_visible_clause_impl,
     is_decision_workspace_admin as _dec_is_workspace_admin_impl,
 )
+from app.domains.decisions.council_protection import (
+    PROTECTED_DECISION_MESSAGE as _PROTECTED_DECISION_MESSAGE,
+    protected_decision_ids as _protected_decision_ids,
+)
 from app.domains.decisions.business_visibility import (
     fetch_business_decisions as _fetch_business_decisions,
     filter_decision_rows as _filter_decision_rows,
@@ -7093,7 +7097,17 @@ async def api_decisions_list(
             workspace_id=workspace_id,
             tenant_id=_tenant_id,
         )
-    return {"decisions": [_dec_row_to_dict(r) for r in rows]}
+        protected = await _protected_decision_ids(
+            conn,
+            workspace_id=workspace_id,
+            decision_ids=[row["id"] for row in rows if row.get("id") is not None],
+        )
+    return {
+        "decisions": [
+            {**_dec_row_to_dict(r), "protected": r.get("id") in protected}
+            for r in rows
+        ]
+    }
 
 
 @app.post(
@@ -7150,7 +7164,10 @@ async def api_decisions_get(
             "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
             decision_id,
         )
-    out = _dec_row_to_dict(row)
+        protected = await _protected_decision_ids(
+            conn, workspace_id=row["workspace_id"], decision_ids=[decision_id]
+        )
+    out = {**_dec_row_to_dict(row), "protected": decision_id in protected}
     out["actions"] = [
         {**dict(a), "ts": a["ts"].isoformat() if a["ts"] else None} for a in actions
     ]
@@ -7263,6 +7280,10 @@ async def api_decisions_delete(
             raise HTTPException(404, f"Decision {decision_id} not found")
         if not _dec_can_delete(existing, user):
             raise HTTPException(403, "only the creator or an admin can delete a decision")
+        if await _protected_decision_ids(
+            conn, workspace_id=existing["workspace_id"], decision_ids=[decision_id]
+        ):
+            raise HTTPException(409, _PROTECTED_DECISION_MESSAGE)
         await conn.execute(
             "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
             decision_id,
