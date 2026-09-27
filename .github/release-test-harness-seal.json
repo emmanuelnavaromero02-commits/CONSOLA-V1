@@ -2911,7 +2911,7 @@
     },
     {
       "path": "console/tests/test_dashboard_platform_admin_reads_are_scoped.py",
-      "sha256": "9dbb0d940dd3a657c69b5210a3dd756ebb3f8892a0d46b66e6da0133c6eabe93"
+      "sha256": "31de1c4beb715fa226c3c60e56bcd194689e7a21352adf60249b1bb6461b5bd7"
     },
     {
       "path": "console/tests/test_data_api_user_scope_contract.py",

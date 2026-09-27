@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
+import time
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -67,10 +69,32 @@ def postgres_dsn():
             f"postgresql://{live.POSTGRES_SUPERUSER}:{live.POSTGRES_PASSWORD}"
             f"@127.0.0.1:{port}/{live.POSTGRES_DB}"
         )
-        asyncio.run(live._wait_for_schema(dsn, container_id))
+        asyncio.run(_wait_for_init(dsn, container_id))
         yield dsn
     finally:
         live._docker("rm", "-f", "-v", container_id, check=False)
+
+
+async def _wait_for_init(dsn: str, container_id: str) -> None:
+    # The full infra/init chain runs before the server accepts TCP connections.
+    deadline = time.monotonic() + float(os.getenv("DASHBOARD_SCOPE_INIT_TIMEOUT", "900"))
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        state = live._docker("inspect", "-f", "{{.State.Status}}", container_id, check=False)
+        if state.returncode != 0 or state.stdout.strip() in {"exited", "dead"}:
+            logs = live._docker("logs", "--tail=100", container_id, check=False)
+            raise RuntimeError(f"postgres init container stopped:\n{logs.stdout}\n{logs.stderr}")
+        try:
+            conn = await asyncpg.connect(dsn)
+            try:
+                if await conn.fetchval("SELECT to_regclass('public.schema_migrations') IS NOT NULL"):
+                    return
+            finally:
+                await conn.close()
+        except Exception as exc:
+            last_error = exc
+        await asyncio.sleep(2)
+    raise RuntimeError(f"postgres init did not finish in time: {last_error!r}")
 
 
 def _console_dsn(dsn: str) -> str:
