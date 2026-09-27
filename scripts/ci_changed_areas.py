@@ -278,6 +278,14 @@ def _root_test_targets(files: list[str]) -> str:
         "console/app/services/s3_client.py": {
             "console/tests/test_console_s3_iam_client.py",
         },
+        "console/app/services/request_rate_limits.py": {
+            "tests/test_request_rate_limits.py",
+            "tests/test_workspace_client_ip_parity.py",
+        },
+        "workspace/app/services/client_ip.py": {
+            "tests/test_request_rate_limits.py",
+            "tests/test_workspace_client_ip_parity.py",
+        },
         "console/app/services/cartridge_service.py": {
             "console/tests/test_cartridge_service_storage_provider.py",
         },

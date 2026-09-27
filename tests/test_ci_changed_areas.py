@@ -411,6 +411,7 @@ def test_console_request_rate_limit_helper_refactor_does_not_trigger_full_stack_
     assert _root_targets(flags) == {
         "console/tests/test_agent_runner_scheduler_auth.py",
         "tests/test_request_rate_limits.py",
+        "tests/test_workspace_client_ip_parity.py",
     }
 
 
@@ -678,3 +679,10 @@ def test_every_image_copying_a_shared_package_is_registered_as_its_consumer():
             ):
                 copying.add(service)
         assert copying == set(consumers), package
+
+
+def test_client_ip_policies_select_the_parity_contract():
+    for changed in ("console/app/services/request_rate_limits.py", "workspace/app/services/client_ip.py"):
+        targets = _root_targets(_flags(changed))
+        assert {"tests/test_request_rate_limits.py", "tests/test_workspace_client_ip_parity.py"} <= targets
+    assert _flags("workspace/app/services/client_ip.py")["workspace_tests"] is True
