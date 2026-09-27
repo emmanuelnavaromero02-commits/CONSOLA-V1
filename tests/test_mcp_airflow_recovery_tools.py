@@ -433,3 +433,29 @@ def test_describe_treats_nothing_as_own_without_a_full_scope(monkeypatch):
     payload["runs"][0]["conf"]["cartridge_id"] = "sap_successfactors"
     filtered = main._filter_airflow_payload("airflow_describe_dag", payload, foreign_cartridge)
     assert filtered["runs"] == []
+
+
+def test_describe_uses_the_same_own_run_rule_as_run_listings(monkeypatch):
+    main = _load_mcp_module(monkeypatch, "app.main")
+    reader = _pipeline_ctx(["pipelines.read"])
+    runs = [
+        {"dag_run_id": "upper", "state": "queued", "stale": False, "conf": {"tenant_id": TENANT.upper(), "workspace_id": WORKSPACE.upper(), "mode": "full"}},
+        {"dag_run_id": "cartridge_only", "state": "running", "stale": True, "conf": {"cartridge_id": "sap_successfactors"}},
+    ]
+    described = main._filter_airflow_payload("airflow_describe_dag", {"runs": runs}, reader)
+    listed = main._filter_airflow_payload("airflow_list_dag_runs", {"runs": runs}, reader)
+    assert [run["dag_run_id"] for run in described["runs"]] == [run["dag_run_id"] for run in listed["runs"]] == ["upper"]
+    assert all(main._airflow_run_allowed(reader, run) == (run["dag_run_id"] == "upper") for run in runs)
+
+
+def test_unscoped_admin_describe_sees_every_run_without_authority(monkeypatch):
+    main = _load_mcp_module(monkeypatch, "app.main")
+    admin = _signed({"trusted": True, "source": "console", "role": "admin", "permissions": ["pipelines.read"], "allowed_cartridges": ["*"]})
+    runs = [
+        {"dag_run_id": "a", "state": "running", "stale": True, "conf": {"tenant_id": TENANT, "workspace_id": WORKSPACE, "security_context": {"_signature": "x"}}},
+        {"dag_run_id": "b", "state": "queued", "stale": False, "conf": {}},
+    ]
+    described = main._filter_airflow_payload("airflow_describe_dag", {"runs": runs}, admin)
+    assert [run["dag_run_id"] for run in described["runs"]] == ["a", "b"]
+    assert "security_context" not in str(described)
+    assert described["foreign"] == {"queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0}

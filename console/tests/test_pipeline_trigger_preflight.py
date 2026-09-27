@@ -481,3 +481,17 @@ async def test_only_runs_scoped_to_the_caller_are_reused_or_counted_as_own(conf)
 def test_preflight_recovery_can_close_stuck_running_runs_and_orphans():
     classes = _tp().PREFLIGHT_RECOVERY_CLASSES
     assert {"stalled_running_no_tasks", "stalled_queued_paused_dag", "airflow_orphan"} <= classes
+
+
+@pytest.mark.anyio
+async def test_run_ownership_ignores_uuid_case_like_mcp_infra():
+    live = {
+        "dag_run_id": "manual__upper",
+        "state": "running",
+        "queued_at": (NOW - timedelta(minutes=1)).isoformat(),
+        "stale": False,
+        "conf": {"tenant_id": TENANT.upper(), "workspace_id": WORKSPACE.upper(), "mode": "incremental", "target": "all"},
+    }
+    airflow = Airflow(_describe(dag_id="sap_successfactors_extract_all", is_paused=False, runs=[live]))
+    result = await _check("sap_successfactors_extract_all", airflow, mode="incremental", target="all")
+    assert result.reuse_run_id == "manual__upper"

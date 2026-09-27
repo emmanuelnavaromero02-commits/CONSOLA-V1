@@ -176,14 +176,18 @@ def _run_is_stale(run: Mapping[str, Any], *, now: datetime, stale_after: int) ->
 
 
 def _owned_by(run: Mapping[str, Any], user: Mapping[str, Any] | None) -> bool:
-    """Own only when the run's conf names both the caller's tenant and workspace."""
+    """Own only when the run's conf names both the caller's tenant and workspace.
+
+    Mirrors mcp-infra's run visibility rule, including case-insensitive ids.
+    """
     _dag_id, tenant_id, workspace_id = _scope_key("", user)
+    tenant_id, workspace_id = tenant_id.strip().lower(), workspace_id.strip().lower()
     conf = run.get("conf") if isinstance(run.get("conf"), dict) else {}
     return bool(
         tenant_id
         and workspace_id
-        and str(conf.get("tenant_id") or "") == tenant_id
-        and str(conf.get("workspace_id") or "") == workspace_id
+        and str(conf.get("tenant_id") or "").strip().lower() == tenant_id
+        and str(conf.get("workspace_id") or "").strip().lower() == workspace_id
     )
 
 
