@@ -146,6 +146,7 @@ def test_signal_count_cannot_claim_items_that_do_not_exist() -> None:
     [
         {"enabled": True, "cron": "not a cron", "tz": "UTC"},
         {"enabled": True, "cron": "* * * * *", "tz": "Not/AZone"},
+        {"enabled": True, "cron": "* * * * * *", "tz": "UTC"},
     ],
 )
 def test_invalid_schedule_is_an_explicit_operational_error(schedule) -> None:
@@ -171,6 +172,14 @@ def test_agent_schedule_fall_back_fires_each_utc_hour() -> None:
         start = datetime(2026, 11, 1, hour, 0, tzinfo=timezone.utc)
         schedule = {"enabled": True, "cron": "0 * * * *", "tz": "America/New_York"}
         assert _fire_in_window(schedule, start, start + timedelta(minutes=5)) == start
+
+
+def test_agent_schedule_repeated_wall_hour_fires_once() -> None:
+    schedule = {"enabled": True, "cron": "30 1 * * *", "tz": "America/New_York"}
+    first = datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc)
+    second = datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc)
+    assert _fire_in_window(schedule, first, first + timedelta(minutes=5)) == first
+    assert _fire_in_window(schedule, second, second + timedelta(minutes=5)) is None
 
 
 def test_agent_due_check_accepts_the_fire_instants_the_window_produces() -> None:

@@ -19,7 +19,9 @@ def _cron_fields(expression: str):
     from croniter import croniter
 
     expanded, nth_weekday = croniter.expand(expression)
-    plain = not nth_weekday and len(expanded) == 5 and all(
+    if len(expanded) != 5:
+        raise ValueError("only five-field cron expressions are supported")
+    plain = not nth_weekday and all(
         entry == "*" or isinstance(entry, int) for field in expanded for entry in field
     )
     return expanded, plain
@@ -38,6 +40,11 @@ def _wall_matches(fields, wall: datetime) -> bool:
     if "*" in dom or "*" in dows:
         return dom_ok and dow_ok
     return dom_ok or dow_ok
+
+
+def _fold_skips(fields, local: datetime) -> bool:
+    """Vixie semantics: fixed-time jobs run once in a repeated DST hour; wildcard jobs run each hour."""
+    return local.fold == 1 and "*" not in fields[0] and "*" not in fields[1]
 
 
 def _gap_backfill_matches(fields, mark: datetime, local: datetime, zone) -> bool:
@@ -59,7 +66,10 @@ def schedule_is_valid(cron_expr: str | None, tz_name: str | None) -> bool:
         from croniter import croniter
 
         _zone(tz_name)
-        return bool(str(cron_expr or "").strip()) and croniter.is_valid(str(cron_expr).strip())
+        expression = str(cron_expr or "").strip()
+        if not expression or not croniter.is_valid(expression):
+            return False
+        return len(croniter.expand(expression)[0]) == 5
     except Exception:
         return False
 
@@ -87,7 +97,8 @@ def fire_in_window(
         while mark < end:
             local = mark.astimezone(zone)
             if plain:
-                if _wall_matches(fields, local) or _gap_backfill_matches(fields, mark, local, zone):
+                wall_hit = not _fold_skips(fields, local) and _wall_matches(fields, local)
+                if wall_hit or _gap_backfill_matches(fields, mark, local, zone):
                     return mark
             elif croniter.match(expression, local):
                 return mark

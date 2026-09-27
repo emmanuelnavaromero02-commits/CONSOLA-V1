@@ -136,7 +136,9 @@ async def _active_workspace_scopes(pool: Any) -> list[dict[str, str]]:
 
 def _cron_fields(expression: str):
     expanded, nth_weekday = croniter.expand(expression)
-    plain = not nth_weekday and len(expanded) == 5 and all(
+    if len(expanded) != 5:
+        raise ValueError("only five-field cron expressions are supported")
+    plain = not nth_weekday and all(
         entry == "*" or isinstance(entry, int) for field in expanded for entry in field
     )
     return expanded, plain
@@ -157,6 +159,11 @@ def _wall_matches(fields, wall: datetime) -> bool:
     return dom_ok or dow_ok
 
 
+def _fold_skips(fields, local: datetime) -> bool:
+    """Vixie semantics: fixed-time jobs run once in a repeated DST hour; wildcard jobs run each hour."""
+    return local.fold == 1 and "*" not in fields[0] and "*" not in fields[1]
+
+
 def _gap_backfill_matches(fields, mark: datetime, local: datetime, zone) -> bool:
     """True when a DST gap ends at this minute and the cron matches a skipped wall time."""
     prev_local = (mark - timedelta(minutes=1)).astimezone(zone)
@@ -175,7 +182,8 @@ def _cron_fires_at_minute(expression: str, mark: datetime, zone) -> bool:
     fields, plain = _cron_fields(expression)
     local = mark.astimezone(zone)
     if plain:
-        return _wall_matches(fields, local) or _gap_backfill_matches(fields, mark, local, zone)
+        wall_hit = not _fold_skips(fields, local) and _wall_matches(fields, local)
+        return wall_hit or _gap_backfill_matches(fields, mark, local, zone)
     return bool(croniter.match(expression, local))
 
 

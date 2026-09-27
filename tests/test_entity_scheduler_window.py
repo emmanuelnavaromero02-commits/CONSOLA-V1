@@ -72,6 +72,8 @@ def test_naive_window_bounds_are_treated_as_utc():
         ("0 8 * * *", "America/Mexico_City\n"),
         ("not a cron", "UTC"),
         ("0 25 * * *", "UTC"),
+        ("* * * * * *", "UTC"),
+        ("0 8 * * * 30", "UTC"),
         ("", "UTC"),
         (None, "UTC"),
     ],
@@ -122,11 +124,10 @@ def test_fall_back_hourly_fires_every_utc_hour():
         assert fire_in_window("0 * * * *", "America/New_York", *_window(start)) == start
 
 
-def test_fall_back_repeated_wall_hour_fires_at_both_occurrences():
+def test_fall_back_repeated_wall_hour_fires_once_at_the_first_occurrence():
     day = datetime(2026, 11, 1, 0, 0, tzinfo=UTC)
     assert _fires_across("30 1 * * *", "America/New_York", day) == [
         datetime(2026, 11, 1, 5, 30, tzinfo=UTC),
-        datetime(2026, 11, 1, 6, 30, tzinfo=UTC),
     ]
 
 
