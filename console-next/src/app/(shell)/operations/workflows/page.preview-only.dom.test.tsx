@@ -20,6 +20,13 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
+const automationsBoundary = vi.hoisted(() => ({ listAutomations: vi.fn() }));
+
+vi.mock("@/lib/operations/automations-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/operations/automations-client")>();
+  return { ...actual, ...automationsBoundary };
+});
+
 vi.mock("@/lib/operations/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/operations/client")>();
   return { ...actual, ...clientBoundary };
@@ -67,6 +74,12 @@ beforeEach(() => {
   clientBoundary.getOperationWorkflow.mockResolvedValue({ workflow: makeWorkflow(), steps: [] });
   clientBoundary.planOperationWorkflow.mockResolvedValue({ ok: true, workflow_id: "wf-1" });
   clientBoundary.cancelOperationWorkflow.mockResolvedValue({ ok: true, workflow_id: "wf-1" });
+  automationsBoundary.listAutomations.mockResolvedValue({
+    schema_version: "pipeline-automations/v1",
+    checked_at: "2026-09-26T10:00:00Z",
+    airflow_available: true,
+    automations: [],
+  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -78,7 +91,7 @@ afterEach(async () => {
 });
 
 describe("OperationsWorkflowsPage en modo preview-only", () => {
-  it("ofrece Planificar en lugar de Ejecutar y muestra el aviso honesto", async () => {
+  it("ofrece Planificar en lugar de Ejecutar junto a las automatizaciones en segundo plano", async () => {
     clientBoundary.listOperationWorkflows.mockResolvedValue([makeWorkflow()]);
     await renderPage();
 
@@ -86,9 +99,10 @@ describe("OperationsWorkflowsPage en modo preview-only", () => {
     const planButton = findButton("Planificar");
     expect(planButton).toBeDefined();
     expect(planButton?.disabled).toBe(false);
-    expect(container.textContent).toContain(
-      "La ejecución de workflows no está disponible desde esta consola: solo se permite planificar y revisar en modo preview.",
-    );
+    expect(container.textContent).not.toContain("solo se permite planificar y revisar en modo preview");
+    expect(container.textContent).toContain("Automatizaciones en segundo plano");
+    expect(container.textContent).toContain("Flujos del Copiloto");
+    expect(automationsBoundary.listAutomations).toHaveBeenCalledTimes(1);
   });
 
   it("Planificar llama solo al cliente de planificación, nunca al de ejecución", async () => {
@@ -130,8 +144,8 @@ describe("OperationsWorkflowsPage en modo preview-only", () => {
     clientBoundary.listOperationWorkflows.mockRejectedValue(new Error("boom"));
     await renderPage();
 
-    const alert = container.querySelector('[role="alert"]');
-    expect(alert).not.toBeNull();
-    expect(alert?.textContent).toContain("No se pudieron cargar workflows.");
+    const alerts = [...container.querySelectorAll('[role="alert"]')];
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].textContent).toContain("No se pudieron cargar workflows.");
   });
 });

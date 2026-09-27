@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   FileClock,
   History,
+  Inbox,
   Loader2,
   RefreshCw,
   Route,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/EmptyState";
 import {
   createDecisionPlan,
   getConfidenceHistory,
@@ -309,9 +311,7 @@ function PanelShell({
           No se pudo cargar la información.
         </div>
       ) : isEmpty ? (
-        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-          {empty}
-        </div>
+        <EmptyState icon={Inbox} size="sm" title={empty} className="rounded-md border border-dashed" />
       ) : children}
     </section>
   );
@@ -424,9 +424,7 @@ function PlansPanel({
             />
           ))}
           {rows.length === 0 ? (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              Sin planes preparados.
-            </div>
+            <EmptyState icon={Route} size="sm" title="Sin planes preparados." className="rounded-md border border-dashed" />
           ) : null}
         </div>
         <form
@@ -507,9 +505,7 @@ function ValidationPanel({
             />
           ))}
           {rows.length === 0 ? (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              Sin validaciones históricas.
-            </div>
+            <EmptyState icon={History} size="sm" title="Sin validaciones históricas." className="rounded-md border border-dashed" />
           ) : null}
         </div>
         <form

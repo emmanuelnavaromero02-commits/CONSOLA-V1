@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { Ban, ClipboardList, GitBranch, Info, Loader2, RefreshCw, Search, Workflow } from "lucide-react";
+import { Ban, ClipboardList, GitBranch, ListChecks, Loader2, MousePointerClick, RefreshCw, Search, Workflow } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/EmptyState";
+import { AutomationsPanel } from "@/components/operations/AutomationsPanel";
 import {
   useCancelOperationWorkflow,
   useOperationWorkflow,
@@ -69,11 +71,20 @@ export default function OperationsWorkflowsPage() {
 
   return (
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Automatizaciones</h1>
+        <p className="text-sm text-muted-foreground">
+          Procesos en segundo plano y flujos operativos del Copiloto.
+        </p>
+      </header>
+
+      <AutomationsPanel />
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Workflows</h1>
+          <h2 className="text-lg font-semibold tracking-tight">Flujos del Copiloto</h2>
           <p className="text-sm text-muted-foreground">
-            Flujos operativos del Copiloto con planificación y cancelación controlada.
+            Planificación y cancelación controlada; la ejecución no está disponible desde esta consola.
           </p>
         </div>
         <button
@@ -84,12 +95,7 @@ export default function OperationsWorkflowsPage() {
           <RefreshCw aria-hidden className={cn("h-4 w-4", workflows.isFetching && "animate-spin")} />
           Refrescar
         </button>
-      </header>
-
-      <p role="note" className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
-        <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        La ejecución de workflows no está disponible desde esta consola: solo se permite planificar y revisar en modo preview.
-      </p>
+      </div>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-3" aria-label="Resumen de workflows">
         <MetricCard icon={Workflow} label="Total" value={metrics.total} loading={metricsUnavailable} />
@@ -167,7 +173,9 @@ function WorkflowsTable({
   onPlan: (workflow: OperationWorkflow) => void;
   onCancel: (workflow: OperationWorkflow) => void;
 }) {
-  if (rows.length === 0) return <EmptyState label="Sin workflows visibles." />;
+  if (rows.length === 0) {
+    return <EmptyState icon={Workflow} size="sm" title="Sin workflows visibles." />;
+  }
 
   return (
     <div className="overflow-x-auto">
@@ -252,7 +260,7 @@ function WorkflowDetail({
         <h2 className="text-base font-semibold">Detalle</h2>
       </header>
       {!selectedId ? (
-        <EmptyState label="Selecciona un workflow para ver sus pasos." />
+        <EmptyState icon={MousePointerClick} size="sm" title="Selecciona un workflow para ver sus pasos." />
       ) : error ? (
         <ErrorPanel message="No se pudo cargar el detalle." onRetry={onRetry} />
       ) : loading ? (
@@ -274,7 +282,7 @@ function WorkflowDetail({
           {workflow.error ? <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{workflow.error}</div> : null}
           <div className="space-y-2">
             {steps.length === 0 ? (
-              <EmptyState label="Sin pasos materializados." />
+              <EmptyState icon={ListChecks} size="sm" title="Sin pasos materializados." />
             ) : steps.map((step) => (
               <article key={`${step.workflow_id}:${step.step_idx}`} className="rounded-md border bg-background p-3 text-sm">
                 <div className="flex items-start justify-between gap-3">
@@ -295,7 +303,7 @@ function WorkflowDetail({
           </div>
         </div>
       ) : (
-        <EmptyState label="Sin detalle disponible." />
+        <EmptyState icon={ClipboardList} size="sm" title="Sin detalle disponible." />
       )}
     </aside>
   );
@@ -362,10 +370,6 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
       </div>
     </div>
   );
-}
-
-function EmptyState({ label }: { label: string }) {
-  return <div className="px-4 py-10 text-center text-sm text-muted-foreground">{label}</div>;
 }
 
 function SkeletonRows({ rows }: { rows: number }) {
