@@ -3171,7 +3171,7 @@
     },
     {
       "path": "console/tests/test_pipeline_recover_endpoint.py",
-      "sha256": "794dbf10ef676809aad8f507d4202eaae3561c8cd7b14151248c34521c3f7e56"
+      "sha256": "906146b3283e573dd6f8dd5c7aafc54fbbf9e39b4c896b3bdf451223214327ae"
     },
     {
       "path": "console/tests/test_pipeline_run_janitor.py",
@@ -3187,7 +3187,7 @@
     },
     {
       "path": "console/tests/test_pipeline_trigger_preflight.py",
-      "sha256": "465123944c98e2b5937b1776b0d354baad2d618ccb536652739907e5165129c7"
+      "sha256": "3d31a4b052af78be2eeeb68c70eecbdbfa855cbdba585387d097e2d39391f0a6"
     },
     {
       "path": "console/tests/test_platform_admin_db_scope.py",
@@ -5151,7 +5151,7 @@
     },
     {
       "path": "tests/test_mcp_airflow_recovery_tools.py",
-      "sha256": "7135f2e6ae899bb31707f723861eeebb2c5415dc85235e247402699f7c9df9ea"
+      "sha256": "f6eb59451a20e5fc9f39c6d54f4144e5be1bc084e8b1b8b2bd974a486e3cf25d"
     },
     {
       "path": "tests/test_mcp_airflow_tool_classification.py",
@@ -5483,7 +5483,7 @@
     },
     {
       "path": "tests/test_pipeline_run_recovery_live.py",
-      "sha256": "b4bbc922484a2d09e8c52aa078cbc92c63c052c8bd078e2c6f6d774c7a60d0d0"
+      "sha256": "d0f5e7188716b7323db8db58d71166696bca70b2cfa6270bf826a84cf87c7a97"
     },
     {
       "path": "tests/test_pipeline_run_save_authority.py",
@@ -5499,7 +5499,7 @@
     },
     {
       "path": "tests/test_pipeline_stuck_run_recovery.py",
-      "sha256": "0d46cf4c864cb394f44be5efabdb1822184840f7b3243faeb6fbb924bde90fc6"
+      "sha256": "45f50669eda9dff08d0d6b18b6b5ac0d353d64dba9370d4ae71b90c67ac3d873"
     },
     {
       "path": "tests/test_pipeline_successfactors_reservation.py",
