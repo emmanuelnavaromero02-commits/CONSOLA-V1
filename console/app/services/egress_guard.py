@@ -11,7 +11,7 @@ import ssl
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from urllib.parse import SplitResult, quote, urlparse, urlsplit
 
 import h11
@@ -23,6 +23,8 @@ _DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 _READ_CHUNK_BYTES = 64 * 1024
 _MAX_RESPONSE_HEADER_BYTES = 64 * 1024
 _MAX_CHUNK_SIZE_LINE = 1024
+# http.client refuses a 100th header line (its limit counts the blank terminator); both paths share it.
+_MAX_RESPONSE_HEADER_FIELDS = 99
 # Framing is owned by the transport; callers may never set these.
 _TRANSPORT_OWNED_HEADERS = {
     "host",
@@ -112,6 +114,116 @@ def _blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class _Destination:
+    """A URL that passed every check that does not need DNS."""
+
+    label: str
+    host: str
+    port: int
+    allow_private: bool
+    allowed_hosts: frozenset[str]
+    allowed_cidrs: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
+
+
+def _destination(
+    url: str,
+    *,
+    label: str = "URL",
+    allow_private_hosts: set[str] | list[str] | tuple[str, ...] | None = None,
+    allow_private_cidrs: list[str] | tuple[str, ...] | None = None,
+    allow_private: bool = False,
+    allow_http_hosts: set[str] | list[str] | tuple[str, ...] | None = None,
+    require_https_in_prod: bool = True,
+) -> tuple[str, _Destination | None]:
+    parsed = urlparse(str(url or ""))
+    if parsed.scheme not in {"http", "https"}:
+        return f"{label} must use http or https", None
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not host:
+        return f"{label} host is required", None
+    allowed_hosts = _host_set(allow_private_hosts)
+    allowed_http_hosts = _host_set(allow_http_hosts)
+    if (
+        require_https_in_prod
+        and is_production_env()
+        and parsed.scheme != "https"
+        and host not in allowed_http_hosts
+    ):
+        return f"{label} must use https in production", None
+    if parsed.username or parsed.password:
+        return f"{label} must not include credentials", None
+    if host in _METADATA_HOSTS:
+        return f"{label} metadata hosts are blocked", None
+    if host in {"localhost"} or host.endswith(".localhost") or host.endswith(".local"):
+        if not allow_private and host not in allowed_hosts:
+            return f"{label} host is not public", None
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        return f"{label} validation failed: {type(exc).__name__}", None
+    return "", _Destination(
+        label=label,
+        host=host,
+        port=port,
+        allow_private=allow_private,
+        allowed_hosts=frozenset(allowed_hosts),
+        allowed_cidrs=tuple(_cidr_list(allow_private_cidrs)),
+    )
+
+
+def _resolution_failure(label: str, exc: Exception) -> str:
+    if isinstance(exc, socket.gaierror):
+        return f"{label} host could not be resolved"
+    return f"{label} validation failed: {type(exc).__name__}"
+
+
+def _pinned_address(destination: _Destination, addrinfo: Any) -> tuple[str, str]:
+    """Address policy shared by both transports: every resolved address must be allowed."""
+    label = destination.label
+    first_address = ""
+    for item in addrinfo:
+        address = item[4][0]
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return f"{label} resolved to an invalid address", ""
+        if (
+            destination.allow_private
+            or destination.host in destination.allowed_hosts
+            or any(ip in cidr for cidr in destination.allowed_cidrs)
+        ):
+            first_address = first_address or address
+            continue
+        if _blocked_ip(ip):
+            return f"{label} resolved to a non-public address", ""
+        first_address = first_address or address
+    if not first_address:
+        return f"{label} host could not be resolved", ""
+    return "", first_address
+
+
+def _resolve(destination: _Destination) -> tuple[str, str]:
+    try:
+        addrinfo = socket.getaddrinfo(destination.host, destination.port, type=socket.SOCK_STREAM)
+        return _pinned_address(destination, addrinfo)
+    except Exception as exc:
+        return _resolution_failure(destination.label, exc), ""
+
+
+async def _resolve_async(destination: _Destination) -> str:
+    try:
+        addrinfo = await asyncio.get_running_loop().getaddrinfo(
+            destination.host, destination.port, type=socket.SOCK_STREAM
+        )
+        reason, address = _pinned_address(destination, addrinfo)
+    except Exception as exc:
+        reason, address = _resolution_failure(destination.label, exc), ""
+    if reason:
+        raise EgressGuardError(reason)
+    return address
+
+
 def resolve_url_address(
     url: str,
     *,
@@ -122,63 +234,18 @@ def resolve_url_address(
     allow_http_hosts: set[str] | list[str] | tuple[str, ...] | None = None,
     require_https_in_prod: bool = True,
 ) -> tuple[str, str]:
-    parsed = urlparse(str(url or ""))
-    if parsed.scheme not in {"http", "https"}:
-        return f"{label} must use http or https", ""
-    host = (parsed.hostname or "").rstrip(".").lower()
-    if not host:
-        return f"{label} host is required", ""
-    allowed_hosts = _host_set(allow_private_hosts)
-    allowed_http_hosts = _host_set(allow_http_hosts)
-    if (
-        require_https_in_prod
-        and is_production_env()
-        and parsed.scheme != "https"
-        and host not in allowed_http_hosts
-    ):
-        return f"{label} must use https in production", ""
-    if parsed.username or parsed.password:
-        return f"{label} must not include credentials", ""
-    if host in _METADATA_HOSTS:
-        return f"{label} metadata hosts are blocked", ""
-    if host in {"localhost"} or host.endswith(".localhost") or host.endswith(".local"):
-        if not allow_private and host not in allowed_hosts:
-            return f"{label} host is not public", ""
-
-    try:
-        addresses = [
-            item[4][0]
-            for item in socket.getaddrinfo(
-                host,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
-                type=socket.SOCK_STREAM,
-            )
-        ]
-    except socket.gaierror:
-        return f"{label} host could not be resolved", ""
-    except Exception as exc:
-        return f"{label} validation failed: {type(exc).__name__}", ""
-
-    allowed_cidrs = _cidr_list(allow_private_cidrs)
-    first_address = ""
-    for address in addresses:
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            return f"{label} resolved to an invalid address", ""
-        if (
-            allow_private
-            or host in allowed_hosts
-            or any(ip in cidr for cidr in allowed_cidrs)
-        ):
-            first_address = first_address or address
-            continue
-        if _blocked_ip(ip):
-            return f"{label} resolved to a non-public address", ""
-        first_address = first_address or address
-    if not first_address:
-        return f"{label} host could not be resolved", ""
-    return "", first_address
+    reason, destination = _destination(
+        url,
+        label=label,
+        allow_private_hosts=allow_private_hosts,
+        allow_private_cidrs=allow_private_cidrs,
+        allow_private=allow_private,
+        allow_http_hosts=allow_http_hosts,
+        require_https_in_prod=require_https_in_prod,
+    )
+    if destination is None:
+        return reason, ""
+    return _resolve(destination)
 
 
 def validation_error(url: str, **kwargs: Any) -> str:
@@ -221,6 +288,14 @@ def _authority(host: str, port: int, https: bool) -> str:
     return name if port == (443 if https else 80) else f"{name}:{port}"
 
 
+def _header_value(value: str) -> bytes:
+    # Surrounding blanks are not part of a field value; the only control character allowed inside is HTAB.
+    text = value.strip(" \t")
+    if any((ch < " " and ch != "\t") or ch == "\x7f" for ch in text):
+        raise EgressGuardError("request header is not valid HTTP")
+    return text.encode("utf-8")
+
+
 def _request_headers(
     method: str,
     headers: dict[str, str] | None,
@@ -235,18 +310,17 @@ def _request_headers(
         lowered = name.lower()
         if lowered in _TRANSPORT_OWNED_HEADERS:
             raise EgressGuardError(f"request header {name} is owned by the transport")
-        if not _HEADER_NAME_RE.fullmatch(name) or any(ch in value for ch in "\r\n\x00"):
+        if not _HEADER_NAME_RE.fullmatch(name):
             raise EgressGuardError("request header is not valid HTTP")
+        encoded = _header_value(value)
         if content_type and lowered == "content-type":
             continue
-        selected.append((name, value.encode("utf-8")))
+        selected.append((name, encoded))
         names.add(lowered)
     if "accept" not in names:
         selected.insert(0, ("Accept", b"*/*"))
     if content_type and (body or method in _BODY_METHODS):
-        if any(ch in content_type for ch in "\r\n\x00"):
-            raise EgressGuardError("request header is not valid HTTP")
-        selected.append(("Content-Type", content_type.encode("utf-8")))
+        selected.append(("Content-Type", _header_value(content_type)))
     if body or method in _BODY_METHODS:
         selected.append(("Content-Length", str(len(body)).encode("ascii")))
     selected.append(("Connection", b"close"))
@@ -291,11 +365,27 @@ def _prepare_request(
     )
 
 
-def _resolve_or_raise(url: str, **policy: Any) -> str:
-    reason, address = resolve_url_address(url, **policy)
-    if reason:
+def _destination_or_raise(url: str, **policy: Any) -> _Destination:
+    reason, destination = _destination(url, **policy)
+    if destination is None:
         raise EgressGuardError(reason)
-    return address
+    return destination
+
+
+_SSL_CONTEXT: ssl.SSLContext | None = None
+_SSL_CONTEXT_LOCK = threading.Lock()
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """The verifying client context, built once: loading the trust store is too slow to repeat per call."""
+    global _SSL_CONTEXT
+    context = _SSL_CONTEXT
+    if context is None:
+        with _SSL_CONTEXT_LOCK:
+            if _SSL_CONTEXT is None:
+                _SSL_CONTEXT = ssl.create_default_context()
+            context = _SSL_CONTEXT
+    return context
 
 
 def _encode_body(
@@ -314,6 +404,57 @@ def _join_headers(pairs: list[tuple[str, str]]) -> dict[str, str]:
         value = value.strip()
         headers[key] = f"{headers[key]}, {value}" if key in headers else value
     return headers
+
+
+# ---------------------------------------------------------------- response heads (both paths)
+#
+# h11 is the single judge of a response head: the async path parses with it directly and the sync
+# path re-parses the exact head bytes http.client consumed, then adopts h11's framing decision.
+
+
+def _protocol_failure(exc: h11.RemoteProtocolError) -> EgressGuardError:
+    reason = "response headers too large" if exc.error_status_hint == 431 else "response is not valid HTTP"
+    return EgressGuardError(reason, request_dispatched=True)
+
+
+def _interim(event: h11.InformationalResponse) -> None:
+    if event.status_code != 100:
+        raise EgressGuardError("unexpected interim response", request_dispatched=True)
+
+
+def _final_head(event: h11.Response) -> dict[str, str]:
+    if event.http_version not in (b"1.0", b"1.1"):
+        raise EgressGuardError("response is not valid HTTP", request_dispatched=True)
+    pairs = [(name.decode("latin-1"), value.decode("latin-1")) for name, value in event.headers]
+    head_bytes = len(event.reason) + sum(len(name) + len(value) + 4 for name, value in pairs)
+    if len(pairs) > _MAX_RESPONSE_HEADER_FIELDS or head_bytes > _MAX_RESPONSE_HEADER_BYTES:
+        raise EgressGuardError("response headers too large", request_dispatched=True)
+    return _join_headers(pairs)
+
+
+def _declared_length_exceeds(method: str, status: int, headers: dict[str, str], max_bytes: int) -> bool:
+    if method == "HEAD" or status in (204, 304) or "transfer-encoding" in headers:
+        return False
+    declared = headers.get("content-length", "")
+    return declared.isdigit() and int(declared) > max_bytes
+
+
+def _parse_head(method: str, head: bytes) -> tuple[h11.Response, dict[str, str]]:
+    parser = h11.Connection(h11.CLIENT)
+    parser.send(h11.Request(method=method, target="/", headers=[("Host", "egress")]))
+    parser.send(h11.EndOfMessage())
+    parser.receive_data(head)
+    try:
+        while True:
+            event = parser.next_event()
+            if isinstance(event, h11.InformationalResponse):
+                _interim(event)
+            elif isinstance(event, h11.Response):
+                return event, _final_head(event)
+            else:
+                raise EgressGuardError("response is not valid HTTP", request_dispatched=True)
+    except h11.RemoteProtocolError as exc:
+        raise _protocol_failure(exc) from None
 
 
 # ---------------------------------------------------------------- sync (http.client)
@@ -352,7 +493,57 @@ def _abort_socket(sock: socket.socket, fired: threading.Event) -> None:
         pass
 
 
+class _HeadRecorder:
+    """Keeps the bytes http.client reads while parsing the head."""
+
+    def __init__(self, fp: Any) -> None:
+        self.fp = fp
+        self.head = bytearray()
+
+    def readline(self, limit: int = -1) -> bytes:
+        line = self.fp.readline(limit)
+        self.head.extend(line)
+        return line
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.fp, name)
+
+
 class _StrictHTTPResponse(http.client.HTTPResponse):
+    egress_headers: dict[str, str]
+
+    def begin(self) -> None:
+        if self.headers is not None:
+            return
+        recorder = _HeadRecorder(self.fp)
+        self.fp = recorder
+        try:
+            super().begin()
+        except http.client.LineTooLong:
+            raise EgressGuardError("response headers too large", request_dispatched=True) from None
+        except http.client.RemoteDisconnected:
+            raise
+        except (http.client.BadStatusLine, http.client.UnknownProtocol):
+            raise EgressGuardError("response is not valid HTTP", request_dispatched=True) from None
+        except http.client.HTTPException as exc:
+            if type(exc) is http.client.HTTPException and "headers" in str(exc):
+                raise EgressGuardError("response headers too large", request_dispatched=True) from None
+            raise
+        finally:
+            if self.fp is recorder:
+                self.fp = recorder.fp
+        event, self.egress_headers = _parse_head(self._method, bytes(recorder.head))
+        # Frame the body exactly as h11 would (it rejected every ambiguous head above).
+        fields = dict(event.headers)
+        self.chunked = b"transfer-encoding" in fields
+        self.chunk_left = None
+        length = fields.get(b"content-length")
+        self.length = int(length) if length is not None and not self.chunked else None
+        if self._method == "HEAD" or self.status in (204, 304) or 100 <= self.status < 200:
+            self.length = 0
+        if not self.chunked and self.length is None:
+            self.will_close = True
+
     def _read_next_chunk_size(self) -> int:
         line = self.fp.readline(_MAX_CHUNK_SIZE_LINE + 1)
         if len(line) > _MAX_CHUNK_SIZE_LINE:
@@ -386,7 +577,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
             except OSError:
                 pass
             if self._tls:
-                sock = ssl.create_default_context().wrap_socket(
+                sock = _ssl_context().wrap_socket(
                     sock, server_hostname=self.host, do_handshake_on_connect=False
                 )
             self._deadline.watch(sock)
@@ -415,13 +606,6 @@ def _read_body(response: http.client.HTTPResponse, max_bytes: int) -> bytes:
     return bytes(body)
 
 
-def _response_headers(response: http.client.HTTPResponse) -> dict[str, str]:
-    pairs = response.getheaders()
-    if sum(len(name) + len(value) + 4 for name, value in pairs) > _MAX_RESPONSE_HEADER_BYTES:
-        raise EgressGuardError("response headers too large", request_dispatched=True)
-    return _join_headers(pairs)
-
-
 def _exchange(
     request: _PreparedRequest, max_bytes: int, deadline: _Deadline, *, address: str
 ) -> PinnedHTTPResponse:
@@ -445,10 +629,10 @@ def _exchange(
             raise TimeoutError("egress deadline exceeded before sending")
         try:
             conn.endheaders(request.body or None)
-            response = conn.getresponse()
+            response = cast(_StrictHTTPResponse, conn.getresponse())
             if 100 <= response.status < 200:
                 raise EgressGuardError("unexpected interim response", request_dispatched=True)
-            headers = _response_headers(response)
+            headers = response.egress_headers
             content = _read_body(response, max_bytes)
             if deadline.fired.is_set():
                 raise EgressResponseTimeout()
@@ -488,7 +672,7 @@ def _h11_request_bytes(request: _PreparedRequest) -> tuple[h11.Connection, bytes
 
 
 async def _h11_response(
-    client: h11.Connection, reader: asyncio.StreamReader, max_bytes: int
+    client: h11.Connection, reader: asyncio.StreamReader, method: str, max_bytes: int
 ) -> PinnedHTTPResponse:
     status = 0
     headers: dict[str, str] = {}
@@ -498,16 +682,11 @@ async def _h11_response(
         if event is h11.NEED_DATA:
             client.receive_data(await reader.read(_READ_CHUNK_BYTES))
         elif isinstance(event, h11.InformationalResponse):
-            if event.status_code != 100:
-                raise EgressGuardError("unexpected interim response", request_dispatched=True)
+            _interim(event)
         elif isinstance(event, h11.Response):
             status = event.status_code
-            pairs = [(name.decode("latin-1"), value.decode("latin-1")) for name, value in event.headers]
-            if sum(len(name) + len(value) + 4 for name, value in pairs) > _MAX_RESPONSE_HEADER_BYTES:
-                raise EgressGuardError("response headers too large", request_dispatched=True)
-            headers = _join_headers(pairs)
-            declared = headers.get("content-length", "")
-            if declared.isdigit() and int(declared) > max_bytes:
+            headers = _final_head(event)
+            if _declared_length_exceeds(method, status, headers, max_bytes):
                 raise EgressGuardError("response exceeds size limit", request_dispatched=True)
         elif isinstance(event, h11.Data):
             body.extend(event.data)
@@ -520,14 +699,16 @@ async def _h11_response(
 
 
 async def _exchange_async(
-    request: _PreparedRequest, max_bytes: int, timeout: float, *, address: str
+    request: _PreparedRequest, max_bytes: int, timeout: float, *, destination: _Destination
 ) -> PinnedHTTPResponse:
     client, wire = _h11_request_bytes(request)
     writer: asyncio.StreamWriter | None = None
     sending = False
     try:
+        # DNS, connect, TLS and the whole exchange share one deadline; nothing blocks the loop.
         async with asyncio.timeout(timeout):
-            context = ssl.create_default_context() if request.https else None
+            address = await _resolve_async(destination)
+            context = _ssl_context() if request.https else None
             reader, writer = await asyncio.open_connection(
                 host=address,
                 port=request.port,
@@ -537,7 +718,7 @@ async def _exchange_async(
             sending = True
             writer.write(wire)
             await writer.drain()
-            return await _h11_response(client, reader, max_bytes)
+            return await _h11_response(client, reader, request.method, max_bytes)
     except EgressGuardError:
         raise
     except TimeoutError:
@@ -545,8 +726,7 @@ async def _exchange_async(
             raise EgressResponseTimeout() from None
         raise TimeoutError("egress deadline exceeded before sending") from None
     except h11.RemoteProtocolError as exc:
-        reason = "response headers too large" if exc.error_status_hint == 431 else "response is not valid HTTP"
-        raise EgressGuardError(reason, request_dispatched=True) from None
+        raise _protocol_failure(exc) from None
     except (OSError, EOFError, asyncio.IncompleteReadError) as exc:
         if not sending:
             raise
@@ -579,7 +759,7 @@ async def pinned_request(
 ) -> PinnedHTTPResponse:
     payload, content_type = _encode_body(body, json_body, content_type)
     request = _prepare_request(method, url, headers, body=payload, content_type=content_type)
-    address = _resolve_or_raise(
+    destination = _destination_or_raise(
         url,
         label=label,
         allow_private_hosts=allow_private_hosts,
@@ -588,7 +768,7 @@ async def pinned_request(
         allow_http_hosts=allow_http_hosts,
         require_https_in_prod=require_https_in_prod,
     )
-    return await _exchange_async(request, max_bytes, timeout, address=address)
+    return await _exchange_async(request, max_bytes, timeout, destination=destination)
 
 
 def pinned_request_sync(
@@ -611,7 +791,7 @@ def pinned_request_sync(
     deadline = _Deadline(timeout)
     payload, content_type = _encode_body(body, json_body, content_type)
     request = _prepare_request(method, url, headers, body=payload, content_type=content_type)
-    address = _resolve_or_raise(
+    destination = _destination_or_raise(
         url,
         label=label,
         allow_private_hosts=allow_private_hosts,
@@ -620,4 +800,7 @@ def pinned_request_sync(
         allow_http_hosts=allow_http_hosts,
         require_https_in_prod=require_https_in_prod,
     )
+    reason, address = _resolve(destination)
+    if reason:
+        raise EgressGuardError(reason)
     return _exchange(request, max_bytes, deadline, address=address)

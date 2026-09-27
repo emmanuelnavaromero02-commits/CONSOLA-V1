@@ -217,6 +217,30 @@ def test_responses_without_a_body_do_not_wait_for_one(send, method, payload, sta
 
 
 @pytest.mark.parametrize(
+    "method,payload,body",
+    [
+        ("HEAD", b"HTTP/1.1 200 OK\r\nContent-Length: 5000000\r\n\r\n", b""),
+        ("GET", b"HTTP/1.1 204 No Content\r\nContent-Length: 5000000\r\n\r\n", b""),
+        ("GET", b"HTTP/1.1 304 Not Modified\r\nContent-Length: 5000000\r\n\r\n", b""),
+        (
+            "GET",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 5000000\r\n\r\n"
+            b"2\r\nok\r\n0\r\n\r\n",
+            b"ok",
+        ),
+    ],
+    ids=["head", "204", "304", "chunked-overrides-length"],
+)
+def test_size_limit_ignores_a_length_that_does_not_frame_the_body(send, method, payload, body):
+    server = _Server(payload)
+    try:
+        response = send(server.url(), method=method, max_bytes=64)
+    finally:
+        server.close()
+    assert response.content == body
+
+
+@pytest.mark.parametrize(
     "payload",
     [
         b"HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n" + b"x" * 4096,
@@ -321,6 +345,12 @@ def test_oversized_response_headers_are_rejected(send):
         {"headers": {"X-Bad Name": "v"}},
         {"headers": {"X-Api-Key\r\nX-Injected": "v"}},
         {"headers": {"X-Nul": "a\x00b"}},
+        {"headers": {"X-Ctl": "a\x01b"}},
+        {"headers": {"X-Esc": "\x1b[0m"}},
+        {"headers": {"X-Vt": "a\x0bb"}},
+        {"headers": {"X-Ff": "a\x0cb"}},
+        {"headers": {"X-Del": "a\x7fb"}},
+        {"method": "POST", "body": b"x", "content_type": "text/plain\x01"},
         {"method": "GET\r\nX-Injected: 1"},
         {"path": "/api\r\nX-Injected: 1"},
         {"path": "/api\tx"},
@@ -424,7 +454,8 @@ def test_sync_and_async_paths_put_the_same_bytes_on_the_wire():
     payload = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-A: 1\r\n\r\n3\r\nabc\r\n0\r\n\r\n"
     sync_server = _Server(payload)
     async_server = _Server(payload)
-    kwargs = {"json_body": {"k": "v"}, "headers": {"X-Api-Key": "k"}, "allow_private_hosts": {HOST}, "timeout": 5}
+    headers = {"X-Api-Key": "k", "Authorization": "Bearer pasted ", "X-Tabbed": "\ta\tb\t", "X-Blank": " "}
+    kwargs = {"json_body": {"k": "v"}, "headers": headers, "allow_private_hosts": {HOST}, "timeout": 5}
     try:
         sync_response = egress_guard.pinned_request_sync("POST", sync_server.url(), **kwargs)
         async_response = asyncio.run(egress_guard.pinned_request("POST", async_server.url(), **kwargs))
@@ -435,6 +466,105 @@ def test_sync_and_async_paths_put_the_same_bytes_on_the_wire():
     assert bytes(sync_server.received).replace(str(sync_server.port).encode(), b"PORT") == bytes(
         async_server.received
     ).replace(str(async_server.port).encode(), b"PORT")
+    head = _request_head(sync_server)
+    assert b"Authorization: Bearer pasted" in head
+    assert b"X-Tabbed: a\tb" in head
+    assert any(line.rstrip(b" ") == b"X-Blank:" for line in head)
+
+
+# ---------------------------------------------------------------- one verdict on response heads
+
+
+def _outcome(call: Callable[[], egress_guard.PinnedHTTPResponse]) -> tuple:
+    try:
+        response = call()
+    except egress_guard.EgressGuardError as exc:
+        return ("error", str(exc), exc.request_dispatched)
+    return ("ok", response.status_code, response.headers, response.content)
+
+
+def _both_paths(payload: bytes, **kwargs) -> dict[str, tuple]:
+    kwargs = {"allow_private_hosts": {HOST}, "timeout": 5, "max_bytes": 64, **kwargs}
+    outcomes = {}
+    for transport in ("sync", "async"):
+        server = _Server(payload)
+        try:
+            if transport == "sync":
+                outcomes[transport] = _outcome(lambda: egress_guard.pinned_request_sync("GET", server.url(), **kwargs))
+            else:
+                outcomes[transport] = _outcome(
+                    lambda: asyncio.run(egress_guard.pinned_request("GET", server.url(), **kwargs))
+                )
+        finally:
+            server.close()
+    return outcomes
+
+
+_OK = b"HTTP/1.1 200 OK\r\n"
+
+
+def _fields(count: int) -> bytes:
+    return _OK + b"".join(b"X-H%d: v\r\n" % index for index in range(count - 1)) + b"Content-Length: 2\r\n\r\nok"
+
+
+_REJECTED_HEADS = {
+    "conflicting-content-length": _OK + b"Content-Length: 2\r\nContent-Length: 3\r\n\r\nokk",
+    "conflicting-length-list": _OK + b"Content-Length: 2, 3\r\n\r\nokk",
+    "negative-length": _OK + b"Content-Length: -1\r\n\r\nok",
+    "empty-length": _OK + b"Content-Length:\r\n\r\nok",
+    "space-before-colon": _OK + b"Content-Length : 2\r\n\r\nok",
+    "gzip-then-chunked": _OK + b"Transfer-Encoding: gzip, chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    "duplicated-transfer-encoding": _OK
+    + b"Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    "identity-transfer-encoding": _OK + b"Transfer-Encoding: identity\r\nContent-Length: 2\r\n\r\nok",
+    "nul-in-value": _OK + b"X-A: a\x00b\r\nContent-Length: 2\r\n\r\nok",
+    "bare-cr-in-value": _OK + b"X-A: a\rX-B: b\r\nContent-Length: 2\r\n\r\nok",
+    "vertical-tab-in-value": _OK + b"X-A: a\x0bb\r\nContent-Length: 2\r\n\r\nok",
+    "non-token-name": _OK + b"X(A): b\r\nContent-Length: 2\r\n\r\nok",
+    "continuation-first": _OK + b" X-A: b\r\nContent-Length: 2\r\n\r\nok",
+    "line-without-colon": _OK + b"From nobody\r\nContent-Length: 2\r\n\r\nok",
+    "http-2-status-line": b"HTTP/2.0 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    "http-1.2-status-line": b"HTTP/1.2 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    "not-http": b"NOT HTTP\r\n\r\n",
+    "eof-inside-head": _OK + b"Content-Length: 2\r\n",
+}
+
+
+@pytest.mark.parametrize("payload", list(_REJECTED_HEADS.values()), ids=list(_REJECTED_HEADS))
+def test_ambiguous_response_heads_are_rejected_by_both_paths(payload):
+    outcomes = _both_paths(payload)
+    assert outcomes["sync"] == outcomes["async"] == ("error", "response is not valid HTTP", True)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [_fields(100), _fields(101), b"HTTP/1.1 200 " + b"r" * 70000 + b"\r\n\r\n"],
+    ids=["100-fields", "101-fields", "oversized-status-line"],
+)
+def test_header_count_and_size_limits_match_on_both_paths(payload):
+    outcomes = _both_paths(payload)
+    assert outcomes["sync"] == outcomes["async"] == ("error", "response headers too large", True)
+
+
+@pytest.mark.parametrize(
+    "payload,headers,content",
+    [
+        (_fields(99), {**{f"x-h{index}": "v" for index in range(98)}, "content-length": "2"}, b"ok"),
+        (_OK + b"Content-Length: 2\r\nContent-Length: 2\r\n\r\nok", {"content-length": "2"}, b"ok"),
+        (_OK + b"Content-Length: 2, 2\r\n\r\nokEXTRA", {"content-length": "2"}, b"ok"),
+        (
+            _OK + b"Transfer-Encoding: Chunked \r\n\r\n2\r\nok\r\n0\r\n\r\n",
+            {"transfer-encoding": "chunked"},
+            b"ok",
+        ),
+        (_OK + b"X-Folded: a\r\n  b\r\nContent-Length: 2\r\n\r\nok", {"x-folded": "a b", "content-length": "2"}, b"ok"),
+        (b"HTTP/1.1 200\r\nContent-Length: 2\r\n\r\nok", {"content-length": "2"}, b"ok"),
+    ],
+    ids=["99-fields", "repeated-equal-length", "equal-length-list", "chunked-case-and-blanks", "folded", "no-reason"],
+)
+def test_unambiguous_heads_frame_the_same_body_on_both_paths(payload, headers, content):
+    outcomes = _both_paths(payload)
+    assert outcomes["sync"] == outcomes["async"] == ("ok", 200, headers, content)
 
 
 # ---------------------------------------------------------------- deadlines and cancellation
@@ -467,6 +597,94 @@ def test_deadline_spent_while_connecting_is_not_dispatched(send, monkeypatch):
         server.close()
     assert not isinstance(error.value, egress_guard.EgressGuardError)
     assert b"POST" not in bytes(server.received)
+
+
+def _slow_resolver(monkeypatch, delay: float) -> list[str]:
+    threads: list[str] = []
+
+    def getaddrinfo(host, port, *_args, **_kwargs):
+        threads.append(threading.current_thread().name)
+        time.sleep(delay)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port or 0))]
+
+    monkeypatch.setattr(egress_guard.socket, "getaddrinfo", getaddrinfo)
+    return threads
+
+
+def test_slow_dns_does_not_stall_the_event_loop(monkeypatch):
+    threads = _slow_resolver(monkeypatch, 1.0)
+    server = _Server(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+
+    async def scenario() -> tuple[egress_guard.PinnedHTTPResponse, float]:
+        gaps: list[float] = []
+        done = asyncio.Event()
+
+        async def ticker() -> None:
+            last = time.monotonic()
+            while not done.is_set():
+                await asyncio.sleep(0.02)
+                gaps.append(time.monotonic() - last)
+                last = time.monotonic()
+
+        ticking = asyncio.create_task(ticker())
+        try:
+            response = await egress_guard.pinned_request("GET", server.url(), timeout=5, allow_private_hosts={HOST})
+        finally:
+            done.set()
+            await ticking
+        return response, max(gaps)
+
+    try:
+        response, worst_gap = asyncio.run(scenario())
+    finally:
+        server.close()
+    assert response.content == b"ok"
+    assert worst_gap < 0.3, f"event loop stalled {worst_gap:.2f}s during DNS"
+    assert threads and threading.main_thread().name not in threads
+
+
+def test_the_async_deadline_covers_dns(monkeypatch):
+    _slow_resolver(monkeypatch, 1.0)
+    server = _Server(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+
+    async def scenario() -> tuple[BaseException | None, float]:
+        started = time.monotonic()
+        try:
+            await egress_guard.pinned_request(
+                "POST", server.url(), json_body={"n": 1}, timeout=0.5, allow_private_hosts={HOST}
+            )
+        except TimeoutError as exc:
+            return exc, time.monotonic() - started
+        return None, time.monotonic() - started
+
+    try:
+        error, elapsed = asyncio.run(scenario())
+    finally:
+        server.close()
+    assert isinstance(error, TimeoutError) and not isinstance(error, egress_guard.EgressGuardError)
+    assert elapsed < 0.9
+    assert server.accepted == 0
+
+
+def test_time_spent_resolving_counts_against_the_deadline(send, monkeypatch):
+    _slow_resolver(monkeypatch, 1.0)
+    server = _Server(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    try:
+        with pytest.raises(TimeoutError) as error:
+            send(server.url(), method="POST", json_body={"n": 1}, timeout=0.5)
+        time.sleep(0.2)
+    finally:
+        server.close()
+    assert not isinstance(error.value, egress_guard.EgressGuardError)
+    assert server.accepted == 0
+
+
+def test_async_resolution_applies_the_same_address_policy(monkeypatch):
+    monkeypatch.setattr(egress_guard.socket, "getaddrinfo", _resolve_to("169.254.169.254"))
+    with pytest.raises(egress_guard.EgressGuardError) as error:
+        asyncio.run(egress_guard.pinned_request("GET", "http://public.example/api", timeout=2))
+    assert str(error.value) == egress_guard.resolve_url_address("http://public.example/api")[0]
+    assert error.value.request_dispatched is False
 
 
 def test_cancelled_async_calls_release_their_sockets_and_block_nobody():
@@ -598,16 +816,20 @@ def tls_material(tmp_path_factory) -> dict[str, Path]:
 
 
 @pytest.fixture
-def trust(monkeypatch, tls_material) -> None:
+def trust(monkeypatch, tls_material) -> list[ssl.SSLContext]:
     real = ssl.create_default_context
+    built: list[ssl.SSLContext] = []
 
     def trusting(*args, **kwargs):
         context = real(*args, **kwargs)
         context.load_verify_locations(str(tls_material[HOST]))
         context.load_verify_locations(str(tls_material["other.invalid"]))
+        built.append(context)
         return context
 
     monkeypatch.setattr(egress_guard.ssl, "create_default_context", trusting)
+    monkeypatch.setattr(egress_guard, "_SSL_CONTEXT", None)
+    return built
 
 
 def _server_tls(tls_material, name: str, seen_sni: list[str]) -> ssl.SSLContext:
@@ -627,6 +849,20 @@ def test_tls_verifies_the_url_hostname_over_the_pinned_address(send, trust, tls_
     assert response.content == b"ok"
     assert seen == [HOST]
     assert _request_head(server)[0] == b"GET /x?q=1 HTTP/1.1"
+
+
+def test_the_verifying_context_is_built_once_for_both_paths(trust, tls_material):
+    seen: list[str] = []
+    server = _Server(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", tls=_server_tls(tls_material, HOST, seen))
+    kwargs = {"allow_private_hosts": {HOST}, "timeout": 5}
+    try:
+        for _ in range(2):
+            egress_guard.pinned_request_sync("GET", server.url(scheme="https"), **kwargs)
+            asyncio.run(egress_guard.pinned_request("GET", server.url(scheme="https"), **kwargs))
+    finally:
+        server.close()
+    assert len(trust) == 1
+    assert seen == [HOST] * 4
 
 
 def test_tls_rejects_a_certificate_for_another_name_before_sending(send, trust, tls_material):
