@@ -209,7 +209,8 @@ describe("Aprobar Excepción", () => {
     const confirm = dialogButton("Aprobar Excepción");
     expect(confirm?.hasAttribute("disabled")).toBe(true);
     await typeReason("corto");
-    expect(dialog()?.textContent).toContain("5/500 · mínimo 10 letras o números");
+    expect(dialog()?.textContent).toContain("5/10 letras o números · 5/500 caracteres");
+    expect(dialog()?.textContent).toContain("Faltan 5 letras o números");
     expect(confirm?.hasAttribute("disabled")).toBe(true);
     await act(async () => confirm?.click());
     expect(client.approve).not.toHaveBeenCalled();
@@ -264,13 +265,22 @@ describe("Aprobar Excepción", () => {
     expect(client.approve).not.toHaveBeenCalled();
   });
 
-  it("requires ten letters or digits, not ten characters", async () => {
+  it("requires ten letters or digits, not ten characters, and counts them", async () => {
     await render();
     await act(async () => button("Aprobar Excepción")?.click());
     await typeReason("! ! ! ! ! ! ! ! ! ! ! !");
     expect(dialogButton("Aprobar Excepción")?.hasAttribute("disabled")).toBe(true);
+    expect(dialog()?.textContent).toContain("0/10 letras o números · 23/500 caracteres");
+    await typeReason("Caso 1: ok");
+    expect(dialogButton("Aprobar Excepción")?.hasAttribute("disabled")).toBe(true);
+    expect(dialog()?.textContent).toContain("7/10 letras o números · 10/500 caracteres");
+    expect(dialog()?.textContent).toContain(
+      "Faltan 3 letras o números; los espacios y signos no cuentan.",
+    );
     await typeReason("Caso 12345: ok");
     expect(dialogButton("Aprobar Excepción")?.hasAttribute("disabled")).toBe(false);
+    expect(dialog()?.textContent).toContain("10/10 letras o números · 14/500 caracteres");
+    expect(dialog()?.textContent).not.toContain("Faltan");
   });
 
   it("keeps focus inside the dialog including the reason field and closes on Escape", async () => {

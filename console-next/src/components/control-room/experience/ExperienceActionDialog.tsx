@@ -11,6 +11,7 @@ import {
   normalizeReason,
   reasonHasHiddenCharacters,
   reasonIsValid,
+  reasonVisibleLength,
 } from "@/lib/control-room/use-control-room-experience-action";
 
 export const COUNCIL_LINK_LABEL = "Ver en el Consejo de Acciones";
@@ -122,6 +123,7 @@ function ActionDialog({
   const copy = dialogCopy[selection.kind as keyof typeof dialogCopy];
   const limits = REASON_LIMITS[selection.kind];
   const reasonLength = Array.from(normalizeReason(reason)).length;
+  const reasonLetters = reasonVisibleLength(reason);
   const canConfirm = !submitting && reasonIsValid(selection.kind, reason);
 
   useEffect(() => {
@@ -230,8 +232,13 @@ function ActionDialog({
               className="mt-1 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
             />
             <p id={counterId} className="mt-1 text-xs text-muted-foreground">
-              {`${reasonLength}/${limits.max} · mínimo ${limits.min} letras o números`}
+              {`${Math.min(reasonLetters, limits.min)}/${limits.min} letras o números · ${reasonLength}/${limits.max} caracteres`}
             </p>
+            {reasonLetters < limits.min ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {`Faltan ${limits.min - reasonLetters} letras o números; los espacios y signos no cuentan.`}
+              </p>
+            ) : null}
             {reasonHasHiddenCharacters(reason) ? (
               <p className="mt-1 text-xs font-medium text-destructive">
                 El motivo contiene caracteres invisibles o de control; escríbelo de nuevo.
