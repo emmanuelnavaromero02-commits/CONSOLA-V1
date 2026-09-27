@@ -379,16 +379,8 @@ async def test_system_suggestion_is_made_by_the_system_and_checked_by_a_person(
             assert suggestion.state == "pending_approval"
             assert suggestion.can_approve is True
             assert suggestion.decision_id is None
-            maker_view = await _proposal(scope.maker, origin="system")
-            assert maker_view.can_approve is False
-            assert maker_view.disabled_reason == (
-                "Requiere la aprobación de otra persona del equipo."
-            )
-            with pytest.raises(HTTPException) as writer_try:
-                await business_council_commands.approve_council_proposal(
-                    scope.maker, maker_view.proposal_id, idempotency_key="writer-sys-1"
-                )
-            assert writer_try.value.status_code == 403
+            admin_view = await _proposal(scope.maker, origin="system")
+            assert admin_view.can_approve is True
             approved = await business_council_commands.approve_council_proposal(
                 scope.checker, suggestion.proposal_id, idempotency_key="system-once-1"
             )
@@ -630,6 +622,105 @@ async def test_control_room_proposal_reaches_the_council_ready_for_another_perso
             scope.workspace_id,
             str(live["id"]),
         ) == 1
+    finally:
+        await pool.close()
+
+
+async def _tenant_scope(seed: AuthoritySeed) -> tuple[AuthorityScope, dict[str, Any]]:
+    base = seed.first
+    suffix = uuid.uuid4().hex[:8]
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        tenant_admin = await _new_user(
+            conn,
+            tenant_id=base.tenant_id,
+            workspace_id=base.workspace_id,
+            workspace_role="tenant_admin",
+            suffix=f"tenant-admin-{suffix}",
+        )
+        analyst = await _new_user(
+            conn,
+            tenant_id=base.tenant_id,
+            workspace_id=base.workspace_id,
+            workspace_role="analyst",
+            suffix=f"analyst-{suffix}",
+        )
+    finally:
+        await conn.close()
+    scope = AuthorityScope(
+        base.tenant_id,
+        base.workspace_id,
+        base.item_id,
+        tenant_admin,
+        base.checker,
+        base.item,
+    )
+    return scope, analyst
+
+
+@pytest.mark.asyncio
+async def test_tenant_admin_approves_system_suggestions_but_never_their_own_proposal(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    scope, analyst = await _tenant_scope(seed)
+    tenant_admin = scope.maker
+    own = await seed_authority_item(seed, scope, "tenant-own")
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        live = await _open_item(seed, scope, pool, "tenant-system")
+        with _patched(pool, _snapshot(scope, live, own.item)):
+            assert await prepare_followup_intent(tenant_admin, own.item_id)
+            decision_id = int(own.item["decision_id"])
+            proposal = await _proposal(tenant_admin, origin="person", decision_id=decision_id)
+            assert proposal.state == "needs_other_approver" and not proposal.can_approve
+            with pytest.raises(HTTPException) as own_try:
+                await business_council_commands.approve_council_proposal(
+                    tenant_admin, proposal.proposal_id, idempotency_key="tenant-own-1"
+                )
+            assert own_try.value.status_code == 403
+
+            suggestion = await _proposal(tenant_admin, origin="system")
+            assert suggestion.can_approve is True
+            analyst_view = await _proposal(analyst, origin="system")
+            assert analyst_view.can_approve is False
+            with pytest.raises(HTTPException) as analyst_try:
+                await business_council_commands.approve_council_proposal(
+                    analyst, analyst_view.proposal_id, idempotency_key="analyst-sys-1"
+                )
+            assert analyst_try.value.status_code == 403
+            approved = await business_council_commands.approve_council_proposal(
+                tenant_admin, suggestion.proposal_id, idempotency_key="tenant-sys-1"
+            )
+
+            other = await _proposal(scope.checker, origin="person", decision_id=decision_id)
+            assert other.can_approve is True
+            cross = await business_council_commands.approve_council_proposal(
+                scope.checker, other.proposal_id, idempotency_key="checker-own-1"
+            )
+        assert cross.decision_id == decision_id
+        row = await _item_row(seed, scope, str(live["id"]))
+        assert row["status"] == "approved" and row["execution_status"] == "executed"
+        assert row["metadata"]["writeback_result"]["maker"] == SYSTEM_MAKER
+        assert row["metadata"]["writeback_result"]["checker_user_id"] == tenant_admin["id"]
+        own_row = await _item_row(seed, scope, own.item_id)
+        assert own_row["metadata"]["writeback_result"]["maker"] == f"user:{tenant_admin['id']}"
+        assert own_row["metadata"]["writeback_result"]["checker_user_id"] == scope.checker["id"]
+        events = await _fetch(
+            seed,
+            """SELECT event.authorization_permission, event.actor_workspace_role
+                 FROM control_room_action_intent_events AS event
+                 JOIN control_room_action_intents AS intent ON intent.id = event.intent_id
+                WHERE intent.item_id = $1 AND event.event_type = 'approved'""",
+            own.item_id,
+        )
+        assert events == [
+            {
+                "authorization_permission": "control_room.approve",
+                "actor_workspace_role": "control_room_approver",
+            }
+        ]
+        assert approved.decision_id != decision_id
     finally:
         await pool.close()
 

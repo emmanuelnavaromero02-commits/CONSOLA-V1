@@ -24,16 +24,21 @@ def user_role(user: dict | None) -> str:
     return canonical_role(user.get("role"))
 
 
-def workspace_role(user: dict | None) -> str | None:
-
-    if not user or not user.get("workspace_role"):
+def canonical_workspace_role(role: str | None) -> str | None:
+    if not role:
         return None
-    resolved = canonical_role(user.get("workspace_role"))
+    resolved = canonical_role(role)
     if resolved in {"admin", "owner", "super_admin", "security_admin"}:
         return "workspace_admin"
     if resolved in ROLE_PERMISSIONS:
         return resolved
     return None
+
+
+def workspace_role(user: dict | None) -> str | None:
+    if not user:
+        return None
+    return canonical_workspace_role(user.get("workspace_role"))
 
 
 def get_effective_permissions(

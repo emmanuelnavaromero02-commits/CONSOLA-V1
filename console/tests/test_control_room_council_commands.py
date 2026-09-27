@@ -80,7 +80,13 @@ def test_person_maker_requires_a_real_user(value):
 
 def test_only_approvers_with_execute_are_council_checkers():
     assert require_council_checker(CHECKER) == 21
-    for user in (WRITER, PLATFORM, {**CHECKER, "workspace_role": "viewer"}):
+    assert require_council_checker(WRITER) == 9
+    assert require_council_checker({**PLATFORM, "workspace_role": "admin"}) == 1
+    for user in (
+        PLATFORM,
+        {**CHECKER, "workspace_role": "viewer"},
+        {**CHECKER, "workspace_role": "analyst"},
+    ):
         with pytest.raises(HTTPException) as denied:
             require_council_checker(user)
         assert denied.value.status_code == 403
@@ -124,7 +130,7 @@ def test_decisions_page_guard_uses_the_same_rule():
 
 def test_access_payload_exposes_decisions_to_the_council_roles():
     approver = access_ui_capabilities(
-        get_effective_permissions(CHECKER),
+        get_effective_permissions({"id": 21, "role": "user", "workspace_role": "control_room_approver"}),
         role_canonical="user",
         workspace_role_resolved="control_room_approver",
     )
@@ -314,14 +320,15 @@ async def test_non_opaque_proposal_ids_never_reach_the_service():
 
 
 @pytest.mark.asyncio
-async def test_writer_cannot_approve_before_touching_the_database():
+async def test_plain_users_cannot_approve_before_touching_the_database():
     pool = AsyncMock(side_effect=AssertionError("database touched"))
     with patch.object(commands.auth, "pool", pool):
-        with pytest.raises(HTTPException) as denied:
-            await commands.approve_council_proposal(
-                WRITER, HANDLE, idempotency_key="key-12345"
-            )
-    assert denied.value.status_code == 403
+        for user in (PLATFORM, {**CHECKER, "workspace_role": "analyst"}):
+            with pytest.raises(HTTPException) as denied:
+                await commands.approve_council_proposal(
+                    user, HANDLE, idempotency_key="key-12345"
+                )
+            assert denied.value.status_code == 403
     pool.assert_not_awaited()
 
 

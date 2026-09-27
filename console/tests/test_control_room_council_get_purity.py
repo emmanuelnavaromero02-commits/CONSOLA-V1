@@ -267,15 +267,19 @@ async def test_system_suggestions_need_a_stored_matching_observation():
         CouncilConn(direct=[direct_row(live, decision_id=5, decision_workspace_id=WORKSPACE_ID)]),
         live,
     )
-    writer = await _council(MAKER, CouncilConn(direct=[direct_row(live)]), live)
+    admin = await _council(MAKER, CouncilConn(direct=[direct_row(live)]), live)
+    analyst = {**MAKER, "id": 40, "role": "user", "workspace_role": "analyst"}
+    reader = await _council(analyst, CouncilConn(direct=[direct_row(live)]), live)
 
     (suggestion,) = matched.proposals
     assert suggestion.origin == "system" and suggestion.decision_id is None
     assert suggestion.state == "pending_approval" and suggestion.can_approve
     assert missing.proposals == drifted.proposals == linked.proposals == []
-    (writer_view,) = writer.proposals
-    assert not writer_view.can_approve and not writer_view.can_discard
-    assert writer_view.disabled_reason == "Requiere la aprobación de otra persona del equipo."
+    (admin_view,) = admin.proposals
+    assert admin_view.can_approve and admin_view.can_discard
+    (reader_view,) = reader.proposals
+    assert not reader_view.can_approve and not reader_view.can_discard
+    assert reader_view.disabled_reason == "Requiere la aprobación de otra persona del equipo."
 
 
 @pytest.mark.asyncio
