@@ -102,19 +102,6 @@ def _scope(user: Mapping[str, Any] | None) -> tuple[str, str]:
     return tenant_id, workspace_id
 
 
-def _extra(row: Mapping[str, Any]) -> dict[str, Any]:
-    value = row.get("extra")
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str) and value.strip():
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
-
-
 async def load_recovery_candidates(
     conn: Any,
     *,

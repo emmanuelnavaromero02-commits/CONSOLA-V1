@@ -5235,7 +5235,7 @@
     },
     {
       "path": "tests/test_mcp_tool_policy.py",
-      "sha256": "9d03ddd5225f8b7b92604410fa1e7f3b3cc706c02fbee50010116c562a5a29ad"
+      "sha256": "2612fedead1bca9b9ffa6e95e8e380108b2b83309ef9e1a6a4d47ff1908a37bc"
     },
     {
       "path": "tests/test_me_access_panel_contract.py",

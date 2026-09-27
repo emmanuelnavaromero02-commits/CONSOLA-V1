@@ -28,6 +28,8 @@ def test_mcp_mutating_tools_require_approval():
         "airflow_create_dag",
         "airflow_delete_dag",
         "airflow_set_variable",
+        "airflow_unpause_manual_dag",
+        "airflow_mark_dag_run_failed",
         "postgres_execute_ddl",
         "vault_delete_connection",
         "agent_delete",
@@ -96,6 +98,14 @@ def test_control_room_read_tools_are_readonly_without_approval():
 def test_market_context_read_is_readonly_without_approval():
     manifest = _load_tool_manifest()
     meta = manifest.classify_tool("market_context_read")
+
+    assert meta["risk_level"] == "read"
+    assert meta["requires_approval"] is False
+
+
+def test_airflow_describe_dag_is_readonly_without_approval():
+    manifest = _load_tool_manifest()
+    meta = manifest.classify_tool("airflow_describe_dag")
 
     assert meta["risk_level"] == "read"
     assert meta["requires_approval"] is False
