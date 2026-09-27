@@ -205,6 +205,35 @@ def _is_reserved(row: Mapping[str, Any]) -> bool:
     return bool(pipeline_run_extra(dict(row)).get("reserved"))
 
 
+def running_liveness(
+    truth: AirflowRunTruth,
+    *,
+    now: datetime,
+    threshold: timedelta = DEFAULT_THRESHOLD,
+    fallback_start: Any = None,
+) -> str:
+    """Whether an Airflow run in state running still works.
+
+    Returns LIVE (an active task, or task activity inside the threshold),
+    STALLED_RUNNING_NO_TASKS, UNVERIFIABLE (task instances unknown) or
+    "scheduler_unhealthy" (idle, but only a healthy scheduler proves it).
+    """
+    if truth.active_tasks is None:
+        return UNVERIFIABLE
+    if truth.active_tasks > 0:
+        return LIVE
+    last_activity = truth.last_task_activity_at or truth.start_date or fallback_start
+    idle = _age(as_utc_datetime(now) or datetime.now(timezone.utc), last_activity)
+    if idle is not None and idle < threshold:
+        return LIVE
+    if truth.dag_paused is True:
+        # A paused DAG schedules no further tasks: the pause explains it.
+        return STALLED_RUNNING_NO_TASKS
+    if truth.scheduler_healthy is not True:
+        return "scheduler_unhealthy"
+    return STALLED_RUNNING_NO_TASKS
+
+
 def classify_stuck_run(
     row: Mapping[str, Any],
     truth: AirflowRunTruth | None,
@@ -244,28 +273,20 @@ def classify_stuck_run(
         return _verdict(TOO_RECENT)
 
     if state == "running":
-        if truth.active_tasks is None:
-            return _verdict(UNVERIFIABLE, certain=False)
-        if truth.active_tasks > 0:
-            return _verdict(LIVE)
-        last_activity = (
-            truth.last_task_activity_at or truth.start_date or row.get("started_at")
+        liveness = running_liveness(
+            truth, now=now, threshold=threshold, fallback_start=row.get("started_at")
         )
-        idle = _age(now, last_activity)
-        if idle is not None and idle < threshold:
+        if liveness == LIVE:
             return _verdict(LIVE)
-        if truth.dag_paused is True:
-            # A paused DAG schedules no further tasks: the pause explains it.
-            return _verdict(
-                STALLED_RUNNING_NO_TASKS, action=ACTION_MARK_FAILED, neutralize=True
-            )
-        if truth.scheduler_healthy is not True:
+        if liveness == "scheduler_unhealthy":
             return _verdict(
                 UNVERIFIABLE, reason_key="scheduler_unhealthy", certain=False
             )
-        return _verdict(
-            STALLED_RUNNING_NO_TASKS, action=ACTION_MARK_FAILED, neutralize=True
-        )
+        if liveness == STALLED_RUNNING_NO_TASKS:
+            return _verdict(
+                STALLED_RUNNING_NO_TASKS, action=ACTION_MARK_FAILED, neutralize=True
+            )
+        return _verdict(UNVERIFIABLE, certain=False)
 
     if state == "queued":
         if truth.dag_paused is True:
@@ -416,4 +437,5 @@ __all__ = (
     "plan_entry",
     "pre_airflow_verdict",
     "recover_update_sql",
+    "running_liveness",
 )

@@ -32,6 +32,7 @@ from app.domains.pipeline.stuck_run_recovery import (
     NOT_APPLICABLE,
     RECOVERY_MESSAGE,
     STALLED_CLASSES,
+    STALLED_RUNNING_NO_TASKS,
     UNVERIFIABLE,
     AirflowRunTruth,
     RunVerdict,
@@ -42,6 +43,7 @@ from app.domains.pipeline.stuck_run_recovery import (
     plan_entry,
     pre_airflow_verdict,
     recover_update_sql,
+    running_liveness,
 )
 from app.services.db_scope import SET_SCOPE_SQL
 
@@ -261,27 +263,9 @@ async def observe_airflow_truth(
             active_tasks: int | None = None
             last_activity: datetime | None = None
             if found and state == "running":
-                try:
-                    tasks_payload = await invoke(
-                        "infra",
-                        "airflow_list_task_instances",
-                        {"dag_id": dag_id, "dag_run_id": dag_run_id},
-                        user=user,
-                    )
-                except Exception:  # noqa: BLE001
-                    tasks_payload = None
-                if isinstance(tasks_payload, dict) and not tasks_payload.get("error"):
-                    tasks = [
-                        task
-                        for task in tasks_payload.get("tasks") or []
-                        if isinstance(task, dict)
-                    ]
-                    active_tasks = sum(
-                        1
-                        for task in tasks
-                        if str(task.get("state") or "").lower() in ACTIVE_TASK_STATES
-                    )
-                    last_activity = _latest_task_activity(tasks)
+                active_tasks, last_activity = await _task_activity(
+                    dag_id, dag_run_id, invoke=invoke, user=user
+                )
             return AirflowRunTruth(
                 found=bool(found),
                 state=state,
@@ -321,6 +305,29 @@ async def observe_airflow_truth(
             elif describe_results is not None and not future.cancelled():
                 describe_results[dag_id] = future.result()
     return dict(zip(keys, results))
+
+
+async def _task_activity(
+    dag_id: str, dag_run_id: str, *, invoke: McpInvoke, user: dict | None
+) -> tuple[int | None, datetime | None]:
+    """Active task instances and last task activity; (None, None) when unknown."""
+    try:
+        payload = await invoke(
+            "infra",
+            "airflow_list_task_instances",
+            {"dag_id": dag_id, "dag_run_id": dag_run_id},
+            user=user,
+        )
+    except Exception:  # noqa: BLE001 - unknown activity never authorizes a stop
+        logger.debug("task listing failed for %s/%s", dag_id, dag_run_id, exc_info=True)
+        return None, None
+    if not isinstance(payload, dict) or payload.get("error"):
+        return None, None
+    tasks = [task for task in payload.get("tasks") or [] if isinstance(task, dict)]
+    active = sum(
+        1 for task in tasks if str(task.get("state") or "").lower() in ACTIVE_TASK_STATES
+    )
+    return active, _latest_task_activity(tasks)
 
 
 async def load_orphan_dag_ids(
@@ -466,25 +473,36 @@ async def find_airflow_orphans(
         if str(row.get("run_id") or "") in exclude_run_ids:
             continue
         dag_id, run, dag = pending[airflow_id]
-        orphans.append(
-            (
-                row,
-                AirflowRunTruth(
-                    found=True,
-                    state=str(run.get("state") or "").lower(),
-                    queued_at=as_utc_datetime(run.get("queued_at")),
-                    start_date=as_utc_datetime(run.get("start_date")),
-                    dag_found=True,
-                    dag_paused=True,
-                    schedule_kind=str(dag.get("schedule_kind") or "") or None,
-                    scheduler_healthy=(
-                        bool(dag.get("scheduler_healthy"))
-                        if dag.get("scheduler_healthy") is not None
-                        else None
-                    ),
-                ),
+        state = str(run.get("state") or "").lower()
+        active_tasks: int | None = None
+        last_activity: datetime | None = None
+        if state == "running":
+            # A console row can close before the DAG's last tasks finish
+            # (extract_all saves its summary, then refreshes downstream).
+            active_tasks, last_activity = await _task_activity(
+                dag_id, airflow_id, invoke=invoke, user=user
             )
+        truth = AirflowRunTruth(
+            found=True,
+            state=state,
+            queued_at=as_utc_datetime(run.get("queued_at")),
+            start_date=as_utc_datetime(run.get("start_date")),
+            active_tasks=active_tasks,
+            last_task_activity_at=last_activity,
+            dag_found=True,
+            dag_paused=True,
+            schedule_kind=str(dag.get("schedule_kind") or "") or None,
+            scheduler_healthy=(
+                bool(dag.get("scheduler_healthy"))
+                if dag.get("scheduler_healthy") is not None
+                else None
+            ),
         )
+        if state == "running" and running_liveness(
+            truth, now=now, threshold=threshold, fallback_start=row.get("started_at")
+        ) != STALLED_RUNNING_NO_TASKS:
+            continue
+        orphans.append((row, truth))
     return orphans
 
 

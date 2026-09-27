@@ -306,7 +306,7 @@ def _recover(conn, invoke, *, record=None, refresh=None, **kwargs):
             get_db_pool=get_pool,
             refresh_dag_run_status=refresh or refresh_status,
             record_event=record or record_event,
-            now=NOW,
+            now=kwargs.pop("now", NOW),
             **kwargs,
         )
     )
@@ -765,3 +765,88 @@ def test_orphans_need_neutralization_permission_and_the_orphan_class():
     assert report.runs[0]["action"] == "none"
     assert events == []
     assert not [entry for entry in journal if entry[0] == "neutralize"]
+
+
+def _running_orphan_setup(tasks=None, raise_on=()):
+    journal = []
+    conn = FakeConn(
+        journal,
+        candidates=[],
+        dag_rows=[{"dag_id": "sap_successfactors_extract_all"}],
+        orphan_rows=[_orphan_row(status="success")],
+    )
+    invoke = _invoke_factory(
+        journal,
+        describe={"sap_successfactors_extract_all": _orphan_describe(state="running", age=timedelta(hours=2))},
+        tasks={"manual__orphan": tasks} if tasks is not None else None,
+        raise_on=raise_on,
+    )
+    return journal, conn, invoke
+
+
+def test_running_orphan_with_an_active_task_is_left_alone():
+    """extract_all closes its console row, then trigger_refresh_chain still runs."""
+    journal, conn, invoke = _running_orphan_setup(
+        tasks={
+            "found": True,
+            "tasks": [
+                {"task_id": "trigger_extract_all", "state": "success", "start_date": (NOW - timedelta(hours=2)).isoformat(), "end_date": (NOW - timedelta(minutes=50)).isoformat()},
+                {"task_id": "trigger_refresh_chain", "state": "running", "start_date": (NOW - timedelta(minutes=49)).isoformat(), "end_date": None},
+            ],
+        }
+    )
+    report, events = _recover(conn, invoke, orphan_scan=True)
+    assert report.runs == []
+    assert events == []
+    tools = [tool for _s, tool, _a in invoke.calls]
+    assert "airflow_list_task_instances" in tools
+    assert "airflow_mark_dag_run_failed" not in tools
+    assert not [entry for entry in journal if entry[0] == "neutralize"]
+
+
+def test_running_orphan_with_recent_task_activity_is_left_alone():
+    journal, conn, invoke = _running_orphan_setup(
+        tasks={"found": True, "tasks": [{"task_id": "trigger_extract_all", "state": "success", "start_date": (NOW - timedelta(hours=2)).isoformat(), "end_date": (NOW - timedelta(minutes=3)).isoformat()}]}
+    )
+    report, events = _recover(conn, invoke, orphan_scan=True)
+    assert report.runs == []
+    assert not [entry for entry in journal if entry[0] == "neutralize"]
+
+
+def test_running_orphan_with_unknown_task_state_is_left_alone():
+    journal, conn, invoke = _running_orphan_setup(raise_on={"airflow_list_task_instances"})
+    report, events = _recover(conn, invoke, orphan_scan=True)
+    assert report.runs == []
+    assert not [entry for entry in journal if entry[0] == "neutralize"]
+
+
+def test_idle_running_orphan_on_a_paused_dag_is_stopped():
+    journal, conn, invoke = _running_orphan_setup(
+        tasks={"found": True, "tasks": [{"task_id": t, "state": None, "start_date": None, "end_date": None} for t in ("trigger_extract_all", "trigger_refresh_chain")]}
+    )
+    report, events = _recover(conn, invoke, orphan_scan=True)
+    assert [(run["classification"], run["action"]) for run in report.runs] == [("airflow_orphan", "neutralize_airflow")]
+    mark_args = next(args for _s, tool, args in invoke.calls if tool == "airflow_mark_dag_run_failed")
+    assert mark_args["expected_states"] == ["running"]
+    assert events[0]["metadata"]["classification"] == "airflow_orphan"
+
+
+def test_production_plan_closes_the_stuck_extract_all_and_skips_sync_now():
+    prod_now = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+    run_id = "manual__2026-09-26T07:57:00+00:00"
+    stuck = _row(run_id=run_id, airflow_dag_run_id=run_id, dag_id="sap_successfactors_extract_all", entity="__extract_all__", status="running", started_at=datetime(2026, 9, 26, 7, 57, tzinfo=timezone.utc))
+    sync_row = _row(run_id="sync_now:sap_successfactors:abc", airflow_dag_run_id=None, dag_id="sync_now", entity="__sync_now__", status="running", started_at=datetime(2026, 9, 26, 7, 56, tzinfo=timezone.utc))
+    journal = []
+    conn = FakeConn(journal, candidates=[sync_row, stuck], dag_rows=[{"dag_id": "sap_successfactors_extract_all"}], orphan_rows=[])
+    invoke = _invoke_factory(
+        journal,
+        describe={"sap_successfactors_extract_all": {"found": True, "is_paused": True, "schedule_kind": "manual", "scheduler_healthy": True, "runs": [{"dag_run_id": run_id, "state": "running", "queued_at": "2026-09-26T07:57:00+00:00", "start_date": "2026-09-26T08:17:00+00:00", "conf": {"tenant_id": TENANT, "workspace_id": WORKSPACE}}], "running_truncated": False, "foreign": {"queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0}}},
+        statuses={run_id: {"found": True, "state": "running", "start_date": "2026-09-26T08:17:00+00:00"}},
+        tasks={run_id: {"found": True, "tasks": [{"task_id": t, "state": None, "start_date": None, "end_date": None} for t in ("a", "b", "c")]}},
+    )
+    report, _events = _recover(conn, invoke, mode="dry_run", orphan_scan=True, now=prod_now)
+    plan = {run["run_id"]: (run["classification"], run["action"]) for run in report.runs}
+    assert plan == {
+        run_id: ("stalled_running_no_tasks", "mark_failed"),
+        "sync_now:sap_successfactors:abc": ("not_applicable", "none"),
+    }

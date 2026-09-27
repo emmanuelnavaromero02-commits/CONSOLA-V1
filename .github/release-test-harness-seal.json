@@ -5499,7 +5499,7 @@
     },
     {
       "path": "tests/test_pipeline_stuck_run_recovery.py",
-      "sha256": "45f50669eda9dff08d0d6b18b6b5ac0d353d64dba9370d4ae71b90c67ac3d873"
+      "sha256": "fc0672ac46e2cfceeb4aaf32de3270d5ec1085fd02957bce61f0159748cc1941"
     },
     {
       "path": "tests/test_pipeline_successfactors_reservation.py",
