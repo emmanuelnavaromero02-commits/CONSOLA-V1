@@ -38,12 +38,7 @@ def write_scoped_kb_table(
     tenant_id: str,
     workspace_id: str,
 ) -> int:
-    """Replace one tenant/workspace slice of ``knowledge_bits.<table>`` in one transaction.
-
-    The table is created from the frame's shape when missing, is always left with
-    ENABLE + FORCE row level security and the ``kb_workspace_scope`` policy, and is
-    refused when another role owns it or when it is not a plain table.
-    """
+    """Replace one tenant/workspace slice of knowledge_bits.<table> under FORCE RLS in one transaction."""
     name = _table_name(table)
     tenant = _scope_value(tenant_id, "tenant")
     workspace = _scope_value(workspace_id, "workspace")

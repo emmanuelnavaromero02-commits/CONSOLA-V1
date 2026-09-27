@@ -1,8 +1,4 @@
--- Legacy unscoped rows and platform templates stay reachable only from sessions
--- that carry no workspace scope AND the verified platform-admin flag the
--- services set after authorizing the caller (app.platform_admin = 'true').
--- An unscoped session without the flag sees no legacy rows and cannot write
--- platform templates. Same signature, language and volatility as 99w.
+-- Platform audit context requires no workspace scope and app.platform_admin = 'true'.
 
 CREATE OR REPLACE FUNCTION omega_20b_platform_audit_context()
 RETURNS boolean

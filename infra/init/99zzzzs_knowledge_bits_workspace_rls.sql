@@ -1,9 +1,4 @@
--- Knowledge-bit tables hold tenant/workspace data. Every plain table in the
--- knowledge_bits schema gets FORCE row level security keyed on its text
--- tenant_id/workspace_id columns and keeps only the kb_workspace_scope policy;
--- a table without both columns cannot be scoped and moves to
--- knowledge_bits_quarantine. Only the Replicon cartridge still writes here, so
--- the other cartridge roles lose any knowledge_bits privilege.
+-- knowledge_bits tables: FORCE RLS on tenant/workspace text columns, or quarantine.
 
 CREATE OR REPLACE FUNCTION omega_rls_workspace_text_matches(row_tenant text, row_workspace text)
 RETURNS boolean

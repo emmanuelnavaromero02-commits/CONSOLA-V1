@@ -3,9 +3,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/secret-scan.yml"
+SECURITY_WORKFLOW = ROOT / ".github/workflows/security.yml"
 HISTORY_CONFIG = ROOT / ".gitleaks-history.toml"
 
 
@@ -33,8 +36,9 @@ def test_history_job_does_not_disable_git():
     assert "--no-git" not in job
 
 
-def test_both_jobs_pin_the_same_scanner_version():
-    versions = set(re.findall(r"zricethezav/gitleaks:(v[\d.]+)", _workflow()))
+def test_every_scan_pins_the_same_scanner_version():
+    text = _workflow() + SECURITY_WORKFLOW.read_text(encoding="utf-8")
+    versions = set(re.findall(r"zricethezav/gitleaks:(v[\d.]+)", text))
     assert len(versions) == 1, f"jobs disagree on the scanner version: {versions}"
 
 
@@ -59,9 +63,12 @@ def test_every_allowlisted_commit_carries_a_written_reason():
 TREE_CONFIG = ROOT / ".gitleaks.toml"
 
 
-def _pr_range_job() -> str:
-    text = _workflow()
-    return text[text.index("gitleaks-pr-range:") :]
+def _security_jobs() -> dict:
+    return yaml.safe_load(SECURITY_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+
+def _run(job: dict) -> str:
+    return "\n".join(step.get("run", "") for step in job["steps"])
 
 
 def test_tree_config_exempts_no_paths():
@@ -94,11 +101,31 @@ def test_history_path_allowances_are_dated_and_explained():
 
 
 def test_pull_request_commits_are_scanned_with_the_strict_tree_config():
-    job = _pr_range_job()
-    assert "if: github.event_name == 'pull_request'" in job
-    assert re.search(r"fetch-depth:\s*0", job)
-    assert "BASE_REF: ${{ github.base_ref }}" in job
-    assert '--log-opts="origin/${BASE_REF}..HEAD"' in job
-    assert "--config /repo/.gitleaks.toml" in job
-    assert "--no-git" not in job
-    assert "${{ github.base_ref }}" not in job.split("run: |", 1)[1]
+    job = _security_jobs()["gitleaks-pr-range"]
+    assert job["if"] == "github.event_name == 'pull_request'"
+    assert job["steps"][0]["with"]["fetch-depth"] == 0
+    step = job["steps"][1]
+    assert step["env"] == {"BASE_REF": "${{ github.base_ref }}"}
+    assert '--log-opts="origin/${BASE_REF}..HEAD"' in step["run"]
+    assert "--config /repo/.gitleaks.toml" in step["run"]
+    assert "--no-git" not in step["run"]
+    assert "${{" not in step["run"]
+
+
+def test_strict_scans_gate_the_merge_through_security_gate():
+    jobs = _security_jobs()
+    tree = _run(jobs["gitleaks-tree"])
+    assert "if" not in jobs["gitleaks-tree"]
+    assert "needs" not in jobs["gitleaks-tree"]
+    assert "--no-git" in tree and "--config /repo/.gitleaks.toml" in tree
+    gate = jobs["security-gate"]
+    assert {"gitleaks-tree", "gitleaks-pr-range"} <= set(gate["needs"])
+    script = gate["steps"][0]["run"]
+    assert 'expect_result "gitleaks-tree" "${GITLEAKS_TREE_RESULT-}" "success"' in script
+    assert 'expect_result "gitleaks-pr-range" "${GITLEAKS_PR_RANGE_RESULT-}" "$expected_pr_range"' in script
+
+
+def test_secret_scan_workflow_keeps_only_the_history_scan():
+    jobs = yaml.safe_load(_workflow())["jobs"]
+    assert set(jobs) == {"gitleaks-history"}
+    assert "--config /repo/.gitleaks-history.toml" in _run(jobs["gitleaks-history"])

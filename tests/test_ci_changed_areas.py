@@ -652,7 +652,17 @@ def test_lakehouse_change_rebuilds_every_image_that_copies_it():
     }
     for market in ("banxico", "inegi", "sec_edgar"):
         assert f"cartridges/{market}/tests" in str(flags["cartridge_test_targets"]).split()
-    assert {"tests/lakehouse", "tests/test_omega_lakehouse_storage_scope.py"} <= _root_targets(flags)
+    assert {
+        "tests/lakehouse",
+        "tests/test_omega_lakehouse_storage_scope.py",
+        "tests/test_omega_cartridge_kit_sql_guard.py",
+        "tests/test_cartridge_kb_scope_20c.py",
+        "tests/test_cartridge_scope_propagation.py",
+    } <= _root_targets(flags)
+    assert flags["refinement_tests"] is True
+    assert flags["console_tests"] is True
+    assert flags["python_runtime"] is True
+    assert flags["release_full_stack"] is True
 
 
 def test_every_image_copying_a_shared_package_is_registered_as_its_consumer():

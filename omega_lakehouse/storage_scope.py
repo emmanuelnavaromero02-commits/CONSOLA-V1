@@ -5,11 +5,7 @@ import unicodedata
 from typing import Any, Iterable
 
 
-# Position of the tenant_id= segment for each storage root; workspace_id= follows it.
-#   raw/<cartridge>/<entity>/tenant_id=/workspace_id=/...
-#   silver|gold/<cartridge>/<dataset>/tenant_id=/workspace_id=/...
-#   knowledge_bits/<cartridge>/<kb>/tenant_id=/workspace_id=/...
-#   uploads/<cartridge>/tenant_id=/workspace_id=/...
+# Segment index of tenant_id= per root; workspace_id= follows it.
 SCOPE_INDEX_BY_ROOT: dict[str, int] = {
     "raw": 3,
     "silver": 3,
@@ -163,11 +159,7 @@ def require_scoped_reader_uri(
     tenant: str | None,
     workspace: str | None,
 ) -> str:
-    """Validate the exact reader literal; nothing is decoded or normalized.
-
-    ``tenant``/``workspace`` both ``None`` checks shape and prefix only (templates
-    validated before a scope is known); any other value demands the exact scope.
-    """
+    """Validate the exact reader literal; tenant and workspace both None skip the scope check."""
     value = uri if isinstance(uri, str) else ""
     if not value or value != value.strip():
         raise ReaderUriError("canonical")

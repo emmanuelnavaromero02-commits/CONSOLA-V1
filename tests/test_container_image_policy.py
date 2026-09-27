@@ -11,8 +11,6 @@ CARTRIDGE_DOCKERFILES = sorted((REPO / "cartridges").glob("*/Dockerfile"))
 SERVICE_DOCKERFILES = [
     REPO / name / "Dockerfile" for name in ("console", "mcp-infra", "refinement", "vault", "workspace")
 ]
-# Service images that still ship single-stage builds or code owned by the runtime
-# user. They are follow-up work; the list must shrink as each one is fixed.
 FOLLOW_UP_EXCEPTIONS = {
     "console/Dockerfile",
     "mcp-infra/Dockerfile",

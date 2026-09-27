@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -266,10 +267,33 @@ def test_airflow_is_served_only_on_the_host_loopback():
     assert 'AIRFLOW__WEBSERVER__BASE_URL:         "${AIRFLOW_PUBLIC_URL:-http://airflow:8080}"' in compose
     assert "AIRFLOW_URL:                          http://airflow:8080/airflow" in compose
     assert 'AIRFLOW_HEALTH_PATH:                  "${AIRFLOW_HEALTH_PATH:-/airflow/health}"' in compose
-    assert 'AIRFLOW_PUBLIC_URL="${AIRFLOW_PUBLIC_URL:-http://localhost:8082/airflow}"' in entrypoint
+    assert re.findall(r"(?m)^\s*AIRFLOW_PUBLIC_URL=.*$", entrypoint) == [
+        'AIRFLOW_PUBLIC_URL="http://localhost:8082/airflow"'
+    ]
     localhost_guard = entrypoint.split("must not point to localhost in production", 1)[0].rsplit("for url_var in", 1)[1]
     assert "AIRFLOW_PUBLIC_URL" not in localhost_guard.split(";", 1)[0]
     assert "/airflow" not in gcp_lb
     assert "airflow" not in gcp_lb
     assert '"8082"' not in gcp_network
     assert 'name = "airflow"' not in gcp_compute
+
+
+def test_entrypoint_ignores_a_public_airflow_url_left_in_the_host_config(tmp_path: Path):
+    entrypoint = _read(REPO / "scripts/aws-entrypoint.sh")
+    source_at = entrypoint.index('source "$ENV_CONFIG"')
+    assign_at = entrypoint.index('AIRFLOW_PUBLIC_URL="http://localhost:8082/airflow"')
+    write_at = entrypoint.index('write_env "$config_name" "${!config_name}"')
+    assert source_at < assign_at < write_at
+    writes = entrypoint[entrypoint.rindex("for config_name in", 0, write_at) : write_at]
+    assert "AIRFLOW_PUBLIC_URL" in writes
+
+    config = tmp_path / "aws-entrypoint.env"
+    config.write_text("AIRFLOW_PUBLIC_URL=https://console.example.com/airflow\n", encoding="utf-8")
+    assignment = entrypoint[assign_at : entrypoint.index("\n", assign_at)]
+    result = subprocess.run(
+        ["bash", "-c", f'source "$1"; {assignment}; printf %s "$AIRFLOW_PUBLIC_URL"', "probe", str(config)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == "http://localhost:8082/airflow"

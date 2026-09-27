@@ -131,6 +131,36 @@ jobs:
           npm ci
           npm audit --audit-level=high
 
+  gitleaks-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: gitleaks (working tree, strict config)
+        run: |
+          docker run --rm -v "$PWD":/repo -w /repo zricethezav/gitleaks:v8.24.3 \
+            detect --source /repo --no-git --redact \
+            --config /repo/.gitleaks.toml
+
+  gitleaks-pr-range:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks (pull request commits, strict config)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          docker run --rm -v "$PWD":/repo -w /repo zricethezav/gitleaks:v8.24.3 \
+            detect --source /repo --redact \
+            --config /repo/.gitleaks.toml \
+            --log-opts="origin/${BASE_REF}..HEAD"
+
   no-security-scan-needed:
     needs: changes
     if: |
@@ -150,6 +180,8 @@ jobs:
       - pip-audit
       - npm-audit
       - no-security-scan-needed
+      - gitleaks-tree
+      - gitleaks-pr-range
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -166,6 +198,9 @@ jobs:
           PIP_AUDIT_RESULT: ${{ needs['pip-audit'].result }}
           NPM_AUDIT_RESULT: ${{ needs['npm-audit'].result }}
           NO_SECURITY_SCAN_NEEDED_RESULT: ${{ needs['no-security-scan-needed'].result }}
+          EVENT_NAME: ${{ github.event_name }}
+          GITLEAKS_TREE_RESULT: ${{ needs['gitleaks-tree'].result }}
+          GITLEAKS_PR_RANGE_RESULT: ${{ needs['gitleaks-pr-range'].result }}
         run: |
           set -euo pipefail
 
@@ -228,3 +263,14 @@ jobs:
           expect_result "npm-audit" "${NPM_AUDIT_RESULT-}" "$expected_npm_audit"
           expect_result "no-security-scan-needed" \
             "${NO_SECURITY_SCAN_NEEDED_RESULT-}" "$expected_no_security"
+
+          event_name="${EVENT_NAME-}"
+          if [[ -z "$event_name" ]]; then
+            fail "event_name is missing"
+          fi
+          expected_pr_range="skipped"
+          if [[ "$event_name" == "pull_request" ]]; then
+            expected_pr_range="success"
+          fi
+          expect_result "gitleaks-tree" "${GITLEAKS_TREE_RESULT-}" "success"
+          expect_result "gitleaks-pr-range" "${GITLEAKS_PR_RANGE_RESULT-}" "$expected_pr_range"

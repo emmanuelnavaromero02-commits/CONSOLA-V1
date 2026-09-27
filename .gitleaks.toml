@@ -1,16 +1,11 @@
 [extend]
 useDefault = true
 
-# Working-tree scan: no path is exempt, test fixtures included. A fixture that
-# needs a credential-shaped literal either builds it at runtime or carries an
-# inline `gitleaks:allow` comment on the line that holds it.
 [allowlist]
 description = "Documented public or CI-only literal values"
 regexes = [
-    # Dummy Fernet key used only by the compose-validation job in
-    # .github/workflows/docker-image.yml; it protects nothing.
+    # CI-only dummy Fernet key (.github/workflows/docker-image.yml compose validation).
     '''d7to_DkrHVKV5_jOzwCNV-wOl4r6gGCY7Usccczm9dk=''',
-    # INEGI's public catalog token from its published API documentation
-    # (cartridges/inegi/app/core/inegi_client.py); it is not an account key.
+    # INEGI public catalog token (cartridges/inegi/app/core/inegi_client.py).
     '''96fbd1bf-21e6-28e3-6e64-2b15999d2c89''',
 ]

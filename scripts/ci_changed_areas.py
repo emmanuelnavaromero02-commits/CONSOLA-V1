@@ -65,7 +65,13 @@ SHARED_RUNTIME_CONSUMERS = {
     "omega_cartridge_kit/": frozenset(KIT_CARTRIDGES),
 }
 SHARED_RUNTIME_ROOT_TESTS = {
-    "omega_lakehouse/": ("tests/lakehouse", "tests/test_omega_lakehouse_storage_scope.py"),
+    "omega_lakehouse/": (
+        "tests/lakehouse",
+        "tests/test_omega_lakehouse_storage_scope.py",
+        "tests/test_omega_cartridge_kit_sql_guard.py",
+        "tests/test_cartridge_kb_scope_20c.py",
+        "tests/test_cartridge_scope_propagation.py",
+    ),
     "omega_cartridge_kit/": (
         "tests/test_omega_cartridge_kit_sql_guard.py",
         "tests/test_omega_cartridge_kit_kb_sink.py",
@@ -543,6 +549,7 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         r"^workspace/(app|Dockerfile)",
         r"^mcp-infra/(app|Dockerfile)",
         r"^cartridges/[^/]+/(app|dags|Dockerfile)",
+        r"^omega_lakehouse/",
         r"^omega_cartridge_kit/",
         r"^infra/airflow/",
         r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
@@ -563,8 +570,8 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         "node_deps": deps_node,
         "e2e": e2e,
         "compose": compose,
-        "console_tests": _any(files, r"^console/(app|tests)/"),
-        "refinement_tests": _any(files, r"^refinement/(app|tests)/"),
+        "console_tests": _any(files, r"^console/(app|tests)/", r"^omega_lakehouse/"),
+        "refinement_tests": _any(files, r"^refinement/(app|tests)/", r"^omega_lakehouse/"),
         "vault_tests": _any(files, r"^vault/(app|tests)/"),
         "workspace_tests": _any(files, r"^workspace/(app|tests)/"),
         "root_tests": bool(root_test_targets),
