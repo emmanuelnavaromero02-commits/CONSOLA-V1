@@ -291,7 +291,8 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
         entities = await conn.fetch(
             "SELECT entity, display_name, mode, primary_key, watermark_field, "
             "       page_size, select_fields, protection, effective_dated, date_field, dag_id, "
-            "       trigger_type, cron_expression, description, enabled, "
+            "       trigger_type, cron_expression, "
+            "       COALESCE(cron_timezone, 'UTC') AS cron_timezone, description, enabled, "
             "       COALESCE(dag_params, '{}'::jsonb) AS dag_params "
             "FROM entity_config WHERE cartridge_id=$1 AND enabled=TRUE ORDER BY entity",
             cartridge_id,
@@ -340,6 +341,7 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
                 "dag_id": r["dag_id"] or "",
                 "trigger_type": r["trigger_type"] or "manual",
                 "cron_expression": r["cron_expression"] or "",
+                "cron_timezone": r["cron_timezone"] or "UTC",
                 "description": r["description"] or "",
                 "enabled": r["enabled"],
                 "dag_params": _entity_dag_params(r["dag_params"]),
@@ -781,6 +783,7 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
         "dag_id",
         "trigger_type",
         "cron_expression",
+        "cron_timezone",
         "description",
         "enabled",
         "dag_params",
@@ -820,9 +823,9 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
                 """
                 INSERT INTO entity_config
                     (cartridge_id, entity, display_name, mode, primary_key,
-                     dag_id, trigger_type, cron_expression, description, enabled,
-                     dag_params)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+                     dag_id, trigger_type, cron_expression, cron_timezone,
+                     description, enabled, dag_params)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
                 """,
                 cartridge_id,
                 entity,
@@ -832,6 +835,7 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
                 fields.get("dag_id"),
                 fields.get("trigger_type", "manual"),
                 fields.get("cron_expression"),
+                fields.get("cron_timezone") or "UTC",
                 fields.get("description", ""),
                 fields.get("enabled", True),
                 fields.get("dag_params", "{}"),

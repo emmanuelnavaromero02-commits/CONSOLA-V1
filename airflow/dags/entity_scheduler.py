@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import requests
 from airflow import DAG
@@ -14,6 +14,7 @@ from entity_scheduler_trigger import (
     scheduled_run_conf,
     trigger_dag_run,
 )
+from entity_scheduler_window import fire_in_window, schedule_is_valid
 
 
 AIRFLOW_URL   = os.environ.get("AIRFLOW_URL", "http://airflow:8080")
@@ -84,21 +85,6 @@ def _mcp_headers() -> dict[str, str]:
     return {"X-Internal-Service": "airflow", "X-API-Key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")}
 
 
-def _fire_in_window(cron_expr: str, window_start: datetime, window_end: datetime):
-    try:
-        from croniter import croniter
-    except Exception:
-        return None
-    base = window_start - timedelta(seconds=1)
-    try:
-        itr = croniter(cron_expr, base.replace(tzinfo=None))
-    except Exception:
-        return None
-    nxt = itr.get_next(datetime)
-    nxt = nxt.replace(tzinfo=timezone.utc)
-    return nxt if window_start <= nxt < window_end else None
-
-
 def find_due_entities(**context):
     logical_date = context["logical_date"]
     window_end   = logical_date + timedelta(minutes=INTERVAL_MIN)
@@ -110,7 +96,8 @@ def find_due_entities(**context):
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT ec.cartridge_id, ec.entity, ec.dag_id, ec.mode,
-                          ec.cron_expression, ec.last_scheduled_at,
+                          ec.cron_expression, COALESCE(ec.cron_timezone, 'UTC') AS cron_timezone,
+                          ec.last_scheduled_at,
                           ec.tenant_id::text AS tenant_id,
                           ec.workspace_id::text AS workspace_id,
                           ec.connection_id,
@@ -141,9 +128,11 @@ def find_due_entities(**context):
         conn.close()
 
     due = []
-    for cartridge_id, entity, dag_id, mode, cron_expr, last_at, tenant_id, workspace_id, connection_id, dag_params in rows:
-        fire = _fire_in_window(cron_expr, logical_date, window_end)
+    for cartridge_id, entity, dag_id, mode, cron_expr, cron_tz, last_at, tenant_id, workspace_id, connection_id, dag_params in rows:
+        fire = fire_in_window(cron_expr, cron_tz, logical_date, window_end)
         if fire is None:
+            if not schedule_is_valid(cron_expr, cron_tz):
+                print(f"[entity_scheduler] skip {cartridge_id}.{entity} — invalid cron or timezone")
             continue
         if last_at is not None and last_at >= fire:
             print(f"[entity_scheduler] skip {cartridge_id}.{entity} — last_scheduled_at={last_at} >= fire={fire}")
