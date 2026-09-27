@@ -32,6 +32,9 @@ AUTO_PROFILE_MEMO_LIMIT = 2048
 _CARTRIDGE = re.compile(r"^[a-z0-9_]{1,64}$")
 _DATASET = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _COLUMN = re.compile(r'^[^\x00-\x1f\x7f"]{1,128}$')
+_EPOCH = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}(:?\d{2})?|Z)?$"
+)
 
 
 class AutoProfileResponse(BaseModel):
@@ -130,8 +133,13 @@ async def auto_profile_payload(
     if cartridge and not _CARTRIDGE.fullmatch(cartridge):
         raise HTTPException(400, "Fuente de datos inválida")
     include_sources = body.get("include_sources") is True
+    since = body.get("since")
+    if since is not None and (
+        not isinstance(since, str) or not (since == "start" or _EPOCH.fullmatch(since))
+    ):
+        raise HTTPException(400, "Marca de avance inválida")
     identity = scoped_cache_identity(user)
-    key = (identity, cartridge, include_sources)
+    key = (identity, cartridge, include_sources, since)
     now = clock()
     previous = memo.get(key)
     if previous is not None:
@@ -147,6 +155,8 @@ async def auto_profile_payload(
     args: dict[str, Any] = {"include_sources": include_sources}
     if cartridge:
         args["cartridge"] = cartridge
+    if since is not None:
+        args["since"] = since
     payload = await refinement_invoke(
         "auto_catalog", args, timeout=AUTO_PROFILE_TIMEOUT_SECONDS, user=user
     )

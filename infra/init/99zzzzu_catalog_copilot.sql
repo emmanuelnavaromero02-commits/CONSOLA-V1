@@ -198,6 +198,21 @@ ALTER TABLE data_catalog
     ADD COLUMN IF NOT EXISTS copilot_confidence NUMERIC(4,3),
     ADD COLUMN IF NOT EXISTS copilot_at TIMESTAMPTZ;
 
+-- Text that is still exactly the dataset definition's column_mapping entry
+-- shipped with the package: it stays packaged, so a newer package text can
+-- refresh it while a person's rewrite (manual) never gets replaced.
+UPDATE data_catalog dc
+   SET description_origin = 'packaged'
+  FROM datasets d
+ WHERE dc.description_origin IS NULL
+   AND COALESCE(btrim(dc.description), '') <> ''
+   AND dc.workspace_id IS NOT NULL
+   AND d.workspace_id = dc.workspace_id
+   AND d.name = dc.dataset
+   AND jsonb_typeof(d.column_mapping) = 'object'
+   AND jsonb_typeof(d.column_mapping -> dc.column_name) = 'string'
+   AND btrim(d.column_mapping ->> dc.column_name) = btrim(dc.description);
+
 -- Only text that still matches one of the fixed templates of the old semantic
 -- enrichment (semantic_build_column_description) is machine-inferred. The old
 -- form kept the template tags when a person rewrote the text, so tags alone

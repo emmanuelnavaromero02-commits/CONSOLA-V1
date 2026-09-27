@@ -128,6 +128,15 @@ def test_migration_reruns_and_backfills_legacy_rows(
     admin = postgres_with_real_init_schema
     sec = _workspace(admin, "legacy_a", "legacy_b")
     with psycopg2.connect(admin) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE datasets SET column_mapping = %s::jsonb "
+            "WHERE workspace_id = %s AND name = 'legacy_a'",
+            (
+                json.dumps({"mapped": "Texto del paquete", "mapped_rewritten": "Original"}),
+                sec["workspace_id"],
+            ),
+        )
+    with psycopg2.connect(admin) as conn, conn.cursor() as cur:
         # What real databases still carry: the truncated-name UNIQUE of
         # 13_data_catalog.sql, 67's global index, and on beta databases the
         # composite primary key of 19_operational_stability_hotfix.sql.
@@ -178,6 +187,8 @@ def test_migration_reruns_and_backfills_legacy_rows(
             ),
             ("authored", "Texto autorizado", ["finance"]),
             ("empty", "", []),
+            ("mapped", "Texto del paquete", []),
+            ("mapped_rewritten", "Texto que una persona reescribió", []),
         ):
             cur.execute(
                 """INSERT INTO data_catalog(dataset,layer,cartridge,column_name,data_type,
@@ -219,6 +230,8 @@ def test_migration_reruns_and_backfills_legacy_rows(
         "rewritten": "manual",
         "authored": "manual",
         "empty": None,
+        "mapped": "packaged",
+        "mapped_rewritten": "manual",
     }
     with psycopg2.connect(admin) as conn, conn.cursor() as cur:
         cur.execute(

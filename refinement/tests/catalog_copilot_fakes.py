@@ -219,6 +219,16 @@ class FakeCopilotStore:
             }
             self.saved_states += 1
 
+    def count_profiled_since(self, sec, since, *, cartridge=None):
+        threshold = datetime.fromisoformat(since) if since else None
+        with self.lock:
+            return sum(
+                1
+                for state in self.states.values()
+                if (threshold is None or state["profiled_at"] > threshold)
+                and (not cartridge or state.get("cartridge") == cartridge)
+            )
+
     def annotation_epoch(self, sec):
         with self.lock:
             if not self.states:

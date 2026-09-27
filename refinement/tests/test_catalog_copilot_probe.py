@@ -343,3 +343,43 @@ def test_queries_are_clamped_to_the_remaining_budget(local):
             huge, "k", huge, "k", SEC, child_cap=1_000_000, deadline=time.monotonic() + 0.1
         )
     assert time.perf_counter() - started < 5.0
+
+
+class _VerifyingEngine:
+    """The staged engine's head path: store head plus a full object check."""
+
+    def __init__(self, local: LocalEngine, head: dict) -> None:
+        self._local = local
+        self.head_value = head
+        self.verified: list = []
+        self._duckdb_lock = local.engine._duckdb_lock
+        self._conn = local.engine._conn
+        self._pg_gold_attach = local.engine._pg_gold_attach
+        self._published_sql = local.engine._published_sql
+        self._publication_store = type("Store", (), {"head": lambda _self, scope: self.head_value})()
+
+    @staticmethod
+    def _publication_scope(dataset, ctx):
+        return (ctx["workspace_id"], dataset["name"])
+
+    def _verify_prepared_object(self, head):
+        self.verified.append(head["object_version"])
+
+
+def test_published_objects_are_verified_once_per_version(local):
+    snapshot = local.publish("employees", DEPARTMENTS_SQL)
+    head = {**snapshot.head, "object_version": "v1", "object_checksum": "c1"}
+    engine = _VerifyingEngine(local, head)
+    probe = CatalogCopilotProbe(engine)
+    dataset = {"name": "employees", "layer": "silver"}
+    probe.published_relation(dataset, SEC)
+    probe.published_relation(dataset, SEC)
+    assert engine.verified == ["v1"]
+    engine.head_value = {**head, "object_version": "v2"}
+    probe.published_relation(dataset, SEC)
+    assert engine.verified == ["v1", "v2"]
+    with pytest.raises(ProbeError) as exc:
+        engine.head_value = {**head, "object_version": "v3"}
+        probe.published_relation(dataset, SEC, deadline=time.monotonic() - 1)
+    assert exc.value.code == "probe_budget_exhausted"
+    assert engine.verified == ["v1", "v2"]

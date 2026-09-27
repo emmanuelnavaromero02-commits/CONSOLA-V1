@@ -91,6 +91,7 @@ def test_tool_catalogue_exposes_copilot_tools():
     assert set(tools["auto_catalog"]["input_schema"]["properties"]) == {
         "cartridge",
         "include_sources",
+        "since",
     }
     assert tools["reject_relationship"]["input_schema"]["required"] == [
         "from_dataset",
@@ -128,7 +129,11 @@ def test_auto_catalog_enqueues_with_the_verified_context(worker):
     assert result["status"] == "ready"
     sec, kwargs = worker.calls[0]
     assert sec["workspace_id"] == WORKSPACE and sec["trusted"] is True
-    assert kwargs == {"cartridge": "sap_successfactors", "include_sources": True}
+    assert kwargs == {
+        "cartridge": "sap_successfactors",
+        "include_sources": True,
+        "since": None,
+    }
 
 
 def test_auto_catalog_rejects_unsafe_cartridge_and_idles_without_workspace(worker):
@@ -424,3 +429,25 @@ def test_source_allowance_is_prefix_scoped():
     assert not refinement_main._copilot_source_allowed(
         sec, "raw/sap_successfactors/PerEmail/tenant_id=x"
     )
+
+
+@pytest.mark.parametrize(
+    "since,ok",
+    [
+        ("start", True),
+        ("2026-09-26 12:00:00.123456+00", True),
+        ("2026-09-26T12:00:00Z", True),
+        ("yesterday", False),
+        ("2026-09-26'; drop", False),
+        (5, False),
+    ],
+)
+def test_auto_catalog_validates_the_progress_mark(worker, since, ok):
+    body = _body("auto_catalog", {"since": since}, "datasets.read")
+    if ok:
+        refinement_main._mcp_invoke_sync(body)
+        assert worker.calls[-1][1]["since"] == since
+    else:
+        with pytest.raises(HTTPException) as exc:
+            refinement_main._mcp_invoke_sync(body)
+        assert exc.value.status_code == 400

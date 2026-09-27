@@ -312,8 +312,14 @@ class AutonomousCatalogWorker:
         *,
         cartridge: str | None = None,
         include_sources: bool = False,
+        since: str | None = None,
     ) -> AutoCatalogStatus:
-        """Enqueue what is stale and report; never profiles in the caller."""
+        """Enqueue what is stale and report; never profiles in the caller.
+
+        ``since`` is the annotation epoch the caller saw on its first poll
+        ("start" when there was none): ``processed`` then counts the subjects
+        profiled after it, so a page can tell how far the background got.
+        """
         if not self.enabled():
             return AutoCatalogStatus("idle", 0, 0, 0, None)
         if not sec.get("trusted") or not sec.get("tenant_id") or not sec.get("workspace_id"):
@@ -351,9 +357,21 @@ class AutonomousCatalogWorker:
             epoch = self.store.annotation_epoch(sec)
         except Exception:
             epoch = None
-        return AutoCatalogStatus(
-            "working" if pending else "idle", 0, len(pending), len(stale), epoch
-        )
+        processed = 0
+        if since is not None:
+            try:
+                processed = int(
+                    self.store.count_profiled_since(
+                        sec, None if since == "start" else since, cartridge=cartridge
+                    )
+                )
+            except Exception:
+                processed = 0
+        if pending:
+            status = "working"
+        else:
+            status = "ready" if processed else "idle"
+        return AutoCatalogStatus(status, processed, len(pending), len(stale), epoch)
 
     def _schedule_source_scan(self, sec: dict[str, Any], cartridge: str) -> None:
         key = (str(sec.get("workspace_id") or ""), cartridge)
@@ -493,7 +511,7 @@ class AutonomousCatalogWorker:
         relation = None
         probe_result = None
         try:
-            relation = self.probe.published_relation(dataset, sec)
+            relation = self.probe.published_relation(dataset, sec, deadline=deadline)
             probe_result = self.probe.column_probe(
                 relation,
                 sec,
@@ -644,10 +662,15 @@ class AutonomousCatalogWorker:
                 logger.warning("catalog copilot edges not written", exc_info=True)
                 errors.append("edge_write_failed")
         # Retire only what this run can vouch for: edges it re-checked and
-        # dropped, edges the current rules no longer propose at all, and edges
-        # whose column here vanished or whose key here was refuted. An edge
-        # beyond the candidate cap, or towards a dataset this reader cannot
-        # see, is left untouched.
+        # dropped, edges whose column here vanished or whose key here was
+        # refuted, and edges from this dataset that the current rules no longer
+        # propose. An edge beyond the candidate cap, an edge into this dataset
+        # that was not re-checked, or one towards a dataset this reader cannot
+        # see is left untouched; so is everything when this run could not
+        # complete its own key check.
+        key_check_complete = probe_result is not None and (
+            not key_cols or probe_result.keys_checked
+        )
         retire = set(link.evaluated) - kept
         try:
             for row in self.store.load_edges(sec, [name]):
@@ -664,7 +687,8 @@ class AutonomousCatalogWorker:
                 ):
                     retire.add(key)
                 elif (
-                    relation is not None
+                    key[0] == name
+                    and key_check_complete
                     and key not in link.proposed
                     and reverse not in link.proposed
                     and key not in kept
@@ -847,10 +871,15 @@ class AutonomousCatalogWorker:
                 meta = self.host.get_dataset(sec, dataset)
                 try:
                     relations[dataset] = (
-                        self.probe.published_relation(meta, sec) if meta else None
+                        self.probe.published_relation(meta, sec, deadline=deadline)
+                        if meta
+                        else None
                     )
                 except Exception as exc:
-                    if probe_error_code(exc) is None:
+                    code = probe_error_code(exc)
+                    if code is None:
+                        raise
+                    if code == "probe_budget_exhausted":
                         raise
                     relations[dataset] = None
             return relations[dataset]

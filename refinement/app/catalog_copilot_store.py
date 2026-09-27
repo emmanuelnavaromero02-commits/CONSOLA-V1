@@ -617,6 +617,26 @@ class CatalogCopilotStore:
             "sources": sources,
         }
 
+    def count_profiled_since(
+        self,
+        sec: dict[str, Any],
+        since: str | None,
+        *,
+        cartridge: str | None = None,
+    ) -> int:
+        """Subjects profiled after an epoch (every subject when it is None)."""
+        _tenant_id, workspace_id = _scope(sec)
+        with self._cursor(sec) as cur:
+            cur.execute(
+                """SELECT count(*) FROM catalog_copilot_state
+                    WHERE workspace_id = %s::uuid
+                      AND (%s::timestamptz IS NULL OR profiled_at > %s::timestamptz)
+                      AND (%s::text IS NULL OR cartridge = %s::text)""",
+                (workspace_id, since, since, cartridge or None, cartridge or None),
+            )
+            row = cur.fetchone()
+            return int(row[0] or 0) if row else 0
+
     def annotation_epoch(self, sec: dict[str, Any]) -> str | None:
         _tenant_id, workspace_id = _scope(sec)
         with self._cursor(sec) as cur:

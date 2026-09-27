@@ -331,3 +331,45 @@ async def test_semantic_enrichment_writes_with_the_copilot_origin():
     )
     upsert = [args for tool, args in calls if tool == "upsert_catalog_entries"]
     assert upsert and upsert[0]["origin"] == "copilot"
+
+
+@pytest.mark.asyncio
+async def test_follow_up_polls_forward_the_first_epoch_and_report_progress():
+    memo, clock = AutoProfileMemo(), _Clock()
+    refinement = _Refinement(
+        _ready(processed=0, pending=4),
+        {**_ready(processed=3, pending=1), "status": "working"},
+        _ready(processed=4, pending=0),
+    )
+    invalidated = []
+    kwargs = dict(
+        user=USER,
+        refinement_invoke=refinement,
+        scoped_read_cache_invalidate=lambda scope, user: invalidated.append(scope),
+        memo=memo,
+        clock=clock,
+    )
+    first = await auto_profile_payload(body={}, **kwargs)
+    assert first["pending"] == 4 and "since" not in refinement.calls[0][1]
+    clock.now += 2
+    follow = await auto_profile_payload(body={"since": "2026-09-26 12:00:00.123456+00"}, **kwargs)
+    assert refinement.calls[1][1]["since"] == "2026-09-26 12:00:00.123456+00"
+    assert (follow["processed"], follow["pending"]) == (3, 1)
+    assert invalidated == ["catalog"]
+    clock.now += 2
+    await auto_profile_payload(body={"since": "start"}, **kwargs)
+    assert refinement.calls[-1][1]["since"] == "start"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("since", ["yesterday", "2026-09-26'; drop", 42, ""])
+async def test_auto_profile_rejects_malformed_progress_marks(since):
+    with pytest.raises(HTTPException) as exc:
+        await auto_profile_payload(
+            body={"since": since},
+            user=USER,
+            refinement_invoke=_Refinement(),
+            scoped_read_cache_invalidate=lambda *a: None,
+            memo=AutoProfileMemo(),
+        )
+    assert exc.value.status_code == 400

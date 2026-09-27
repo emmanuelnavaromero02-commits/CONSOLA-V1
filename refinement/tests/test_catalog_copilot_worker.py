@@ -599,3 +599,65 @@ def test_source_scan_runs_in_the_background_and_is_throttled(env, tmp_path):
     worker.catch_up(SEC, include_sources=True)
     assert worker.wait_idle(timeout=15)
     assert len(listed) == 1
+
+
+def test_processed_counts_subjects_profiled_after_the_first_poll(env):
+    local, host, store = env
+    worker = _worker(local, host, store)
+    first = worker.catch_up(SEC)
+    assert (first.processed, first.pending) == (0, 2)
+    assert first.annotation_epoch is None
+    assert worker.wait_idle(timeout=15)
+    follow = worker.catch_up(SEC, since="start")
+    assert (follow.status, follow.processed, follow.pending) == ("ready", 2, 0)
+    host.add(EMPLOYEES, EMPLOYEES_SQL, run_id="run-2")
+    epoch = worker.catch_up(SEC).annotation_epoch
+    assert worker.wait_idle(timeout=15)
+    later = worker.catch_up(SEC, since=epoch)
+    assert (later.status, later.processed, later.pending) == ("ready", 1, 0)
+    assert worker.catch_up(SEC, since=later.annotation_epoch).status == "idle"
+
+
+def test_an_unchecked_key_never_retires_edges_into_the_dataset(env, monkeypatch):
+    """Reviewer reproduction: republished parent without stats + key check timeout."""
+    local, host, store = env
+    worker = _worker(local, host, store)
+    _profile(worker, EMPLOYEES)
+    assert store.edges[tuple(EDGE.values())]["status"] == "active"
+    host.add(DEPARTMENTS, DEPARTMENTS_SQL, run_id="run-2")
+    for row in store.columns.values():
+        if row["dataset"] == DEPARTMENTS:
+            row["null_rate"] = None
+            row["distinct_count"] = None
+    snapshot = host.snapshots[DEPARTMENTS]
+    for field in snapshot.evidence["catalog"]:
+        field["null_rate"] = None
+        field["distinct_count"] = None
+    original = worker.probe.column_probe
+
+    def timed_out_keys(relation, ctx, *, key_cols, **kwargs):
+        result = original(relation, ctx, key_cols=[], **kwargs)
+        return result
+
+    monkeypatch.setattr(worker.probe, "column_probe", timed_out_keys)
+    outcome = _profile(worker, DEPARTMENTS)
+    assert outcome["processed"] is True
+    assert store.edges[tuple(EDGE.values())]["status"] == "active"
+
+
+def test_budget_is_checked_before_downloading_published_objects(env, monkeypatch):
+    """Reviewer reproduction: a zero budget must not fetch or hash any object."""
+    local, host, store = env
+    worker = _worker(local, host, store, subject_budget=0.0)
+    fetched = []
+    original = local.engine._published_dataset_head
+
+    def spy(dataset, ctx):
+        fetched.append(dataset["name"])
+        return original(dataset, ctx)
+
+    monkeypatch.setattr(local.engine, "_published_dataset_head", spy)
+    outcome = _profile(worker)
+    assert outcome["status"] == "partial"
+    assert fetched == []
+    assert store.states[("dataset", EMPLOYEES)]["error_code"] == "probe_budget_exhausted"

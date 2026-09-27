@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -38,6 +39,7 @@ MAX_BRONZE_FILES = 50
 CONTAINMENT_CHILD_CAP = 20_000
 # Child rows read before DISTINCT: bounds the scan of a large fact table.
 CONTAINMENT_ROW_CAP = 200_000
+VERIFIED_OBJECTS_CACHE = 1024
 _LOAD_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _LOAD_DATE_PATTERN = r"load_date=([0-9]{4}-[0-9]{2}-[0-9]{2})"
 
@@ -110,6 +112,44 @@ class CatalogCopilotProbe:
     def __init__(self, engine: Any, *, timeout_seconds: float = QUERY_TIMEOUT_SECONDS):
         self.engine = engine
         self.timeout_seconds = timeout_seconds
+        # Published objects are immutable per (uri, version, checksum): one
+        # full download and hash per object and process is enough.
+        self._verified: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+        self._verified_lock = threading.Lock()
+
+    @staticmethod
+    def _check(deadline: float | None) -> None:
+        if deadline is not None and deadline - time.monotonic() <= 0:
+            raise ProbeError("probe_budget_exhausted")
+
+    def _published_head(
+        self, dataset: dict[str, Any], ctx: dict[str, Any], deadline: float | None
+    ) -> dict[str, Any]:
+        store = getattr(self.engine, "_publication_store", None)
+        scope_of = getattr(self.engine, "_publication_scope", None)
+        verify = getattr(self.engine, "_verify_prepared_object", None)
+        if store is None or not callable(scope_of) or not callable(verify):
+            return self.engine._published_dataset_head(dataset, ctx)
+        head = store.head(scope_of(dataset, ctx))
+        if not head:
+            raise RuntimeError("dataset is not published")
+        if head.get("status") == "legacy_unverified":
+            return head
+        key = (
+            str(head.get("object_uri") or ""),
+            str(head.get("object_version") or ""),
+            str(head.get("object_checksum") or ""),
+        )
+        with self._verified_lock:
+            known = key in self._verified
+        if not known:
+            self._check(deadline)
+            verify(head)
+            with self._verified_lock:
+                self._verified[key] = None
+                while len(self._verified) > VERIFIED_OBJECTS_CACHE:
+                    self._verified.popitem(last=False)
+        return head
 
     def _timeout(self, deadline: float | None) -> float:
         if deadline is None:
@@ -145,11 +185,18 @@ class CatalogCopilotProbe:
                 timer.cancel()
 
     def published_relation(
-        self, dataset: dict[str, Any], ctx: dict[str, Any]
+        self,
+        dataset: dict[str, Any],
+        ctx: dict[str, Any],
+        *,
+        deadline: float | None = None,
     ) -> PublishedRelation:
+        self._check(deadline)
         try:
-            head = self.engine._published_dataset_head(dataset, ctx)
+            head = self._published_head(dataset, ctx, deadline)
             sql = self.engine._published_sql(dataset, head)
+        except ProbeError:
+            raise
         except Exception:
             raise ProbeError("relation_unavailable") from None
         expand = getattr(self.engine, "_expand_partition_manifests", None)

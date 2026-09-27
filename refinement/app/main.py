@@ -1912,6 +1912,13 @@ async def mcp_tools():
                     "properties": {
                         "cartridge": {"type": "string"},
                         "include_sources": {"type": "boolean", "default": False},
+                        "since": {
+                            "type": "string",
+                            "description": (
+                                "annotation_epoch de la primera consulta ('start' si no "
+                                "había); processed cuenta lo perfilado después"
+                            ),
+                        },
                     },
                 },
             },
@@ -2828,6 +2835,11 @@ def _catalog_copilot_worker() -> AutonomousCatalogWorker:
         return _CATALOG_COPILOT_WORKER
 
 
+_ANNOTATION_EPOCH_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}(:?\d{2})?|Z)?$"
+)
+
+
 def _auto_catalog(sec: dict, args: dict) -> dict:
     if not _has_tenant_workspace_scope(sec):
         return {
@@ -2840,11 +2852,18 @@ def _auto_catalog(sec: dict, args: dict) -> dict:
     cartridge = str(args.get("cartridge") or "").strip() or None
     if cartridge and not DATASET_NAME_RE.fullmatch(cartridge):
         raise HTTPException(400, "Invalid cartridge")
+    since = args.get("since")
+    if since is not None and (
+        not isinstance(since, str)
+        or not (since == "start" or _ANNOTATION_EPOCH_RE.fullmatch(since))
+    ):
+        raise HTTPException(400, "Invalid since")
     try:
         status = _catalog_copilot_worker().catch_up(
             sec,
             cartridge=cartridge,
             include_sources=args.get("include_sources") is True,
+            since=since,
         )
     except Exception as exc:
         _log_internal_error(exc, "catalog copilot catch-up failed")

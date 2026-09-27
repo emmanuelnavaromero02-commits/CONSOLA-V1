@@ -115,6 +115,15 @@ def test_only_unchanged_enrichment_templates_are_backfilled_as_inferred():
         assert fixed in enrichment, "backfill templates must track the enrichment text"
 
 
+def test_column_mapping_text_is_backfilled_as_packaged_before_manual():
+    code = _code(_sql())
+    packaged = code.index("SET description_origin = 'packaged'")
+    manual = code.index("ELSE 'manual'")
+    assert packaged < manual
+    assert "btrim(d.column_mapping ->> dc.column_name) = btrim(dc.description)" in code
+    assert "d.workspace_id = dc.workspace_id" in code
+
+
 def test_backfills_are_bounded_to_legacy_values():
     code = _code(_sql())
     assert "WHEN 'many_to_one' THEN 'N:1'" in code
