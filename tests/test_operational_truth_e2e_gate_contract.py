@@ -61,6 +61,7 @@ def test_e2e_linux_dag_bundle_is_readable_by_the_non_root_airflow_user() -> None
     script = (ROOT / "scripts/run_operational_truth_e2e.sh").read_text(encoding="utf-8")
     compose = (ROOT / "infra/e2e/compose.airflow.yml").read_text(encoding="utf-8")
     required = {
+        "cartridge_run_admission.py",
         "file_ingest.py",
         "dataset_refresh_chain.py",
         "dataset_refresh_graph.py",
@@ -76,6 +77,14 @@ def test_e2e_linux_dag_bundle_is_readable_by_the_non_root_airflow_user() -> None
     assert 'chmod 0777 "$dag_dir"' not in script
     assert 'install -m 0444 "$task_root/airflow/dags/$module"' in script
     assert required <= {name for name in required if name in script}
+    bundle = script.split("dag_modules=(", 1)[1].split(")", 1)[0].split()
+    imported = {
+        line.split()[1] + ".py"
+        for name in bundle
+        for line in (ROOT / "airflow/dags" / name).read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("from ") and (ROOT / "airflow/dags" / (line.split()[1] + ".py")).is_file()
+    }
+    assert imported <= set(bundle), f"DAG bundle misses local imports: {imported - set(bundle)}"
     assert "${OMEGA_E2E_DAGS_DIR:?required}:/opt/airflow/dags:ro" in compose
     assert 'exec -T airflow-scheduler python - "${dag_modules[@]}"' in script
     assert "os.geteuid() == 0" in script
