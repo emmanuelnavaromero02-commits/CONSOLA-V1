@@ -117,6 +117,20 @@ class CatalogCopilotProbe:
         self._verified: OrderedDict[tuple[str, str, str], None] = OrderedDict()
         self._verified_lock = threading.Lock()
 
+    def _require_scoped(self, sql: str, ctx: dict[str, Any]) -> None:
+        """Every storage literal must pass the engine's exact-scope validator.
+
+        The worker only ever runs with a tenant and workspace scope, so an
+        unscoped path is refused here rather than read.
+        """
+        validate = getattr(self.engine, "_validate_scoped_storage_sql", None)
+        if not callable(validate):
+            return
+        try:
+            validate(sql, ctx)
+        except ValueError:
+            raise ProbeError("storage_out_of_scope") from None
+
     @staticmethod
     def _check(deadline: float | None) -> None:
         if deadline is not None and deadline - time.monotonic() <= 0:
@@ -202,6 +216,7 @@ class CatalogCopilotProbe:
         expand = getattr(self.engine, "_expand_partition_manifests", None)
         if callable(expand):
             sql = expand(sql, ctx)
+        self._require_scoped(sql, ctx)
         gold = str(dataset.get("layer") or "silver").lower() == "gold"
         return PublishedRelation(sql=sql, head=head, gold=gold)
 
@@ -325,12 +340,13 @@ class CatalogCopilotProbe:
         if "'" in base:
             raise ProbeError("bronze_partition_unavailable")
         listing = f"{base}/load_date=*/batch_id=*/*.parquet"
-        row = self._run(
+        sql = (
             "SELECT max(regexp_extract(file, "
             f"{_quote_literal(_LOAD_DATE_PATTERN)}, 1)) "
-            f"FROM glob({_quote_literal(listing)})",
-            deadline=deadline,
-        )[0]
+            f"FROM glob({_quote_literal(listing)})"
+        )
+        self._require_scoped(sql, ctx)
+        row = self._run(sql, deadline=deadline)[0]
         load_date = str(row[0] or "")
         if not _LOAD_DATE.fullmatch(load_date):
             raise ProbeError("bronze_partition_unavailable")
@@ -345,17 +361,19 @@ class CatalogCopilotProbe:
         deadline: float | None = None,
     ) -> BronzeFooter:
         load_date, narrowed = self._latest_partition_glob(source, ctx, deadline)
-        rows = self._run(
+        listing_sql = (
             f"SELECT file FROM glob({_quote_literal(narrowed)}) ORDER BY file "
-            f"LIMIT {MAX_BRONZE_FILES + 1}",
-            deadline=deadline,
+            f"LIMIT {MAX_BRONZE_FILES + 1}"
         )
+        self._require_scoped(listing_sql, ctx)
+        rows = self._run(listing_sql, deadline=deadline)
         files = [str(row[0]) for row in rows if row and row[0]]
         truncated = len(files) > MAX_BRONZE_FILES
         files = files[:MAX_BRONZE_FILES]
         if not files:
             raise ProbeError("bronze_partition_unavailable")
         file_list = "[" + ", ".join(_quote_literal(path) for path in files) + "]"
+        self._require_scoped(f"SELECT * FROM read_parquet({file_list})", ctx)
         num_rows = int(
             self._run(
                 f"SELECT sum(num_rows) FROM parquet_file_metadata({file_list})",

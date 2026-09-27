@@ -383,3 +383,53 @@ def test_published_objects_are_verified_once_per_version(local):
         probe.published_relation(dataset, SEC, deadline=time.monotonic() - 1)
     assert exc.value.code == "probe_budget_exhausted"
     assert engine.verified == ["v1", "v2"]
+
+
+def _s3_engine(object_key: str):
+    from refinement.app.duckdb_engine import DuckDBEngine
+
+    engine = DuckDBEngine()
+    uri = engine._storage_uri(object_key)
+    engine._published_dataset_head = lambda ds, ctx: {"status": "published", "object_uri": uri}
+    engine._published_sql = lambda ds, head: (
+        "SELECT * FROM read_parquet('" + head["object_uri"] + "')"
+    )
+    return engine
+
+
+def test_published_relations_pass_the_exact_scope_validator():
+    scoped = (
+        f"silver/sap_successfactors/employees/tenant_id={SEC['tenant_id']}"
+        f"/workspace_id={SEC['workspace_id']}/_snapshots/a.parquet"
+    )
+    relation = CatalogCopilotProbe(_s3_engine(scoped)).published_relation(
+        {"name": "employees", "layer": "silver"}, SEC
+    )
+    assert scoped in relation.sql
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "silver/sap_successfactors/employees/data.parquet",
+        "silver/sap_successfactors/employees/tenant_id=other/workspace_id=other/a.parquet",
+    ],
+)
+def test_unscoped_or_foreign_storage_is_never_read(key):
+    with pytest.raises(ProbeError) as exc:
+        CatalogCopilotProbe(_s3_engine(key)).published_relation(
+            {"name": "employees", "layer": "silver"}, SEC
+        )
+    assert exc.value.code == "storage_out_of_scope"
+
+
+def test_bronze_paths_are_validated_before_listing():
+    from refinement.app.duckdb_engine import DuckDBEngine
+
+    engine = DuckDBEngine()
+    engine._bronze_path = lambda source, ctx: engine._storage_uri(
+        "raw/sap_successfactors/PerEmail/load_date=*/batch_id=*/*.parquet"
+    )
+    with pytest.raises(ProbeError) as exc:
+        CatalogCopilotProbe(engine).bronze_footer("raw/sap_successfactors/PerEmail", SEC)
+    assert exc.value.code == "storage_out_of_scope"
