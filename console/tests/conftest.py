@@ -73,6 +73,34 @@ _restore_real_auth_module()
 _restore_real_dependencies_module()
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_pipeline_automation: run the real trigger preflight and "
+        "pre-reservation recovery instead of the inert test stubs",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _inert_pipeline_trigger_automation(request, monkeypatch):
+    """Keep Airflow preflight/recovery out of tests that pin exact MCP calls."""
+    if request.node.get_closest_marker("real_pipeline_automation"):
+        yield
+        return
+    preflight = import_module("app.domains.pipeline.trigger_preflight")
+    recovery = import_module("app.domains.pipeline.stuck_run_recovery_service")
+
+    async def inert_preflight(dag_id, _user, **_kwargs):
+        return preflight.DagPreflight(str(dag_id), "unknown", None, False, checked=False)
+
+    async def inert_recovery(_user, **_kwargs):
+        return None
+
+    monkeypatch.setattr(preflight, "run_manual_trigger_preflight", inert_preflight)
+    monkeypatch.setattr(recovery, "recover_before_reservation", inert_recovery)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_console_auth_stubs(monkeypatch):
     _restore_real_auth_module()

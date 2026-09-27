@@ -44,6 +44,11 @@ vi.mock("@/lib/monitor/hooks", () => ({
   isTerminalRunStatus: (status?: string) => status === "success",
 }));
 
+vi.mock("@/lib/monitor/extraction-progress", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/monitor/extraction-progress")>();
+  return { ...actual, useExtractionProgress: () => state.hooks.useExtractionProgress };
+});
+
 vi.mock("@/lib/hooks/useAnalyticsApps", () => ({ useAnalyticsApps: () => state.hooks.useAnalyticsApps }));
 vi.mock("@/lib/monitor/client", () => ({ extractEntity: clientMocks.extractEntity }));
 
@@ -112,6 +117,29 @@ function resetHooks() {
     ]),
     useSourceSchema: query({ status: "ok", preview: { schema: [{ name: "DocEntry", type: "BIGINT" }] } }),
     useEntityRuns: query([{ dag_run_id: "run-9", status: "running" }]),
+    useExtractionProgress: query({
+      schema_version: "pipeline-extraction-progress/v1",
+      checked_at: "2026-09-26T12:00:00Z",
+      runs: [
+        {
+          run_id: "run-9",
+          entity: "Invoice",
+          phase: "extracting",
+          phase_index: 2,
+          status: "running",
+          terminal: false,
+          outcome: null,
+          record_count: null,
+          entities_done: null,
+          entities_total: null,
+          error: null,
+          recovered: false,
+          stalled: false,
+          started_at: "2026-09-26T11:59:00Z",
+          finished_at: null,
+        },
+      ],
+    }),
     useAnalyticsApps: query({
       apps: [
         { name: "tablero_ventas", title: "Tablero de ventas", datasets_used: ["sales"] },
@@ -489,6 +517,8 @@ describe("DagGraph node drawer", () => {
     expect(clientMocks.extractEntity).toHaveBeenCalledWith("acme", "Invoice", { mode: "incremental" });
     const tracker = drawer()?.querySelector('[data-testid="extraction-tracker"]');
     expect(tracker?.textContent).toContain("run-9");
+    expect(tracker?.textContent).toContain("En ejecución");
+    expect(tracker?.textContent).toContain("Extrayendo entidades seleccionadas...");
     expect(toastMock.success).toHaveBeenCalledWith("Extracción enviada para Invoice.");
   });
 

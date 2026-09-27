@@ -8,6 +8,7 @@ from app.services import mcp_registry
 READ_ONLY_TOOLS = {
     "airflow_list_dags", "airflow_get_run_status", "airflow_get_task_logs",
     "airflow_list_task_instances", "airflow_list_dag_runs",
+    "airflow_describe_dag",
 
     "view_job", "view_jobs", "view_schema", "view_dataset", "view_datasets",
     "view_semantic", "view_pipeline",

@@ -1843,7 +1843,7 @@
     },
     {
       "path": "console/tests/conftest.py",
-      "sha256": "14ff6461af76603d60e1838eb6ecb485b4a3456e0ec3c4012979d258b09d3a6d"
+      "sha256": "9a1a67c3766405f15fad9f6b78d2572fe43c6cd3a380a6cd67576b5f0c2aa0cc"
     },
     {
       "path": "console/tests/control_room_auxiliary_http_harness.py",
@@ -3127,15 +3127,27 @@
     },
     {
       "path": "console/tests/test_pipeline_extract.py",
-      "sha256": "d942c9380e34dfd728e448e573d496b7dcb37e42852bfc4158f7fe4a37202b4d"
+      "sha256": "0e82ed58453eb0f3cf0116b940d2d95f6b347b1f9daa9fd0ea6410188b1c6142"
     },
     {
       "path": "console/tests/test_pipeline_extraction_conn_id.py",
       "sha256": "1c9b49b619500f4c2b6d3ba52066676f338d77a595ea3b1a9ba3c031fff5daa5"
     },
     {
+      "path": "console/tests/test_pipeline_extraction_progress_endpoint.py",
+      "sha256": "27b35789d74e2eecb5c6ee609452b7230f844d1db866234518bc3f4e52824e85"
+    },
+    {
       "path": "console/tests/test_pipeline_job_payloads.py",
       "sha256": "7a883e6fa045114a960883ee51ea3cb56c55c342a8ec030f49a792ed7c421e32"
+    },
+    {
+      "path": "console/tests/test_pipeline_recover_endpoint.py",
+      "sha256": "906146b3283e573dd6f8dd5c7aafc54fbbf9e39b4c896b3bdf451223214327ae"
+    },
+    {
+      "path": "console/tests/test_pipeline_run_janitor.py",
+      "sha256": "07cb486e8377d2ba58ca3d65a3e4c73ba3e5ff01fb2191247b31180bea477c72"
     },
     {
       "path": "console/tests/test_pipeline_scope_helpers.py",
@@ -3143,7 +3155,11 @@
     },
     {
       "path": "console/tests/test_pipeline_status_monotonic.py",
-      "sha256": "8b868829faf019361b1bf4caa2e83c3323120cce11a612bf04cf50e45d6feca4"
+      "sha256": "95f36feb7e7cfb1f76e20ebd484a5223e0e24d08fde8a6a40e1bff1e4c2fdf56"
+    },
+    {
+      "path": "console/tests/test_pipeline_trigger_preflight.py",
+      "sha256": "497a23168d7f9e1a3058d891297ab6bb934db9a5fb4f910b767b6254be788ea8"
     },
     {
       "path": "console/tests/test_platform_admin_db_scope.py",
@@ -3807,7 +3823,7 @@
     },
     {
       "path": "tests/console_route_source.py",
-      "sha256": "8d480e3fb0e202a8de3d8d5cd8799559149797785c2f0cdf4f89d326bef81018"
+      "sha256": "bc2518e5c3d165f8b133b509fa43490240bbcef29ee636f3e03e05c4d950501d"
     },
     {
       "path": "tests/control_room_action_authority_dry_run.py",
@@ -4359,7 +4375,7 @@
     },
     {
       "path": "tests/test_control_room_ci_contract.py",
-      "sha256": "d726648da554acee0fc59895760b31245f9cc411f7e617c30a6eb0fe2e581380"
+      "sha256": "6894ba7fd2470a7faa72f2fd2bff81bb208886869ed669dac95e6b76f0f1048b"
     },
     {
       "path": "tests/test_control_room_data_readiness_contract.py",
@@ -5114,6 +5130,14 @@
       "sha256": "2416144a2bd473a551390ea90213d6bf978a5c12d483e6faa73426b18e041553"
     },
     {
+      "path": "tests/test_mcp_airflow_recovery_tools.py",
+      "sha256": "3dd2d40a8c58d41842cab1f9e3b117b98dddf3e37f181f38a0325275c54a9f1a"
+    },
+    {
+      "path": "tests/test_mcp_airflow_tool_classification.py",
+      "sha256": "4dd9fb3d46129f2d6cf009a953a4d884a68b6f33c69aade5dd0f2f8aea3897fa"
+    },
+    {
       "path": "tests/test_mcp_cartridge_get_schema.py",
       "sha256": "c130d3bb778ac5dadc7a9a3be612f1ef0074d9679a80ca484cbac28ae0aa154f"
     },
@@ -5191,7 +5215,7 @@
     },
     {
       "path": "tests/test_mcp_tool_policy.py",
-      "sha256": "9d03ddd5225f8b7b92604410fa1e7f3b3cc706c02fbee50010116c562a5a29ad"
+      "sha256": "2612fedead1bca9b9ffa6e95e8e380108b2b83309ef9e1a6a4d47ff1908a37bc"
     },
     {
       "path": "tests/test_me_access_panel_contract.py",
@@ -5442,8 +5466,16 @@
       "sha256": "3f6a1e4f7fc261dee4d19c507adffba6b40eb041a0d2cb7412e9f43dc3ae0c7c"
     },
     {
+      "path": "tests/test_pipeline_run_progress.py",
+      "sha256": "3114f787d8f93896f4ccb4e24e322927aa1187d6138cff2e112feafcb784b575"
+    },
+    {
       "path": "tests/test_pipeline_run_reconciliation.py",
       "sha256": "edfa867cd91af7ace8c1cef6d096001a3fa044de52266a8603b437e648cec70f"
+    },
+    {
+      "path": "tests/test_pipeline_run_recovery_live.py",
+      "sha256": "d0f5e7188716b7323db8db58d71166696bca70b2cfa6270bf826a84cf87c7a97"
     },
     {
       "path": "tests/test_pipeline_run_save_authority.py",
@@ -5456,6 +5488,10 @@
     {
       "path": "tests/test_pipeline_run_state.py",
       "sha256": "cca87e4aefb30d9927c6aa1a1c50e1b3adb2ee583189f73e88069adc4eb06e20"
+    },
+    {
+      "path": "tests/test_pipeline_stuck_run_recovery.py",
+      "sha256": "fc0672ac46e2cfceeb4aaf32de3270d5ec1085fd02957bce61f0159748cc1941"
     },
     {
       "path": "tests/test_pipeline_successfactors_reservation.py",

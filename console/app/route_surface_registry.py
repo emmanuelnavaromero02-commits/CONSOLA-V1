@@ -70,6 +70,7 @@ ROUTE_SURFACE_REGISTRY: tuple[RouteSurfaceRule, ...] = (
     RouteSurfaceRule("/api/metrics", "frontend", "metrics API"),
     RouteSurfaceRule("/api/pipeline", "frontend", "pipeline API"),
     RouteSurfaceRule("/api/pipeline_runs", "frontend", "pipeline run API"),
+    RouteSurfaceRule("/api/pipelines", "frontend", "pipeline operations API"),
     RouteSurfaceRule("/api/rag", "frontend", "RAG API"),
     RouteSurfaceRule("/api/schema", "frontend", "schema API"),
     RouteSurfaceRule("/api/semantic", "frontend", "semantic API"),

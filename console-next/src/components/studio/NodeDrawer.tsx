@@ -16,7 +16,7 @@ import type { StudioSectionId } from "@/lib/studio/sections";
 import type { DagGraphEdge, DagGraphNode, StudioEditorTarget, StudioManifest } from "@/lib/studio/types";
 import { cn } from "@/lib/utils";
 
-import { extractionMode, startExtraction, type ExtractionLaunch } from "./ExtractionTracker";
+import { extractionLaunchNotice, extractionMode, startExtraction, type ExtractionLaunch } from "./ExtractionTracker";
 import { AboutPanel, InfoPanel, LineagePanel, manifestEntity, nodeTitle } from "./NodeDrawerTabs";
 import { buttonClass, ConfirmDialog } from "./ui";
 
@@ -154,7 +154,7 @@ export function NodeDrawer({
     try {
       const value = await startExtraction(cartridge, name, mode);
       setLaunch({ nodeId, value });
-      toast.success(`Extracción enviada para ${name}.`);
+      toast.success(extractionLaunchNotice(value));
     } catch (error) {
       toast.error(studioErrorMessage(error, `No se pudo extraer ${name}.`));
     } finally {

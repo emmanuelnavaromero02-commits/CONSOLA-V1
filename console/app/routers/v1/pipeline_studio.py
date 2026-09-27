@@ -536,6 +536,7 @@ async def api_pipeline_extract(
             dag_id,
             body.get("idempotency_key") or body.get("request_id"),
         )
+        preflight = await _pipeline_extract_preflight(dag_id, user)
         slot = await _reserve_successfactors_entity_extract_slot(
             cartridge=cartridge,
             entity=entity,
@@ -577,7 +578,7 @@ async def api_pipeline_extract(
             tenant_id=conf.get("tenant_id"),
             workspace_id=conf.get("workspace_id"),
         )
-        return {
+        response = {
             "triggered": True,
             "cartridge": cartridge,
             "entity": entity,
@@ -588,6 +589,9 @@ async def api_pipeline_extract(
             "state": result.get("state"),
             "conf": conf,
         }
+        if preflight is not None and getattr(preflight, "checked", False):
+            response["automation"] = preflight.automation()
+        return response
 
     mode = body.get("mode", "incremental")
     args = {

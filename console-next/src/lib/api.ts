@@ -1,4 +1,5 @@
 import { readCookie } from "@/lib/cookies";
+import { pipelineErrorDetail } from "@/lib/pipeline-error-copy";
 import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/workspace-context";
 
 export { readCookie };
@@ -151,6 +152,8 @@ export function publicErrorMessage(status: number, payload: unknown, requestId?:
   if (status < 500 && payload && typeof payload === "object" && "detail" in payload) {
     const detail = (payload as { detail?: unknown }).detail;
     if (typeof detail === "string" && isSafeUserDetail(detail)) return detail.trim();
+    const pipelineDetail = pipelineErrorDetail(payload);
+    if (pipelineDetail) return pipelineDetail.copy;
   }
   if (status === 401) return "Sesión expirada o no autenticada.";
   if (status === 403) return "No tienes permisos para esta acción.";

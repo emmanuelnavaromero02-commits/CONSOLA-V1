@@ -195,3 +195,40 @@ async def test_airflow_404_retains_durable_row_for_explicit_reconciliation() -> 
     assert result is current
     assert result["status"] == "running"
     assert pool_requested is False
+
+
+@pytest.mark.anyio
+async def test_airflow_not_found_payload_shape_does_not_write() -> None:
+    pool_requested = False
+
+    async def invoke(*_args, **_kwargs):
+        return {
+            "dag_id": "sap_successfactors_extract_all",
+            "dag_run_id": "manual__race",
+            "found": False,
+            "state": "not_found",
+            "start_date": None,
+            "end_date": None,
+        }
+
+    async def get_pool():
+        nonlocal pool_requested
+        pool_requested = True
+        raise AssertionError("a not-found observation must not write pipeline_runs")
+
+    current = _row("queued")
+    result = await refresh_dag_run_status(
+        current,
+        {"tenant_id": TENANT, "workspace_id": WORKSPACE},
+        mcp_invoke=invoke,
+        get_db_pool=get_pool,
+        build_security_context=lambda user: user or {},
+        normalize_airflow_state=lambda value: str(value or "unknown").lower(),
+        parse_iso_datetime=parse_iso_datetime,
+        duration_seconds=duration_seconds,
+        logger_debug=lambda *_args, **_kwargs: None,
+    )
+
+    assert result is current
+    assert result["status"] == "queued"
+    assert pool_requested is False

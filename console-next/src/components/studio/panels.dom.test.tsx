@@ -59,6 +59,11 @@ vi.mock("@/lib/monitor/hooks", () => ({
   isTerminalRunStatus: (status?: string) => status === "success",
 }));
 
+vi.mock("@/lib/monitor/extraction-progress", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/monitor/extraction-progress")>();
+  return { ...actual, useExtractionProgress: () => state.hooks.useExtractionProgress };
+});
+
 vi.mock("@/lib/monitor/client", () => ({ extractEntity: clientMocks.extractEntity }));
 vi.mock("@/lib/data/client", () => ({ queryBronze: clientMocks.queryBronze }));
 vi.mock("@/lib/studio/client", async (importOriginal) => {
@@ -127,6 +132,29 @@ beforeEach(() => {
     useSourceSchema: query({ status: "ok", preview: { schema: [{ name: "id", type: "VARCHAR" }], data: [{ id: "1" }] } }),
     useEntityRuns: query([{ dag_run_id: "run-1", status: "running" }]),
     useEntityRunLogs: query({ logs: [{ task_id: "extract", available: true, logs: "linea de log" }] }),
+    useExtractionProgress: query({
+      schema_version: "pipeline-extraction-progress/v1",
+      checked_at: "2026-09-26T12:00:00Z",
+      runs: [
+        {
+          run_id: "run-1",
+          entity: "Invoice",
+          phase: "extracting",
+          phase_index: 2,
+          status: "running",
+          terminal: false,
+          outcome: null,
+          record_count: null,
+          entities_done: null,
+          entities_total: null,
+          error: null,
+          recovered: false,
+          stalled: false,
+          started_at: "2026-09-26T11:59:00Z",
+          finished_at: null,
+        },
+      ],
+    }),
   };
   vi.clearAllMocks();
   container = document.createElement("div");
@@ -212,6 +240,9 @@ describe("EntitiesPanel", () => {
     const tracker = container.querySelector('[data-testid="extraction-tracker"]');
     expect(tracker?.textContent).toContain("run-1");
     expect(tracker?.textContent).toContain("En ejecución");
+    expect(tracker?.textContent).toContain("Extrayendo entidades seleccionadas...");
+    expect(tracker?.querySelector('[aria-current="step"]')?.textContent).toContain("Extracción");
+    expect(tracker?.textContent).toContain("Detalles técnicos");
     await click(byText("button", /Ver logs/));
     expect(container.textContent).toContain("linea de log");
   });

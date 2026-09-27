@@ -212,8 +212,15 @@ export interface VaultSecret {
   [key: string]: unknown;
 }
 
+export interface ExtractAutomation {
+  was_paused?: boolean | null;
+  unpaused?: boolean;
+  message_es?: string | null;
+}
+
 export interface ExtractResult {
   triggered?: boolean;
+  reused?: boolean;
   dag_id?: string | null;
   dag_run_id?: string | null;
   run_id?: string | null;
@@ -222,6 +229,7 @@ export interface ExtractResult {
   status?: string | null;
   message?: string | null;
   error?: string | null;
+  automation?: ExtractAutomation | null;
   [key: string]: unknown;
 }
 
