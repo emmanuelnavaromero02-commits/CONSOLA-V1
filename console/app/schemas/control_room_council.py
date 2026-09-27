@@ -20,6 +20,14 @@ NO_FOLLOWUP_REASON = (
     "La tarea de seguimiento no está preparada; su autor puede renovarla."
 )
 SOURCE_CHANGED_REASON = "Los datos de origen cambiaron desde que se preparó la propuesta."
+FOLLOWUPS_DISABLED_REASON = (
+    "Las tareas de seguimiento están desactivadas en este espacio de trabajo."
+)
+CHECKER_INFLUENCED_REASON = (
+    "Ajustaste un umbral que originó esta sugerencia; requiere la aprobación de "
+    "otra persona del equipo."
+)
+NO_AUTHOR_REASON = "La propuesta no tiene un autor vigente; ciérrala desde el Registro."
 APPROVED_MESSAGE = (
     "Decisión aprobada y tarea de seguimiento interna registrada. "
     "No se modificó ningún sistema externo (ERP)."
@@ -44,6 +52,10 @@ CouncilDisabledReason = Literal[
     "La propuesta venció; su autor puede renovarla.",
     "La tarea de seguimiento no está preparada; su autor puede renovarla.",
     "Los datos de origen cambiaron desde que se preparó la propuesta.",
+    "Las tareas de seguimiento están desactivadas en este espacio de trabajo.",
+    "Ajustaste un umbral que originó esta sugerencia; requiere la aprobación de "
+    "otra persona del equipo.",
+    "La propuesta no tiene un autor vigente; ciérrala desde el Registro.",
 ]
 EvidenceLabel = Literal["Entidad", "Indicador", "Fecha del dato", "Severidad"]
 _Copy = Annotated[str, Field(min_length=1, max_length=240)]
@@ -71,8 +83,10 @@ class CouncilImpact(_StrictModel):
             ) or self.label != NO_ESTIMATE_LABEL:
                 raise ValueError("impact without estimate carries no figures")
             return self
-        if self.value is None or self.basis is None or self.formula is None:
-            raise ValueError("impact estimates always carry value, basis and formula")
+        if self.value is None or self.basis is None:
+            raise ValueError("impact estimates always carry value and basis")
+        if (self.basis == "persisted") == (self.formula is not None):
+            raise ValueError("rule impacts show their formula; stored ones only a label")
         if (self.kind == "money") != (self.currency is not None):
             raise ValueError("only money impacts carry a currency")
         if (self.kind == "time") != (self.unit is not None):
@@ -112,7 +126,9 @@ class CouncilProposal(_StrictModel):
         if self.can_approve and self.disabled_reason is not None:
             raise ValueError("an approvable proposal has no disabled reason")
         if self.origin == "system" and (
-            self.decision_id is not None or self.can_renew or self.authored_by_you
+            (self.decision_id is not None and self.state != "completed")
+            or self.can_renew
+            or self.authored_by_you
         ):
             raise ValueError("system suggestions have no decision or author")
         if self.origin == "person" and self.decision_id is None:
@@ -179,12 +195,15 @@ class CouncilRenewResponse(_StrictModel):
 
 __all__ = (
     "APPROVED_MESSAGE",
+    "CHECKER_INFLUENCED_REASON",
     "COUNCIL_SCHEMA_VERSION",
     "DISCARDED_MESSAGE",
     "EXPIRED_REASON",
+    "FOLLOWUPS_DISABLED_REASON",
     "MAX_COUNCIL_EVIDENCE",
     "MAX_COUNCIL_PROPOSALS",
     "NEEDS_OTHER_APPROVER_REASON",
+    "NO_AUTHOR_REASON",
     "NO_ESTIMATE_LABEL",
     "NO_FOLLOWUP_REASON",
     "RENEWED_MESSAGE",

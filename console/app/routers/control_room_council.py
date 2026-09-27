@@ -48,6 +48,7 @@ async def control_room_council(
 @router.post(
     "/council/{proposal_id}/approve",
     response_model=CouncilApproveResponse,
+    response_model_exclude_none=True,
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("control_room.approve")),
@@ -73,6 +74,7 @@ async def control_room_council_approve(
 @router.post(
     "/council/{proposal_id}/discard",
     response_model=CouncilDiscardResponse,
+    response_model_exclude_none=True,
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("control_room.approve")),
@@ -99,6 +101,7 @@ async def control_room_council_discard(
 @router.post(
     "/council/{proposal_id}/renew",
     response_model=CouncilRenewResponse,
+    response_model_exclude_none=True,
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("control_room.write")),

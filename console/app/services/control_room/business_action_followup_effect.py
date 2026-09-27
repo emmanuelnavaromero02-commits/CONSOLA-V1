@@ -11,6 +11,9 @@ from app.services import audit_service, control_room_service
 from app.services.control_room.business_action_authority_policy import (
     EXECUTABLE_TEMPLATE_ID,
 )
+from app.services.control_room.business_action_catalog import (
+    require_enabled_action_template,
+)
 from app.services.control_room.business_action_mutations import require_exact_count
 from app.services.control_room.business_council_actors import (
     CouncilMaker,
@@ -108,6 +111,15 @@ def _require_followup_stage(row: Mapping[str, Any], decision_id: int) -> None:
         raise proposal_changed()
 
 
+async def require_followups_enabled(conn: Any) -> None:
+    try:
+        await require_enabled_action_template(conn, EXECUTABLE_TEMPLATE_ID)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise proposal_changed() from None
+        raise
+
+
 async def _insert_action(
     conn: Any, decision_id: int, text: str, note: str, actor: str
 ) -> int:
@@ -135,6 +147,7 @@ async def complete_followup_effect(
     checker_id = int(checker["id"])
     require_council_distinct_actors(maker, checker_id)
     _require_followup_stage(row, decision_id)
+    await require_followups_enabled(conn)
     workspace_id = str(row["workspace_id"])
     item_id = str(row["item_id"])
     owner_user_id = row.get("owner_user_id")
@@ -249,4 +262,5 @@ __all__ = (
     "complete_followup_effect",
     "followup_note",
     "proposal_changed",
+    "require_followups_enabled",
 )

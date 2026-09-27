@@ -76,12 +76,13 @@ def _money(item: Mapping[str, Any]) -> CouncilImpact | None:
         or not currency.isalpha()
     ):
         return None
+    persisted = formula == PERSISTED_FORMULA
     return CouncilImpact(
         kind="money",
         value=round(estimate, 2),
         currency=currency,
-        basis="persisted" if formula == PERSISTED_FORMULA else "rule",
-        formula=formula[:240],
+        basis="persisted" if persisted else "rule",
+        formula=None if persisted else formula[:240],
         label=RULE_LABELS.get(formula, f"Regla: {formula}")[:240],
     )
 

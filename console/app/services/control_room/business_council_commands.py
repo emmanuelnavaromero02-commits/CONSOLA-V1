@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import asyncpg
 from fastapi import HTTPException
 
 from app.schemas.control_room_council import (
@@ -43,6 +44,9 @@ from app.services.control_room.business_action_transition_core import (
     transition_intent,
     transition_operation_digest,
 )
+from app.services.control_room.business_cartridge_scope import (
+    business_cartridge_allowed,
+)
 from app.services.control_room.business_council_actors import (
     CHECKER_PERMISSIONS,
     SYSTEM_MAKER,
@@ -54,6 +58,8 @@ from app.services.control_room.business_council_view import (
     PENDING_STATUSES,
     PersonProposal,
     SystemSuggestion,
+    authored_threshold_keys,
+    checker_influenced,
     read_person_proposals,
     system_candidate_items,
     system_suggestion_match,
@@ -159,6 +165,29 @@ def _same(left: str, right: str) -> bool:
     return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
 
 
+def _visible(user: Mapping[str, Any], row: Mapping[str, Any] | None) -> bool:
+    return row is not None and business_cartridge_allowed(
+        user, str(row.get("cartridge_id") or ""), allow_platform=True
+    )
+
+
+def _checker_influenced() -> HTTPException:
+    return HTTPException(
+        403,
+        {
+            "code": "checker_influenced_proposal",
+            "message": "a threshold set by the checker produced this suggestion",
+        },
+    )
+
+
+async def _scoped(pool: Any, user: Mapping[str, Any], work: Any) -> Any:
+    try:
+        return await run_with_db_scope(pool, dict(user), work)
+    except asyncpg.DeadlockDetectedError:
+        raise proposal_changed() from None
+
+
 def _scope_guard(
     tenant_id: str, workspace_id: str, scoped_tenant: str | None, scoped: str
 ) -> None:
@@ -255,6 +284,8 @@ async def _approve_person(
 ) -> Outcome:
     tenant_id, workspace_id = authority_scope(user)
     checker_id = actor_id(user)
+    if not _visible(user, proposal.row):
+        raise _not_found()
     if proposal.intent is None:
         raise proposal_changed()
     intent = await lock_intent(
@@ -319,6 +350,8 @@ async def _approve_person(
     )
     if row is None:
         raise proposal_changed()
+    if not _visible(user, row):
+        raise _not_found()
     effect = await complete_followup_effect(
         conn,
         checker=user,
@@ -388,6 +421,8 @@ async def _locked_suggestion(
     row = await fetch_direct_row_for_update(
         conn, tenant_id=tenant_id, workspace_id=workspace_id, item_id=match.item_id
     )
+    if not _visible(user, row):
+        raise _not_found()
     if system_suggestion_match(
         match.live, row, tenant_id=tenant_id, workspace_id=workspace_id
     ) != (match.fingerprint, match.evidence_digest):
@@ -416,6 +451,11 @@ async def _approve_system(
         actor=checker_id,
         permissions=CHECKER_PERMISSIONS,
     )
+    authored = await authored_threshold_keys(
+        conn, workspace_id=workspace_id, user_id=checker_id
+    )
+    if checker_influenced(suggestion.live, authored):
+        raise _checker_influenced()
     item = _system_item(suggestion, row)
     decision = await create_and_link_decision(
         conn,
@@ -513,7 +553,7 @@ async def approve_council_proposal(
             conn, user=user, proposal=match, keys=keys, ip=ip, user_agent=user_agent
         )
 
-    outcome = await run_with_db_scope(pool, dict(user), _person)
+    outcome = await _scoped(pool, user, _person)
     if outcome.kind == "stale":
         raise _source_changed()
     if outcome.kind == "missing":
@@ -547,7 +587,7 @@ async def approve_council_proposal(
                 user_agent=user_agent,
             )
 
-        outcome = await run_with_db_scope(pool, dict(user), _system)
+        outcome = await _scoped(pool, user, _system)
     if outcome.kind != "done" or outcome.decision_id is None:
         raise _not_found()
     return CouncilApproveResponse(decision_id=outcome.decision_id)
@@ -574,6 +614,27 @@ async def _discard_transition(
     )
 
 
+async def _lock_pending_intent(
+    conn: Any, *, tenant_id: str, workspace_id: str, proposal: PersonProposal
+) -> dict[str, Any] | None:
+    if proposal.intent is None or str(proposal.intent.get("state")) != (
+        "pending_approval"
+    ):
+        return None
+    try:
+        intent = await lock_intent(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            intent_id=str(proposal.intent["id"]),
+        )
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        return None
+    return intent if str(intent.get("state")) == "pending_approval" else None
+
+
 async def _discard_person(
     conn: Any,
     *,
@@ -586,7 +647,7 @@ async def _discard_person(
 ) -> Outcome:
     tenant_id, workspace_id = authority_scope(user)
     checker_id = actor_id(user)
-    if proposal.maker_user_id is None:
+    if proposal.maker_user_id is None or not _visible(user, proposal.row):
         raise proposal_changed()
     maker = CouncilMaker.person(proposal.maker_user_id)
     require_council_distinct_actors(maker, checker_id)
@@ -597,9 +658,14 @@ async def _discard_person(
         actor=checker_id,
         permissions=("control_room.approve",),
     )
+    intent = await _lock_pending_intent(
+        conn, tenant_id=tenant_id, workspace_id=workspace_id, proposal=proposal
+    )
     row = await fetch_direct_row_for_update(
         conn, tenant_id=tenant_id, workspace_id=workspace_id, item_id=proposal.item_id
     )
+    if row is not None and not _visible(user, row):
+        raise _not_found()
     decision = await conn.fetchrow(
         LOCK_OPEN_DECISION_SQL, proposal.decision_id, workspace_id
     )
@@ -613,42 +679,28 @@ async def _discard_person(
     ):
         raise proposal_changed()
     intent_id = None
-    if proposal.intent is not None and str(proposal.intent.get("state")) == (
-        "pending_approval"
-    ):
-        try:
-            intent = await lock_intent(
-                conn,
-                tenant_id=tenant_id,
-                workspace_id=workspace_id,
-                intent_id=str(proposal.intent["id"]),
-            )
-        except HTTPException as exc:
-            if exc.status_code != 404:
-                raise
-            intent = None
-        if intent is not None and str(intent.get("state")) == "pending_approval":
-            existing_checker = intent.get("checker_user_id")
-            if existing_checker is not None and int(existing_checker) != checker_id:
-                raise proposal_changed()
-            current = intent
-            if existing_checker is None:
-                current = await _advance(
-                    conn,
-                    current,
-                    actor=checker_id,
-                    event_type="approval_claimed",
-                    operation="council_claim",
-                    checker=checker_id,
-                )
-            await _advance(
+    if intent is not None:
+        existing_checker = intent.get("checker_user_id")
+        if existing_checker is not None and int(existing_checker) != checker_id:
+            raise proposal_changed()
+        current = intent
+        if existing_checker is None:
+            current = await _advance(
                 conn,
                 current,
                 actor=checker_id,
-                event_type="rejected",
-                operation="council_reject",
+                event_type="approval_claimed",
+                operation="council_claim",
+                checker=checker_id,
             )
-            intent_id = str(intent["id"])
+        await _advance(
+            conn,
+            current,
+            actor=checker_id,
+            event_type="rejected",
+            operation="council_reject",
+        )
+        intent_id = str(intent["id"])
     await _discard_transition(
         conn,
         user=user,
@@ -776,7 +828,7 @@ async def discard_council_proposal(
             user_agent=user_agent,
         )
 
-    outcome = await run_with_db_scope(pool, dict(user), _person)
+    outcome = await _scoped(pool, user, _person)
     if outcome.kind == "missing":
         snapshot = await collect_surface_snapshot(user)
         candidates = system_candidate_items(snapshot)
@@ -829,7 +881,7 @@ async def discard_council_proposal(
             )
             return Outcome("done", None)
 
-        outcome = await run_with_db_scope(pool, dict(user), _system)
+        outcome = await _scoped(pool, user, _system)
     if outcome.kind != "done":
         raise _not_found()
     return CouncilDiscardResponse(decision_id=outcome.decision_id)

@@ -45,6 +45,10 @@ from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_action_tokens import (
     server_binding_operation_digest,
 )
+from app.services.control_room.business_action_transition_core import (
+    transition_intent,
+    transition_operation_digest,
+)
 from app.services.control_room.business_execution_precondition import (
     dry_run_metadata,
 )
@@ -145,11 +149,19 @@ async def _prepare(
         item_id=item_id,
     )
     if existing is not None:
-        if str(existing.get("state") or "") == "pending_approval" and (
-            intent_matches_contract(existing, contract)
-        ):
+        if str(existing.get("state") or "") != "pending_approval":
+            return None
+        if intent_matches_contract(existing, contract):
             return str(existing["id"])
-        return None
+        await transition_intent(
+            conn,
+            intent=existing,
+            actor_user_id=maker_user_id,
+            event_type="stale",
+            operation_digest=transition_operation_digest(
+                existing, operation="council_superseded", actor_user_id=maker_user_id
+            ),
+        )
     dry_run_id = await _record_followup_dry_run(conn, user, contract)
     if dry_run_id is None:
         return None

@@ -9,8 +9,11 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.schemas.control_room_council import (
+    CHECKER_INFLUENCED_REASON,
     COUNCIL_SCHEMA_VERSION,
     EXPIRED_REASON,
+    FOLLOWUPS_DISABLED_REASON,
+    NO_AUTHOR_REASON,
     MAX_COUNCIL_EVIDENCE,
     MAX_COUNCIL_PROPOSALS,
     NEEDS_OTHER_APPROVER_REASON,
@@ -32,15 +35,26 @@ from app.services.control_room.business_action_authority_evidence import (
     metadata,
     persisted_item,
 )
+from app.services.control_room.business_action_authority_policy import (
+    EXECUTABLE_TEMPLATE_ID,
+)
 from app.services.control_room.business_action_authority_repository import (
     fetch_direct_rows,
+)
+from app.services.control_room.business_action_catalog import (
+    ENABLED_ACTION_TEMPLATE_IDS_SQL,
+    matches_runtime_registry,
 )
 from app.services.control_room.business_action_direct_contract import (
     MONITOR_ITEM_KINDS,
     direct_evidence_digest,
 )
 from app.services.control_room.business_action_followup_effect import COUNCIL_ORIGIN
+from app.services.control_room.business_cartridge_scope import (
+    business_cartridge_allowed,
+)
 from app.services.control_room.business_council_actors import (
+    SYSTEM_MAKER,
     council_reads_workspace,
     is_council_checker,
 )
@@ -116,7 +130,8 @@ SELECT item.tenant_id::text AS tenant_id,
        decision.status AS decision_status,
        decision.created_at AS decision_created_at,
        decision.commitment_date AS decision_commitment_date,
-       decision.created_by_id AS decision_created_by_id
+       decision.created_by_id AS decision_created_by_id,
+       decision.created_by AS decision_created_by
   FROM control_room_items AS item
   JOIN decisions AS decision
     ON decision.id = item.decision_id
@@ -142,8 +157,28 @@ SELECT intent.id::text AS id, intent.item_id, intent.maker_user_id,
    AND intent.workspace_id = $2::uuid
    AND intent.item_id = ANY($3::text[])
    AND intent.template_id = 'create_followup_task'
- ORDER BY intent.item_id, intent.created_at DESC, intent.id DESC
- LIMIT $4
+   AND intent.created_at = (
+       SELECT max(latest.created_at)
+         FROM control_room_action_intents AS latest
+        WHERE latest.tenant_id = intent.tenant_id
+          AND latest.workspace_id = intent.workspace_id
+          AND latest.item_id = intent.item_id
+          AND latest.maker_user_id = intent.maker_user_id
+          AND latest.template_id = 'create_followup_task'
+   )
+ ORDER BY intent.item_id, intent.maker_user_id, intent.id DESC
+"""
+WORKSPACE_THRESHOLDS_SQL = """
+SELECT id::text AS id, cartridge_id, anomaly_type, metric
+  FROM control_room_thresholds
+ WHERE workspace_id = $1::uuid
+"""
+THRESHOLD_AUTHORSHIP_SQL = """
+SELECT resource_id
+  FROM audit_events
+ WHERE action = 'control_room.threshold.upsert'
+   AND user_id = $1
+   AND resource_id = ANY($2::text[])
 """
 
 
@@ -155,6 +190,10 @@ class PersonProposal:
     maker_user_id: int | None
     intent: Mapping[str, Any] | None
     handle: str
+
+    @property
+    def system_made(self) -> bool:
+        return str(self.row.get("decision_created_by") or "") == SYSTEM_MAKER
 
 
 @dataclass(frozen=True)
@@ -259,18 +298,18 @@ async def read_person_proposals(
         person_owner_filter(user),
         MAX_PERSON_ROWS,
     )
-    rows = [dict(row) for row in rows]
+    rows = [
+        dict(row)
+        for row in rows
+        if business_cartridge_allowed(
+            user, str(row.get("cartridge_id") or ""), allow_platform=True
+        )
+    ]
     item_ids = sorted(
         {str(row.get("item_id") or "") for row in rows if row.get("item_id")}
     )
     intents = (
-        await conn.fetch(
-            LATEST_INTENTS_SQL,
-            tenant_id,
-            workspace_id,
-            item_ids,
-            MAX_PERSON_ROWS * 4,
-        )
+        await conn.fetch(LATEST_INTENTS_SQL, tenant_id, workspace_id, item_ids)
         if item_ids
         else []
     )
@@ -447,6 +486,60 @@ def person_state(
     return "no_followup"
 
 
+def threshold_keys(item: Mapping[str, Any]) -> set[tuple[str, str, str]]:
+    details = item.get("details") if isinstance(item.get("details"), Mapping) else {}
+    keys: set[tuple[str, str, str]] = set()
+    for source in (item.get("thresholds_applied"), details.get("thresholds")):
+        for entry in source if isinstance(source, Sequence) else ():
+            if not isinstance(entry, Mapping) or entry.get("source") != "workspace":
+                continue
+            cartridge, anomaly, metric = (
+                str(entry.get(field) or "").strip()
+                for field in ("cartridge_id", "anomaly_type", "metric")
+            )
+            if cartridge and anomaly and metric:
+                keys.add((cartridge, anomaly, metric))
+    return keys
+
+
+async def authored_threshold_keys(
+    conn: Any, *, workspace_id: str, user_id: int | None
+) -> set[tuple[str, str, str]]:
+    if user_id is None:
+        return set()
+    thresholds = {
+        str(row["id"]): (
+            str(row.get("cartridge_id") or ""),
+            str(row.get("anomaly_type") or ""),
+            str(row.get("metric") or ""),
+        )
+        for row in await conn.fetch(WORKSPACE_THRESHOLDS_SQL, workspace_id)
+    }
+    if not thresholds:
+        return set()
+    authored = await conn.fetch(THRESHOLD_AUTHORSHIP_SQL, user_id, sorted(thresholds))
+    return {
+        thresholds[str(row["resource_id"])]
+        for row in authored
+        if str(row.get("resource_id") or "") in thresholds
+    }
+
+
+def checker_influenced(
+    item: Mapping[str, Any], authored: set[tuple[str, str, str]]
+) -> bool:
+    return bool(threshold_keys(item) & authored)
+
+
+async def followups_enabled(conn: Any) -> bool:
+    rows = await conn.fetch(ENABLED_ACTION_TEMPLATE_IDS_SQL, [EXECUTABLE_TEMPLATE_ID], 1)
+    return any(
+        str(row.get("template_id") or "") == EXECUTABLE_TEMPLATE_ID
+        and matches_runtime_registry(row)
+        for row in rows
+    )
+
+
 def _completed_by_council(row: Mapping[str, Any]) -> bool:
     writeback = metadata(row).get("writeback_result")
     return (
@@ -545,6 +638,7 @@ def project_person_proposal(
     live: Mapping[str, Any] | None,
     narrative: Mapping[str, Any] | None,
     now: datetime,
+    enabled: bool = True,
 ) -> CouncilProposal | None:
     persisted = persisted_item(proposal.row, proposal.item_id)
     source = live if live is not None else persisted
@@ -555,11 +649,24 @@ def project_person_proposal(
         return None
     viewer = optional_actor_id(user.get("id"))
     state = person_state(proposal, now=now, viewer_id=viewer)
-    authored = viewer is not None and viewer == proposal.maker_user_id
-    checker = is_council_checker(user)
-    can_approve = state == "pending_approval" and checker and not authored
+    system_made = proposal.system_made
+    authorless = proposal.maker_user_id is None and not system_made
+    authored = not system_made and viewer is not None and viewer == proposal.maker_user_id
+    approver = has_permission(dict(user), "control_room.approve")
+    can_approve = (
+        state == "pending_approval"
+        and enabled
+        and is_council_checker(user)
+        and not authored
+    )
     reason: str | None = None
-    if state in {"pending_approval", "needs_other_approver"} and not can_approve:
+    if state == "completed":
+        reason = None
+    elif authorless:
+        reason = NO_AUTHOR_REASON
+    elif state in {"pending_approval", "needs_other_approver"} and not enabled:
+        reason = FOLLOWUPS_DISABLED_REASON
+    elif state in {"pending_approval", "needs_other_approver"} and not can_approve:
         reason = NEEDS_OTHER_APPROVER_REASON
     elif state == "expired":
         reason = EXPIRED_REASON
@@ -567,26 +674,25 @@ def project_person_proposal(
         reason = NO_FOLLOWUP_REASON
     elif state == "source_changed":
         reason = SOURCE_CHANGED_REASON
-    intent_state = str((proposal.intent or {}).get("state") or "")
-    renewable = state in {"expired", "no_followup"} or (
-        state == "source_changed" and intent_state == "stale"
+    renewable = (
+        state in {"expired", "no_followup", "source_changed"}
+        and not authorless
+        and enabled
     )
     return CouncilProposal(
         proposal_id=proposal.handle,
-        origin="person",
+        origin="system" if system_made else "person",
         authored_by_you=authored,
         decision_id=proposal.decision_id,
         created_at=_utc(proposal.row.get("decision_created_at")),
         commitment_date=_commitment(proposal.row.get("decision_commitment_date")),
         state=state,
         can_approve=can_approve,
-        can_discard=state != "completed"
-        and not authored
-        and has_permission(dict(user), "control_room.approve"),
+        can_discard=state != "completed" and not authored and not authorless and approver,
         can_renew=renewable
         and authored
         and has_permission(dict(user), "control_room.write"),
-        disabled_reason=None if state == "completed" else reason,
+        disabled_reason=reason,
         **display,
     )
 
@@ -596,11 +702,12 @@ def project_system_suggestion(
     *,
     user: Mapping[str, Any],
     narrative: Mapping[str, Any] | None,
+    influenced: bool = False,
 ) -> CouncilProposal | None:
     display = _display(suggestion.live, narrative)
     if display is None:
         return None
-    checker = is_council_checker(user)
+    can_approve = is_council_checker(user) and not influenced
     return CouncilProposal(
         proposal_id=suggestion.handle,
         origin="system",
@@ -608,11 +715,17 @@ def project_system_suggestion(
         decision_id=None,
         created_at=_utc(suggestion.row.get("first_seen_at")),
         commitment_date=None,
-        state="pending_approval",
-        can_approve=checker,
+        state="needs_other_approver" if influenced else "pending_approval",
+        can_approve=can_approve,
         can_discard=has_permission(dict(user), "control_room.approve"),
         can_renew=False,
-        disabled_reason=None if checker else NEEDS_OTHER_APPROVER_REASON,
+        disabled_reason=(
+            None
+            if can_approve
+            else CHECKER_INFLUENCED_REASON
+            if influenced
+            else NEEDS_OTHER_APPROVER_REASON
+        ),
         **display,
     )
 
@@ -627,19 +740,30 @@ def _system_sort_key(proposal: CouncilProposal) -> tuple[int, float, str]:
     return (-_SEVERITY_WEIGHT[proposal.severity], -observed, proposal.title)
 
 
+@dataclass(frozen=True)
+class CouncilRows:
+    persons: list[PersonProposal]
+    rows: dict[str, dict[str, Any]]
+    enabled: bool
+    authored_thresholds: set[tuple[str, str, str]]
+
+
 async def read_council_rows(
     user: Mapping[str, Any],
     candidates: Sequence[Mapping[str, Any]],
-) -> tuple[list[PersonProposal], dict[str, dict[str, Any]]]:
+) -> CouncilRows:
     tenant_id, workspace_id = _scope(user)
     candidate_ids = [
         str(item.get("id") or item.get("item_id") or "") for item in candidates
     ]
+    check_thresholds = is_council_checker(user) and any(
+        threshold_keys(item) for item in candidates
+    )
     pool = await auth.pool()
 
     async def _read(
         conn: Any, scoped_tenant: str | None, scoped_workspace: str
-    ) -> tuple[list[PersonProposal], dict[str, dict[str, Any]]]:
+    ) -> CouncilRows:
         await conn.execute(READ_ONLY_TRANSACTION_SQL)
         if str(scoped_tenant or "") != tenant_id or scoped_workspace != workspace_id:
             raise HTTPException(404, "workspace scope not found")
@@ -656,7 +780,16 @@ async def read_council_rows(
             if candidate_ids
             else {}
         )
-        return persons, rows
+        authored = (
+            await authored_threshold_keys(
+                conn,
+                workspace_id=workspace_id,
+                user_id=optional_actor_id(user.get("id")),
+            )
+            if check_thresholds
+            else set()
+        )
+        return CouncilRows(persons, rows, await followups_enabled(conn), authored)
 
     return await run_with_db_scope(pool, dict(user), _read)
 
@@ -669,46 +802,56 @@ async def build_action_council(user: Mapping[str, Any]) -> ActionCouncilResponse
         for item in filter_business_items(snapshot.items)
     }
     candidates = system_candidate_items(snapshot)
-    persons, rows = await read_council_rows(user, candidates)
+    read = await read_council_rows(user, candidates)
     now = datetime.now(UTC)
     person_proposals: list[CouncilProposal] = []
     completed = 0
     listed_items: set[str] = set()
-    for proposal in persons:
+    for proposal in read.persons:
         if str(proposal.row.get("status") or "") == "approved":
             if not _completed_by_council(proposal.row) or completed >= MAX_COMPLETED:
                 continue
             completed += 1
+        elif proposal.system_made:
+            continue
         projected = project_person_proposal(
             proposal,
             user=user,
             live=live_by_id.get(proposal.item_id),
             narrative=snapshot.narratives.get(proposal.item_id),
             now=now,
+            enabled=read.enabled,
         )
         if projected is not None:
             listed_items.add(proposal.item_id)
             person_proposals.append(projected)
     person_proposals.sort(key=_person_sort_key)
-    system_proposals = [
-        projected
-        for suggestion in system_suggestions(
-            candidates,
-            rows,
-            user=user,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
-        )
-        if suggestion.item_id not in listed_items
-        and (
-            projected := project_system_suggestion(
-                suggestion,
+    system_proposals = (
+        [
+            projected
+            for suggestion in system_suggestions(
+                candidates,
+                read.rows,
                 user=user,
-                narrative=snapshot.narratives.get(suggestion.item_id),
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
             )
-        )
-        is not None
-    ]
+            if suggestion.item_id not in listed_items
+            and (
+                projected := project_system_suggestion(
+                    suggestion,
+                    user=user,
+                    narrative=snapshot.narratives.get(suggestion.item_id),
+                    influenced=checker_influenced(
+                        suggestion.live, read.authored_thresholds
+                    ),
+                )
+            )
+            is not None
+        ]
+        if read.enabled
+        else []
+    )
     system_proposals.sort(key=_system_sort_key)
     proposals = [*person_proposals, *system_proposals][:MAX_COUNCIL_PROPOSALS]
     return ActionCouncilResponse(
@@ -723,9 +866,14 @@ __all__ = (
     "LATEST_INTENTS_SQL",
     "PERSON_PROPOSALS_SQL",
     "PENDING_STATUSES",
+    "THRESHOLD_AUTHORSHIP_SQL",
+    "CouncilRows",
     "PersonProposal",
     "SystemSuggestion",
+    "authored_threshold_keys",
     "build_action_council",
+    "checker_influenced",
+    "followups_enabled",
     "person_owner_filter",
     "person_state",
     "project_person_proposal",
@@ -735,4 +883,5 @@ __all__ = (
     "system_candidate_items",
     "system_suggestion_match",
     "system_suggestions",
+    "threshold_keys",
 )

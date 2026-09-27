@@ -16,6 +16,7 @@ from app.schemas.control_room_council import (
     CouncilApproveRequest,
     CouncilApproveResponse,
     CouncilDiscardRequest,
+    CouncilDiscardResponse,
     CouncilImpact,
     CouncilProposal,
 )
@@ -149,8 +150,9 @@ def test_money_impact_always_carries_its_formula_and_basis():
     )
     assert (persisted.kind, persisted.value, persisted.currency) == ("money", 4200.0, "MXN")
     assert persisted.basis == "persisted"
-    assert persisted.formula == "Impacto persistido en control_room_items."
+    assert persisted.formula is None
     assert persisted.label == "Estimación registrada con el hallazgo"
+    assert "control_room_items" not in persisted.model_dump_json()
 
     rule = council_impact(
         {
@@ -194,6 +196,8 @@ def test_time_impact_only_from_hour_metrics_and_otherwise_no_estimate():
         {"kind": "money", "label": "x", "value": 1.0, "basis": "rule"},
         {"kind": "money", "label": "x", "value": 1.0, "basis": "rule", "formula": "f"},
         {"kind": "time", "label": "x", "value": 1.0, "basis": "observed", "formula": "f"},
+        {"kind": "money", "label": "x", "value": 1.0, "currency": "USD", "basis": "persisted", "formula": "f"},
+        {"kind": "money", "label": "x", "value": 1.0, "currency": "USD", "basis": "rule"},
     ),
 )
 def test_impact_model_rejects_invented_or_unexplained_figures(payload):
@@ -473,3 +477,61 @@ async def test_effect_refuses_wrong_stage_or_same_actor_before_writing(row, make
         )
     assert refused.value.status_code == status
     assert conn.writes == []
+
+
+@pytest.mark.asyncio
+async def test_discarding_a_system_suggestion_returns_a_payload_without_null_ids():
+    discard = AsyncMock(return_value=CouncilDiscardResponse(decision_id=None))
+    with (
+        patch("app.routers.control_room_council.discard_council_proposal", discard),
+        patch("app.routers.control_room_council.require_csrf", lambda: None),
+    ):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def _inject(request: Request, call_next):
+            request.state.user = CHECKER
+            return await call_next(request)
+
+        app.dependency_overrides[require_authenticated] = lambda: CHECKER
+        from app.services.csrf import require_csrf
+
+        app.dependency_overrides[require_csrf] = lambda: None
+        app.include_router(routes.router)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/api/control-room/council/{HANDLE}/discard",
+                json={"reason": "La causa se corrigió en origen", "idempotency_key": "key-12345"},
+            )
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "discarded",
+        "message": "Propuesta descartada; el motivo quedó registrado.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_deadlocks_surface_as_a_changed_proposal():
+    import asyncpg
+
+    async def _deadlock(*_args: Any, **_kwargs: Any) -> None:
+        raise asyncpg.DeadlockDetectedError("deadlock detected")
+
+    with patch.object(commands, "run_with_db_scope", _deadlock):
+        with pytest.raises(HTTPException) as changed:
+            await commands._scoped(object(), CHECKER, lambda *_: None)
+    assert changed.value.status_code == 409
+    assert changed.value.detail["code"] == "proposal_changed"
+
+
+def test_discard_locks_intent_before_item_and_decision_like_approval():
+    import inspect
+
+    source = inspect.getsource(commands._discard_person)
+    assert source.index("_lock_pending_intent(") < source.index("fetch_direct_row_for_update(")
+    assert source.index("fetch_direct_row_for_update(") < source.index("LOCK_OPEN_DECISION_SQL")
+    approve = inspect.getsource(commands._approve_person)
+    assert approve.index("lock_intent(") < approve.index("fetch_authoritative_row_for_update(")
+
