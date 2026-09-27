@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -89,6 +90,40 @@ def _rce_tools_explicitly_enabled() -> bool:
     }
 
 
+_MANUAL_TIMETABLE_DESCRIPTIONS = {"", "none", "never, external triggers only"}
+_RUN_SCOPE_CONF_KEYS = ("tenant_id", "workspace_id", "cartridge_id", "mode", "target")
+_MARKABLE_RUN_STATES = {"queued", "running"}
+
+
+def _schedule_kind(dag: dict) -> str:
+    schedule = dag.get("schedule_interval")
+    if isinstance(schedule, dict):
+        schedule = schedule.get("value")
+    summary = dag.get("timetable_summary")
+    description = str(dag.get("timetable_description") or "").strip().lower()
+    manual = (
+        schedule in (None, "", "None")
+        and summary in (None, "", "None")
+        and description in _MANUAL_TIMETABLE_DESCRIPTIONS
+    )
+    return "manual" if manual else "scheduled"
+
+
+def _parse_airflow_time(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _run_scope_conf(conf) -> dict:
+    conf = conf if isinstance(conf, dict) else {}
+    return {key: conf[key] for key in _RUN_SCOPE_CONF_KEYS if conf.get(key) is not None}
+
+
 @tool(
     name="airflow_list_dags",
     description="List all DAGs registered in Airflow with their status.",
@@ -107,9 +142,181 @@ async def airflow_list_dags() -> dict:
                 "is_active": d.get("is_active", True),
                 "tags":      [t["name"] for t in d.get("tags", [])],
                 "description": d.get("description", ""),
+                "schedule_kind": _schedule_kind(d),
+                "timetable_description": d.get("timetable_description"),
             }
             for d in dags
         ]
+    }
+
+
+@tool(
+    name="airflow_describe_dag",
+    description=(
+        "Describe one DAG: pause state, schedule kind, scheduler health and its "
+        "queued/running runs."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "dag_id": {"type": "string"},
+            "stale_after_seconds": {"type": "integer", "default": 900},
+        },
+        "required": ["dag_id"],
+    },
+)
+async def airflow_describe_dag(dag_id: str, stale_after_seconds: int = 900) -> dict:
+    dag_id = _validate_dag_id(dag_id)
+    stale_after = max(60, min(int(stale_after_seconds or 900), 7 * 24 * 3600))
+    async with _client() as c:
+        r = await _request_with_transport_retry(c, "GET", f"{_BASE}/api/v1/dags/{dag_id}")
+        if r.status_code == 404:
+            return {"dag_id": dag_id, "found": False, "runs": [], "foreign": {
+                "queued": 0, "running": 0, "stale_queued": 0}}
+        r.raise_for_status()
+        dag = r.json()
+        scheduler_healthy = None
+        try:
+            health = await _request_with_transport_retry(c, "GET", f"{_BASE}/api/v1/health")
+            if health.status_code == 200:
+                status = (health.json().get("scheduler") or {}).get("status")
+                scheduler_healthy = str(status or "").lower() == "healthy"
+        except (httpx.HTTPError, ValueError):
+            scheduler_healthy = None
+        runs_response = await _request_with_transport_retry(
+            c,
+            "GET",
+            f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",
+            params=[
+                ("state", "queued"),
+                ("state", "running"),
+                ("limit", "100"),
+                ("order_by", "-execution_date"),
+            ],
+        )
+        runs_response.raise_for_status()
+        runs_payload = runs_response.json()
+    now = datetime.now(timezone.utc)
+    runs = []
+    for run in runs_payload.get("dag_runs", []) or []:
+        state = str(run.get("state") or "").lower()
+        queued_at = _parse_airflow_time(run.get("queued_at"))
+        runs.append(
+            {
+                "dag_run_id": run.get("dag_run_id"),
+                "state": state,
+                "queued_at": run.get("queued_at"),
+                "start_date": run.get("start_date"),
+                "stale": bool(
+                    state == "queued"
+                    and queued_at is not None
+                    and (now - queued_at).total_seconds() >= stale_after
+                ),
+                "conf": _run_scope_conf(run.get("conf")),
+            }
+        )
+    total = int(runs_payload.get("total_entries") or len(runs))
+    return {
+        "dag_id": dag_id,
+        "found": True,
+        "is_paused": bool(dag.get("is_paused")),
+        "is_active": bool(dag.get("is_active", True)),
+        "has_import_errors": bool(dag.get("has_import_errors")),
+        "schedule_kind": _schedule_kind(dag),
+        "timetable_description": dag.get("timetable_description"),
+        "max_active_runs": dag.get("max_active_runs"),
+        "scheduler_healthy": scheduler_healthy,
+        "runs": runs,
+        "runs_truncated": total > len(runs),
+        "foreign": {"queued": 0, "running": 0, "stale_queued": 0},
+    }
+
+
+@tool(
+    name="airflow_unpause_manual_dag",
+    description="Resume a paused manual (schedule=None) DAG so a triggered run can start.",
+    input_schema={
+        "type": "object",
+        "properties": {"dag_id": {"type": "string"}},
+        "required": ["dag_id"],
+    },
+)
+async def airflow_unpause_manual_dag(dag_id: str) -> dict:
+    dag_id = _validate_dag_id(dag_id)
+    async with _client() as c:
+        r = await _request_with_transport_retry(c, "GET", f"{_BASE}/api/v1/dags/{dag_id}")
+        if r.status_code == 404:
+            return {"dag_id": dag_id, "unpaused": False, "was_paused": None, "reason": "dag_not_found"}
+        r.raise_for_status()
+        dag = r.json()
+        if not dag.get("is_active", True) or dag.get("has_import_errors"):
+            return {"dag_id": dag_id, "unpaused": False, "was_paused": bool(dag.get("is_paused")),
+                    "reason": "dag_inactive"}
+        if _schedule_kind(dag) != "manual":
+            return {"dag_id": dag_id, "unpaused": False, "was_paused": bool(dag.get("is_paused")),
+                    "reason": "not_manual"}
+        if not dag.get("is_paused"):
+            return {"dag_id": dag_id, "unpaused": False, "was_paused": False, "reason": "already_unpaused"}
+        patched = await _request_with_transport_retry(
+            c,
+            "PATCH",
+            f"{_BASE}/api/v1/dags/{dag_id}",
+            params={"update_mask": "is_paused"},
+            json={"is_paused": False},
+        )
+        patched.raise_for_status()
+        still_paused = bool(patched.json().get("is_paused"))
+    return {
+        "dag_id": dag_id,
+        "unpaused": not still_paused,
+        "was_paused": True,
+        "reason": "unpaused" if not still_paused else "unpause_rejected",
+    }
+
+
+@tool(
+    name="airflow_mark_dag_run_failed",
+    description="Mark one queued/running DAG run as failed when its state still matches.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "dag_id": {"type": "string"},
+            "dag_run_id": {"type": "string"},
+            "expected_states": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["dag_id", "dag_run_id", "expected_states"],
+    },
+)
+async def airflow_mark_dag_run_failed(
+    dag_id: str, dag_run_id: str, expected_states: list[str]
+) -> dict:
+    dag_id = _validate_dag_id(dag_id)
+    dag_run_id = _validate_dag_run_id(dag_run_id) or dag_run_id
+    expected = {str(state or "").strip().lower() for state in (expected_states or [])}
+    if not expected or not expected.issubset(_MARKABLE_RUN_STATES):
+        raise ValueError("expected_states must be queued and/or running")
+    url = f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
+    async with _client() as c:
+        current = await _request_with_transport_retry(c, "GET", url)
+        if current.status_code == 404:
+            return {"dag_id": dag_id, "dag_run_id": dag_run_id, "marked": False,
+                    "found": False, "state": "not_found", "reason": "not_found"}
+        current.raise_for_status()
+        state = str(current.json().get("state") or "").lower()
+        if state not in expected:
+            return {"dag_id": dag_id, "dag_run_id": dag_run_id, "marked": False,
+                    "found": True, "state": state, "reason": "state_changed"}
+        patched = await _request_with_transport_retry(c, "PATCH", url, json={"state": "failed"})
+        patched.raise_for_status()
+        new_state = str(patched.json().get("state") or "failed").lower()
+    return {
+        "dag_id": dag_id,
+        "dag_run_id": dag_run_id,
+        "marked": new_state == "failed",
+        "found": True,
+        "previous_state": state,
+        "state": new_state,
+        "reason": "marked_failed" if new_state == "failed" else "state_changed",
     }
 
 
@@ -563,6 +770,8 @@ async def airflow_list_task_instances(dag_id: str, dag_run_id: str) -> dict:
                 "task_id":  t["task_id"],
                 "state":    t["state"],
                 "duration": t.get("duration"),
+                "start_date": t.get("start_date"),
+                "end_date": t.get("end_date"),
             }
             for t in tasks
         ]

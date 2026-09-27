@@ -363,8 +363,10 @@ _AIRFLOW_READ_TOOLS = {
     "airflow_get_task_logs",
     "airflow_list_task_instances",
     "airflow_list_dag_runs",
+    "airflow_describe_dag",
 }
-_AIRFLOW_RUN_TOOLS = {"airflow_trigger_dag"}
+_AIRFLOW_RUN_TOOLS = {"airflow_trigger_dag", "airflow_unpause_manual_dag"}
+_AIRFLOW_RECOVERY_TOOLS = {"airflow_mark_dag_run_failed"}
 _AIRFLOW_WRITE_TOOLS = {
     "airflow_create_dag",
     "airflow_delete_dag",
@@ -1027,6 +1029,30 @@ def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -
         )
 
 
+def _validate_airflow_unpause_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+    dag_id = str(args.get("dag_id") or "").strip()
+    if _is_unscoped_admin_context(ctx):
+        return
+    if not _has_tenant_workspace_scope(ctx):
+        raise HTTPException(403, detail="DAG resume requires tenant/workspace scope")
+    if dag_id in _SHARED_PLATFORM_DAGS:
+        raise HTTPException(403, detail="shared platform DAGs cannot be resumed here")
+    if not _dag_allowed_for_context(ctx, dag_id):
+        raise HTTPException(403, detail="DAG not allowed")
+
+
+def _validate_airflow_recovery_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+    dag_id = str(args.get("dag_id") or "").strip()
+    dag_run_id = str(args.get("dag_run_id") or "").strip()
+    if not dag_id or not dag_run_id:
+        raise HTTPException(403, detail="dag_id and dag_run_id are required")
+    if _is_unscoped_admin_context(ctx):
+        return
+    if dag_id in _SHARED_PLATFORM_DAGS:
+        raise HTTPException(403, detail="shared platform DAG runs cannot be recovered here")
+    _require_airflow_read_scope(ctx, args)
+
+
 def _inject_cartridge_execution_scope(
     ctx: dict[str, Any], args: dict[str, Any]
 ) -> None:
@@ -1300,7 +1326,36 @@ def _run_without_authority(run: Any) -> Any:
     return {**run, "conf": conf}
 
 
+def _filter_airflow_describe_payload(payload: Any, ctx: dict[str, Any]) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    out = dict(payload)
+    own: list[dict[str, Any]] = []
+    foreign = {"queued": 0, "running": 0, "stale_queued": 0}
+    for run in out.get("runs") or []:
+        if not isinstance(run, dict):
+            continue
+        if _airflow_run_allowed(ctx, run):
+            conf = run.get("conf") if isinstance(run.get("conf"), dict) else {}
+            projected = {key: value for key, value in run.items() if key != "conf"}
+            projected["conf"] = {
+                key: conf[key] for key in ("mode", "target") if key in conf
+            }
+            own.append(projected)
+            continue
+        state = str(run.get("state") or "").lower()
+        if state in {"queued", "running"}:
+            foreign[state] += 1
+        if run.get("stale"):
+            foreign["stale_queued"] += 1
+    out["runs"] = own
+    out["foreign"] = foreign
+    return out
+
+
 def _filter_airflow_payload(tool: str, payload: Any, ctx: dict[str, Any]) -> Any:
+    if tool == "airflow_describe_dag":
+        return _filter_airflow_describe_payload(payload, ctx)
     if not isinstance(payload, dict):
         return payload
     out = dict(payload)
@@ -1350,6 +1405,8 @@ def _enforce_data_scope(
     elif tool in _AIRFLOW_READ_TOOLS:
         ctx = _require_context_permission(req, "pipelines.read", internal_service)
     elif tool in _AIRFLOW_RUN_TOOLS:
+        ctx = _require_context_permission(req, "pipelines.run", internal_service)
+    elif tool in _AIRFLOW_RECOVERY_TOOLS:
         ctx = _require_context_permission(req, "pipelines.run", internal_service)
     elif tool in _AIRFLOW_WRITE_TOOLS:
         ctx = _require_context_permission(req, "pipelines.write", internal_service)
@@ -1461,6 +1518,12 @@ def _enforce_data_scope(
 
     if tool == "airflow_trigger_dag":
         _validate_airflow_trigger_scope(ctx, args)
+
+    if tool == "airflow_unpause_manual_dag":
+        _validate_airflow_unpause_scope(ctx, args)
+
+    if tool in _AIRFLOW_RECOVERY_TOOLS:
+        _validate_airflow_recovery_scope(ctx, args)
 
     if tool in _AIRFLOW_READ_TOOLS:
         _require_airflow_read_scope(ctx, args)

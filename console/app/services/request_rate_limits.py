@@ -23,6 +23,7 @@ RATE_LIMITS = {
     "/studio/import": (10, RATE_LIMIT_WINDOW_SECONDS),
     "/api/explorer": (180, 60),
     "/apps/content": (60, 60),
+    "pipeline_recover": (10, RATE_LIMIT_WINDOW_SECONDS),
 }
 API_RATE_LIMIT_PREFIXES = (
     "/api/copilot",

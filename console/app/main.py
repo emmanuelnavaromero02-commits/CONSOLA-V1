@@ -405,6 +405,10 @@ from app.domains.pipeline.status_transitions import (
 from app.domains.pipeline.successfactors_reservation import (
     reserve_entity_extract_slot as _reserve_successfactors_entity_extract_slot_impl,
 )
+from app.domains.pipeline import (
+    stuck_run_recovery_service as _pipeline_stuck_recovery,
+    trigger_preflight as _pipeline_trigger_preflight,
+)
 from app.domains.pipeline.sync_state import (
     SAP_SUCCESSFACTORS_CARTRIDGE as _SAP_SUCCESSFACTORS_CARTRIDGE,
     SAP_SUCCESSFACTORS_ENTITY_DAG_ID as _SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
@@ -716,10 +720,15 @@ async def lifespan(app: FastAPI):
         copilot_context_task = asyncio.create_task(
             copilot_context_service.hourly_scheduler()
         )
+    from app.services import pipeline_run_janitor
+
+    pipeline_janitor_task = asyncio.create_task(pipeline_run_janitor.janitor_loop())
     try:
         yield
     finally:
-        await _cancel_background_tasks(task, copilot_context_task)
+        await _cancel_background_tasks(
+            task, copilot_context_task, pipeline_janitor_task
+        )
         await _auth.close_pool()
         await _tokens.close_pool()
         await job_service.close_pool()
@@ -1163,6 +1172,7 @@ _RBAC_DEPENDENCY_PREFIXES = (
     "/api/control-room",
     "/api/admin/users",
     "/api/pipeline",
+    "/api/pipelines",
     "/api/pipeline_runs",
     "/api/dag_templates",
     "/api/schema",
@@ -3572,6 +3582,44 @@ def _pipeline_extract_dag_conf(
     return _apply_user_scope_to_dag_conf(extract_conf, user)
 
 
+async def _pipeline_extract_preflight(
+    dag_id: str,
+    user: dict | None,
+    *,
+    mode: str | None = None,
+    target: str | None = None,
+):
+    return await _pipeline_trigger_preflight.run_manual_trigger_preflight(
+        dag_id,
+        user,
+        invoke=mcp_registry.invoke,
+        get_db_pool=_get_db_pool,
+        refresh_dag_run_status=_refresh_dag_run_status,
+        mode=mode,
+        target=target,
+    )
+
+
+async def _recover_before_reservation(
+    user: dict | None,
+    *,
+    cartridge: str = _SAP_SUCCESSFACTORS_CARTRIDGE,
+    dag_ids: tuple[str, ...] | None = None,
+    max_age_seconds: int | None = None,
+):
+    normalized = str(cartridge or "").replace("-", "_")
+    return await _pipeline_stuck_recovery.recover_before_reservation(
+        user,
+        cartridge=cartridge,
+        dag_ids=dag_ids or (f"{normalized}_extract", f"{normalized}_extract_all"),
+        invoke=mcp_registry.invoke,
+        get_db_pool=_get_db_pool,
+        refresh_dag_run_status=_refresh_dag_run_status,
+        neutralize=_pipeline_trigger_preflight.auto_recovery_neutralize_enabled(),
+        max_age_seconds=max_age_seconds,
+    )
+
+
 async def _pipeline_extract_reserve_slot(
     *,
     cartridge: str,
@@ -3581,7 +3629,8 @@ async def _pipeline_extract_reserve_slot(
     user: dict,
     requested_dag_run_id: str | None,
 ) -> dict | None:
-    return await _reserve_successfactors_entity_extract_slot(
+    preflight = await _pipeline_extract_preflight(dag_id, user)
+    slot = await _reserve_successfactors_entity_extract_slot(
         cartridge=cartridge,
         entity=entity,
         dag_id=dag_id,
@@ -3589,6 +3638,9 @@ async def _pipeline_extract_reserve_slot(
         user=user,
         requested_dag_run_id=requested_dag_run_id,
     )
+    if preflight is None or not getattr(preflight, "checked", False):
+        return slot
+    return {**(slot or {}), "automation": preflight.automation()}
 
 
 async def _record_pipeline_extract_failure(
@@ -3818,6 +3870,8 @@ async def _api_pipeline_extract_dag_based(
         metadata=metadata,
         result=result,
     )
+    if slot and slot.get("automation") is not None:
+        response["automation"] = slot["automation"]
     _invalidate_data_platform_read_caches(user)
     return response
 
@@ -3858,6 +3912,7 @@ async def api_pipeline_extract_all(
 
 
 _SYNC_NOW_STALE_AFTER_SECONDS = _env_float("SYNC_NOW_STALE_AFTER_SECONDS", 90 * 60)
+_SYNC_NOW_ACTIVE_WINDOW_SECONDS = 4 * 60 * 60
 _SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS = max(
     300,
     _env_int("SAP_SUCCESSFACTORS_ACTIVE_EXTRACT_WINDOW_SECONDS", 4 * 60 * 60),
@@ -3877,6 +3932,19 @@ async def _reserve_successfactors_entity_extract_slot(
     user: dict | None,
     requested_dag_run_id: str | None = None,
 ) -> dict[str, Any] | None:
+    if (
+        cartridge == _SAP_SUCCESSFACTORS_CARTRIDGE
+        and dag_id == _SAP_SUCCESSFACTORS_ENTITY_DAG_ID
+    ):
+        await _recover_before_reservation(
+            user,
+            cartridge=_SAP_SUCCESSFACTORS_CARTRIDGE,
+            dag_ids=(
+                _SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
+                _SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID,
+            ),
+            max_age_seconds=_SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS,
+        )
     return await _reserve_successfactors_entity_extract_slot_impl(
         cartridge=cartridge,
         entity=entity,
@@ -3980,6 +4048,7 @@ async def _trigger_sync_aggregate_extract_all(
         dag_run_id_from_idempotency_key=_dag_run_id_from_idempotency_key,
         trigger_airflow_extract_dag=_trigger_airflow_extract_dag,
         record_dag_pipeline_trigger=_record_dag_pipeline_trigger,
+        preflight=_pipeline_extract_preflight,
     )
 
 
@@ -4538,6 +4607,9 @@ async def _reserve_sync_now_run_or_response(
         target=target,
         conn_id=conn_id,
         user=user,
+    )
+    await _recover_before_reservation(
+        user, cartridge=cartridge, max_age_seconds=_SYNC_NOW_ACTIVE_WINDOW_SECONDS
     )
     pool = await _get_db_pool()
     async with pool.acquire() as sync_lock_conn:
@@ -7644,6 +7716,7 @@ from app.routers import admin_tenants as admin_tenants_router
 from app.routers import onboarding as onboarding_router
 from app.routers import studio as studio_router
 from app.routers import sap_b1 as sap_b1_router
+from app.routers import pipeline_operations as pipeline_operations_router
 from app.routers import (
     control_room,
     mcp,
@@ -7686,6 +7759,7 @@ app.include_router(
 )
 app.include_router(studio_router.router)
 app.include_router(sap_b1_router.router)
+app.include_router(pipeline_operations_router.router)
 
 
 app.add_middleware(RequestIDMiddleware)

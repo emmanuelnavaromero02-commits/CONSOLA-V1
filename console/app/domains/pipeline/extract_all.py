@@ -51,13 +51,19 @@ async def fanout_pipeline_extract_all(
                 }
             )
         except HTTPException as exc:
-            errors.append(
-                {
-                    "entity": entity,
-                    "status_code": exc.status_code,
-                    "error": str(exc.detail),
-                }
-            )
+            detail = exc.detail if isinstance(exc.detail, dict) else None
+            error_item: dict[str, Any] = {
+                "entity": entity,
+                "status_code": exc.status_code,
+                "error": str(
+                    (detail or {}).get("public_message")
+                    or (detail or {}).get("message")
+                    or exc.detail
+                ),
+            }
+            if detail and detail.get("reason"):
+                error_item["reason"] = str(detail["reason"])
+            errors.append(error_item)
         except Exception:
             error_id = error_id_factory()
             if logger_exception is not None:

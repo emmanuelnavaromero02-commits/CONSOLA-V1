@@ -141,7 +141,7 @@ async def refresh_dag_run_status(
         },
         user=user,
     )
-    if result.get("error"):
+    if result.get("error") or result.get("found") is False:
         return row
 
     observed_status = normalize_airflow_state(result.get("state"))

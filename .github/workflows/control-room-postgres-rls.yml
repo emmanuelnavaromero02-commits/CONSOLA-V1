@@ -142,10 +142,14 @@ jobs:
             console/tests/test_intelligence_evidence_refs_attestation.py \
             console/tests/test_ops_summary_and_version.py \
             console/tests/test_pipeline_extract.py \
+            console/tests/test_pipeline_recover_endpoint.py \
+            console/tests/test_pipeline_run_janitor.py \
             console/tests/test_pipeline_status_monotonic.py \
+            console/tests/test_pipeline_trigger_preflight.py \
             tests/test_decision*.py \
             tests/test_pipeline_control_room_refresh.py \
             tests/test_pipeline_run_reconciliation.py \
+            tests/test_pipeline_stuck_run_recovery.py \
             tests/test_pipeline_successfactors_reservation.py \
             tests/test_studio_airflow_source_sync.py \
             tests/test_scheduled_monitor_execution.py \
@@ -307,6 +311,7 @@ jobs:
             tests/test_operational_truth_runtime_leases_live.py \
             tests/test_operational_truth_scope_authority_live.py \
             tests/test_operational_truth_scope_upgrade_live.py \
+            tests/test_pipeline_run_recovery_live.py \
             tests/test_pipeline_run_save_authority_live.py \
             tests/test_platform_audit_context_binding.py \
             tests/test_scheduled_effect_authority_live.py \

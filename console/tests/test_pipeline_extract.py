@@ -2092,3 +2092,265 @@ async def test_api_pipeline_run_logs_returns_summary(console_main, monkeypatch):
         {"task_id": "extract", "available": True, "logs": "extract ok"}
     ]
     assert result["error"] is None
+
+
+def _dag_metadata(dag_id: str = "replicon_extract"):
+    async def metadata(cartridge, entity):
+        return {
+            "pattern": "dag-based",
+            "entity": entity,
+            "dag_id": dag_id,
+            "mode": "incremental",
+            "enabled": True,
+        }
+
+    return metadata
+
+
+@pytest.mark.anyio
+async def test_preflight_conflict_blocks_before_any_row_or_trigger(console_main, monkeypatch):
+    async def preflight(dag_id, user, **_kwargs):
+        raise HTTPException(
+            409,
+            detail={
+                "reason": "dag_paused_by_operator",
+                "message": "paused",
+                "public_message": "pausado por el operador",
+            },
+        )
+
+    async def invoke_should_not_run(*_args, **_kwargs):
+        raise AssertionError("Airflow must not be triggered after a preflight conflict")
+
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", _dag_metadata())
+    monkeypatch.setattr(console_main, "_pipeline_extract_preflight", preflight)
+    monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke_should_not_run)
+
+    with pytest.raises(HTTPException) as exc:
+        await console_main.api_pipeline_extract(
+            "replicon", "Department", {}, user=_scoped_pipeline_user()
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "dag_paused_by_operator"
+    assert not any(
+        "pipeline_runs" in query
+        for query, _args in console_main._test_asyncpg_stub.executed
+    )
+
+
+@pytest.mark.anyio
+async def test_extract_response_reports_the_dag_resume(console_main, monkeypatch):
+    from app.domains.pipeline.trigger_preflight import DagPreflight
+
+    async def preflight(dag_id, user, **_kwargs):
+        return DagPreflight(dag_id, "manual", True, True, message_es="reactivado")
+
+    async def invoke(server, tool, args, **_kwargs):
+        return {"dag_run_id": "manual__resumed", "state": "queued"}
+
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", _dag_metadata())
+    monkeypatch.setattr(console_main, "_pipeline_extract_preflight", preflight)
+    monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke)
+
+    result = await console_main.api_pipeline_extract(
+        "replicon", "Department", {}, user=_scoped_pipeline_user()
+    )
+
+    assert result["dag_run_id"] == "manual__resumed"
+    assert result["automation"] == {
+        "was_paused": True,
+        "unpaused": True,
+        "message_es": "reactivado",
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.real_pipeline_automation
+async def test_real_preflight_resumes_a_paused_manual_dag_before_triggering(
+    console_main, monkeypatch
+):
+    from app.domains.pipeline import trigger_preflight
+
+    trigger_preflight.reset_preflight_cache()
+    calls: list[str] = []
+
+    async def invoke(server, tool, args, **_kwargs):
+        calls.append(tool)
+        if tool == "airflow_describe_dag":
+            return {
+                "found": True,
+                "is_paused": True,
+                "is_active": True,
+                "has_import_errors": False,
+                "schedule_kind": "manual",
+                "scheduler_healthy": True,
+                "runs": [],
+                "foreign": {"queued": 0, "running": 0, "stale_queued": 0},
+            }
+        if tool == "airflow_unpause_manual_dag":
+            return {"unpaused": True, "was_paused": True, "reason": "unpaused"}
+        if tool == "airflow_trigger_dag":
+            return {"dag_run_id": "manual__after_resume", "state": "queued"}
+        raise AssertionError(tool)
+
+    async def no_audit(**_kwargs):
+        return None
+
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", _dag_metadata())
+    monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke)
+    monkeypatch.setattr(trigger_preflight, "_default_record_event", no_audit)
+
+    result = await console_main.api_pipeline_extract(
+        "replicon", "Department", {}, user=_scoped_pipeline_user()
+    )
+
+    assert calls == [
+        "airflow_describe_dag",
+        "airflow_unpause_manual_dag",
+        "airflow_trigger_dag",
+    ]
+    assert result["automation"]["unpaused"] is True
+    assert result["automation"]["message_es"]
+    trigger_preflight.reset_preflight_cache()
+
+
+@pytest.mark.anyio
+async def test_successfactors_reservation_recovers_before_the_slot_lookup(console_main, monkeypatch):
+    recovered: list[dict] = []
+
+    async def recover(user, **kwargs):
+        recovered.append(kwargs)
+        console_main._test_asyncpg_stub.executed.append(("__recovery__", ()))
+
+    monkeypatch.setattr(console_main, "_recover_before_reservation", recover)
+    console_main._test_asyncpg_stub.fetch_rows = []
+
+    await console_main._reserve_successfactors_entity_extract_slot(
+        cartridge="sap_successfactors",
+        entity="User",
+        dag_id="sap_successfactors_extract",
+        conf={"cartridge_id": "sap_successfactors", "entity": "User", "mode": "incremental"},
+        user=_scoped_sf_pipeline_user(),
+    )
+
+    queries = [query for query, _args in console_main._test_asyncpg_stub.executed]
+    assert queries[0] == "__recovery__"
+    assert any("pg_advisory_xact_lock" in query for query in queries[1:])
+    assert "INSERT INTO pipeline_runs" in queries[-1]
+    assert recovered[0]["dag_ids"] == (
+        "sap_successfactors_extract",
+        "sap_successfactors_extract_all",
+    )
+    assert recovered[0]["max_age_seconds"] == console_main._SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS
+
+
+@pytest.mark.anyio
+async def test_other_cartridges_skip_successfactors_pre_reservation_recovery(console_main, monkeypatch):
+    async def recover(*_args, **_kwargs):
+        raise AssertionError("only SuccessFactors entity reservations recover here")
+
+    monkeypatch.setattr(console_main, "_recover_before_reservation", recover)
+    result = await console_main._reserve_successfactors_entity_extract_slot(
+        cartridge="replicon",
+        entity="Department",
+        dag_id="replicon_extract",
+        conf={},
+        user=_scoped_pipeline_user(),
+    )
+    assert result is None
+
+
+@pytest.mark.anyio
+async def test_sync_now_recovers_before_taking_the_advisory_lock(console_main, monkeypatch):
+    order: list[str] = []
+
+    async def recover(user, **kwargs):
+        order.append(f"recover:{kwargs['cartridge']}")
+
+    async def no_active(**_kwargs):
+        order.append("active_lookup")
+        return None
+
+    async def upsert(**_kwargs):
+        order.append("upsert")
+
+    original_execute = console_main._test_asyncpg_stub.executed
+
+    monkeypatch.setattr(console_main, "_recover_before_reservation", recover)
+    monkeypatch.setattr(console_main, "_fetch_active_sync_run", no_active)
+    monkeypatch.setattr(console_main, "_upsert_sync_run", upsert)
+
+    await console_main._reserve_sync_now_run_or_response(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        request_id=None,
+        user=_scoped_sf_pipeline_user(),
+    )
+
+    assert order == ["recover:sap_successfactors", "active_lookup", "upsert"]
+    assert any("pg_advisory_lock" in query for query, _args in original_execute)
+
+
+@pytest.mark.anyio
+async def test_aggregate_extract_all_reuses_the_live_run(console_main, monkeypatch):
+    from app.domains.pipeline.trigger_preflight import DagPreflight
+
+    async def preflight(dag_id, user, **kwargs):
+        assert dag_id == "sap_successfactors_extract_all"
+        assert kwargs == {"mode": "incremental", "target": "all"}
+        return DagPreflight(dag_id, "manual", False, False, reuse_run_id="manual__live")
+
+    async def trigger_should_not_run(*_args, **_kwargs):
+        raise AssertionError("a live aggregate run must be reused, not duplicated")
+
+    monkeypatch.setattr(console_main, "_pipeline_extract_preflight", preflight)
+    monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger_should_not_run)
+
+    result = await console_main._trigger_sync_aggregate_extract_all(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="tenant_sf",
+        run_id="extract_all:sap_successfactors:abc",
+        user=_scoped_sf_pipeline_user(),
+    )
+
+    assert result["reused"] is True
+    assert result["reason"] == "active_extract_all_run"
+    assert result["triggered"][0]["dag_run_id"] == "manual__live"
+    assert result["automation"] == {"was_paused": False, "unpaused": False, "message_es": None}
+
+
+@pytest.mark.anyio
+async def test_aggregate_preflight_conflict_is_a_functional_error(console_main, monkeypatch):
+    async def preflight(dag_id, user, **_kwargs):
+        raise HTTPException(
+            409,
+            detail={
+                "reason": "foreign_backlog_requires_platform_recovery",
+                "message": "backlog",
+                "public_message": "corridas atascadas de otros espacios",
+            },
+        )
+
+    monkeypatch.setattr(console_main, "_pipeline_extract_preflight", preflight)
+    result = await console_main._trigger_sync_aggregate_extract_all(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        run_id="sync_now:sap_successfactors:x",
+        user=_scoped_sf_pipeline_user(),
+    )
+    assert result["count"] == 0
+    assert result["errors"] == [
+        {
+            "entity": "__extract_all__",
+            "status_code": 409,
+            "error": "corridas atascadas de otros espacios",
+            "reason": "foreign_backlog_requires_platform_recovery",
+        }
+    ]
