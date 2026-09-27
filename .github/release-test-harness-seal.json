@@ -71,7 +71,7 @@
     },
     {
       "path": "airflow/dags/entity_scheduler.py",
-      "sha256": "64d08f4b5238342bad5cc7fa0c09d5ec6fa9ec155225a7b1ebc85ef340160d46"
+      "sha256": "15dc2e0da24f1672ced548c94e8aac78f1e19cb8918ee0ddb1faa5744a554102"
     },
     {
       "path": "airflow/dags/entity_scheduler_record.py",
@@ -80,6 +80,10 @@
     {
       "path": "airflow/dags/entity_scheduler_trigger.py",
       "sha256": "58d77f32858dd662364f63ee23da30025ecd4f2a7d6a106e5519014c7a17e4e4"
+    },
+    {
+      "path": "airflow/dags/entity_scheduler_window.py",
+      "sha256": "14d6cabcd0f15efe745b17b8736460ecfeb5828e1d32e3ac8517995ee57b7e8f"
     },
     {
       "path": "airflow/dags/file_ingest.py",
@@ -3354,6 +3358,10 @@
       "sha256": "55e15232261a6c98b32c4401135e7321d2aae6ed928794730ae62c5390f484b7"
     },
     {
+      "path": "console/tests/test_studio_entity_schedule_validation.py",
+      "sha256": "0b648b5fe20177fac0bbf41dc90ed13846d7846ac74809bcb0a6fa5712a92273"
+    },
+    {
       "path": "console/tests/test_studio_goal_run_execute.py",
       "sha256": "c1e22f12e92341fb336d287f1f80c48557a00fee9723f232e17eca89f54fbdc9"
     },
@@ -3819,15 +3827,15 @@
     },
     {
       "path": "tests-e2e/specs/02-dashboard-deep.spec.ts",
-      "sha256": "1a6fa32cb621e8e126c2a06528781a08bbc33b5f0bbaaca659e7aa46544b6f38"
+      "sha256": "6f4c7c17b00f061bdeaa306c48b7892911a55cb83fc4c16985ce1d8f8f1f6277"
     },
     {
       "path": "tests-e2e/specs/02-dashboard.spec.ts",
-      "sha256": "57f95058719e0b204c04d10d6c44cb98817685d7d793b53e4578814dece4eced"
+      "sha256": "3da2571d0fa7c15e4b057cac9b6687f0a0e5d8c137fef21d57ce5be6c4d895e1"
     },
     {
       "path": "tests-e2e/specs/03-cartridges-deep.spec.ts",
-      "sha256": "9a62520d36fda513e3b7b8020f06508fd71fde5a017c163f3a6dc5ad6f08d9c8"
+      "sha256": "d33be69aed8c7d20aece61a88aebae1c2f82d69e502fc96af0d7cc699a8fe962"
     },
     {
       "path": "tests-e2e/specs/03-cartridges.spec.ts",
@@ -3839,11 +3847,11 @@
     },
     {
       "path": "tests-e2e/specs/05-studio-deep.spec.ts",
-      "sha256": "2ed1578db34ff59834f50cbca1fb80100fd12c7d4f7b07c0de6eda363e8a76ad"
+      "sha256": "4cb7ee12baa7cc32269ac975b6cebdcbc002c789b48e875ddd04ac3025dbc641"
     },
     {
       "path": "tests-e2e/specs/05-studio.spec.ts",
-      "sha256": "a0b2fd841ef421f4f8e14941810fc4cc489d7d274f25f28ebd0838387bedde90"
+      "sha256": "bc0089e048eb3ff524530e904f1b46b52942c8fe56ab52011bcbfa94f8658b76"
     },
     {
       "path": "tests-e2e/specs/06-html-pages.spec.ts",
@@ -3863,7 +3871,7 @@
     },
     {
       "path": "tests-e2e/specs/09-ux-mobile.spec.ts",
-      "sha256": "c4bd3a291d8357a4f38e89e9c58910919bc3fe5136214d12b196c20030bfee83"
+      "sha256": "acaac9c0cdd7a4d09f86bb894fae1ce9c4567f818f82911e9384280d856faf63"
     },
     {
       "path": "tests-e2e/specs/10-mcp-cartridges.spec.ts",
@@ -3871,7 +3879,7 @@
     },
     {
       "path": "tests-e2e/specs/11-copilot-deep.spec.ts",
-      "sha256": "bc79e4cd035e9b1a8dbfc7db287bd68832487fa2c82965b99a86472fc0ea7066"
+      "sha256": "942a7b3a4fb38305c855c5e3dd37c9db54cd7d7a7aa70f94f6f879daa0a5bfdf"
     },
     {
       "path": "tests-e2e/specs/12-control-room.spec.ts",
@@ -4159,7 +4167,7 @@
     },
     {
       "path": "tests/test_app_env_safe_default.py",
-      "sha256": "b276b45b7a3e73b941abd922a0d85a74195e627ed467ddf7748abffc7adf3b77"
+      "sha256": "460925f89b986a46b3b68c7123db8cbdbda3e27b95974d2f170b9fb9f18dc8ad"
     },
     {
       "path": "tests/test_app_manifest_registry_migrations.py",
@@ -4411,7 +4419,7 @@
     },
     {
       "path": "tests/test_ci_changed_areas.py",
-      "sha256": "f2e476d06549204e3dfefd135ec9ec1c4f25afa047f3e1364396e45b22209cf8"
+      "sha256": "5f9c9956c9ee3aa00d20c47abff003579173d94cab6cd335485a01aa15d907c4"
     },
     {
       "path": "tests/test_ci_detector_self_protection.py",
@@ -4451,7 +4459,7 @@
     },
     {
       "path": "tests/test_console_next_lineage_agents_contract.py",
-      "sha256": "3eed2e4b4a84c2c006f46a80190c312ebbdc9089e43048225df8bfd85fecdce8"
+      "sha256": "d994dfb26ea716955ab0d3d64fd1d3d36d6df44ed304d59801fa3fc13da5a342"
     },
     {
       "path": "tests/test_console_startup_readiness.py",
@@ -5014,12 +5022,20 @@
       "sha256": "c3e004c77e640b2f8514f07ad0d4ede8dcabc21f224af8e8baa3feb893117c5f"
     },
     {
+      "path": "tests/test_entity_cron_timezone_migration.py",
+      "sha256": "f10fa7428c27e3225ca92b90e4a66b5662e93844f5e03660ed74b5f3746151b4"
+    },
+    {
       "path": "tests/test_entity_scheduler_airflow_trigger.py",
       "sha256": "2cf9bca941c012d03ee46fa5bdebb81fee2cbb84978163a2544480378f9440a5"
     },
     {
       "path": "tests/test_entity_scheduler_run_authority.py",
       "sha256": "579af0cffdb4b7642edd74fe4f8891ee748fe5725ac5be026af78137ab683232"
+    },
+    {
+      "path": "tests/test_entity_scheduler_window.py",
+      "sha256": "52d55dac8771aee19147fdf49664f157fae4b2612643203c46551c947303c014"
     },
     {
       "path": "tests/test_env_example_and_runbooks_v1434.py",
@@ -5615,7 +5631,7 @@
     },
     {
       "path": "tests/test_pipeline_sync_state.py",
-      "sha256": "f95dc23da00ee78852b936414b0e2fb3964af12f1f71a627ea9ce424978fe0a6"
+      "sha256": "9381f3b8f68dc2aac0131e488723aa278cb093db1905319a503c1334e121b03f"
     },
     {
       "path": "tests/test_platform_audit_context_binding.py",
@@ -5935,7 +5951,7 @@
     },
     {
       "path": "tests/test_sap_b1_hints.py",
-      "sha256": "8329772b41c0b4e6caed28b8d93fc99ccf47813e7c17c05c8e5b1d1afc7d28ac"
+      "sha256": "d4cbebf5179b48209bef30564a60865cdae651e17f2ad63100c92cfa9df54526"
     },
     {
       "path": "tests/test_sap_b1_margin_monitor.py",
@@ -6327,7 +6343,7 @@
     },
     {
       "path": "tests/test_sync_agentops.py",
-      "sha256": "30f70dc6be991c95c262a2393a8aadea4bb065c0c16339c2bce3d209b3922257"
+      "sha256": "914c2f7f16db4ee411dc099ef02d930bc682f573366c3fb5b7caf5325a6b3080"
     },
     {
       "path": "tests/test_sync_control_room.py",
