@@ -12,6 +12,8 @@ CONSOLE_ROUTER_MODULES = (
     CONSOLE_ROUTERS / "pipeline_operations.py",
     CONSOLE_ROUTERS / "control_room_live.py",
     CONSOLE_ROUTERS / "control_room_actions.py",
+    CONSOLE_ROUTERS / "control_room_council.py",
+    CONSOLE_ROUTERS / "pipeline_automations.py",
 )
 
 

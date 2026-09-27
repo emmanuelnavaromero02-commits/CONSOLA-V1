@@ -7721,6 +7721,7 @@ from app.routers import onboarding as onboarding_router
 from app.routers import studio as studio_router
 from app.routers import sap_b1 as sap_b1_router
 from app.routers import pipeline_operations as pipeline_operations_router
+from app.routers import pipeline_automations as pipeline_automations_router
 from app.routers import (
     control_room,
     mcp,
@@ -7764,6 +7765,7 @@ app.include_router(
 app.include_router(studio_router.router)
 app.include_router(sap_b1_router.router)
 app.include_router(pipeline_operations_router.router)
+app.include_router(pipeline_automations_router.router)
 
 
 app.add_middleware(RequestIDMiddleware)
