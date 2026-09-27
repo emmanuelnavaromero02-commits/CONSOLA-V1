@@ -90,23 +90,22 @@ def _rce_tools_explicitly_enabled() -> bool:
     }
 
 
-_MANUAL_TIMETABLE_DESCRIPTIONS = {"", "none", "never, external triggers only"}
+_MANUAL_TIMETABLE_DESCRIPTION = "Never, external triggers only"
+_DESCRIBE_RUN_LIMIT = 100
 _RUN_SCOPE_CONF_KEYS = ("tenant_id", "workspace_id", "cartridge_id", "mode", "target")
 _MARKABLE_RUN_STATES = {"queued", "running"}
 
 
 def _schedule_kind(dag: dict) -> str:
-    schedule = dag.get("schedule_interval")
-    if isinstance(schedule, dict):
-        schedule = schedule.get("value")
-    summary = dag.get("timetable_summary")
-    description = str(dag.get("timetable_description") or "").strip().lower()
-    manual = (
-        schedule in (None, "", "None")
-        and summary in (None, "", "None")
-        and description in _MANUAL_TIMETABLE_DESCRIPTIONS
-    )
-    return "manual" if manual else "scheduled"
+    """Only an external-trigger-only timetable is manual; anything else is scheduled."""
+    if dag.get("schedule_interval") is not None:
+        return "scheduled"
+    if dag.get("timetable_summary") not in (None, "None"):
+        return "scheduled"
+    description = dag.get("timetable_description")
+    if isinstance(description, str) and description.strip() == _MANUAL_TIMETABLE_DESCRIPTION:
+        return "manual"
+    return "scheduled"
 
 
 def _parse_airflow_time(value) -> datetime | None:
@@ -172,7 +171,7 @@ async def airflow_describe_dag(dag_id: str, stale_after_seconds: int = 900) -> d
         r = await _request_with_transport_retry(c, "GET", f"{_BASE}/api/v1/dags/{dag_id}")
         if r.status_code == 404:
             return {"dag_id": dag_id, "found": False, "runs": [], "foreign": {
-                "queued": 0, "running": 0, "stale_queued": 0}}
+                "queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0}}
         r.raise_for_status()
         dag = r.json()
         scheduler_healthy = None
@@ -183,44 +182,48 @@ async def airflow_describe_dag(dag_id: str, stale_after_seconds: int = 900) -> d
                 scheduler_healthy = str(status or "").lower() == "healthy"
         except (httpx.HTTPError, ValueError):
             scheduler_healthy = None
-        runs_response = await _request_with_transport_retry(
-            c,
-            "GET",
-            f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",
-            params=[
-                ("state", "queued"),
-                ("state", "running"),
-                ("limit", "100"),
-                ("order_by", "-execution_date"),
-            ],
-        )
-        runs_response.raise_for_status()
-        runs_payload = runs_response.json()
+        # One page per state, oldest first: the stale backlog and the running
+        # runs that block a queue can never be paged out by newer queued runs.
+        pages = {}
+        for state in ("running", "queued"):
+            page = await _request_with_transport_retry(
+                c,
+                "GET",
+                f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",
+                params=[
+                    ("state", state),
+                    ("limit", str(_DESCRIBE_RUN_LIMIT)),
+                    ("order_by", "execution_date"),
+                ],
+            )
+            page.raise_for_status()
+            pages[state] = page.json()
     now = datetime.now(timezone.utc)
     runs = []
-    for run in runs_payload.get("dag_runs", []) or []:
-        state = str(run.get("state") or "").lower()
-        # Airflow 2.x run payloads carry no queued_at; a manually triggered
-        # run's logical date is its trigger time.
-        queued_since = (
-            run.get("queued_at") or run.get("logical_date") or run.get("execution_date")
-        )
-        queued_at = _parse_airflow_time(queued_since)
-        runs.append(
-            {
-                "dag_run_id": run.get("dag_run_id"),
-                "state": state,
-                "queued_at": queued_since,
-                "start_date": run.get("start_date"),
-                "stale": bool(
-                    state == "queued"
-                    and queued_at is not None
-                    and (now - queued_at).total_seconds() >= stale_after
-                ),
-                "conf": _run_scope_conf(run.get("conf")),
-            }
-        )
-    total = int(runs_payload.get("total_entries") or len(runs))
+    truncated = {}
+    for state, payload in pages.items():
+        listed = [run for run in payload.get("dag_runs", []) or [] if isinstance(run, dict)]
+        truncated[state] = int(payload.get("total_entries") or len(listed)) > len(listed)
+        for run in listed:
+            # Airflow 2.x run payloads carry no queued_at; a manually triggered
+            # run's logical date is its trigger time.
+            queued_since = (
+                run.get("queued_at") or run.get("logical_date") or run.get("execution_date")
+            )
+            queued_at = _parse_airflow_time(queued_since)
+            runs.append(
+                {
+                    "dag_run_id": run.get("dag_run_id"),
+                    "state": str(run.get("state") or state).lower(),
+                    "queued_at": queued_since,
+                    "start_date": run.get("start_date"),
+                    "stale": bool(
+                        queued_at is not None
+                        and (now - queued_at).total_seconds() >= stale_after
+                    ),
+                    "conf": _run_scope_conf(run.get("conf")),
+                }
+            )
     return {
         "dag_id": dag_id,
         "found": True,
@@ -232,8 +235,15 @@ async def airflow_describe_dag(dag_id: str, stale_after_seconds: int = 900) -> d
         "max_active_runs": dag.get("max_active_runs"),
         "scheduler_healthy": scheduler_healthy,
         "runs": runs,
-        "runs_truncated": total > len(runs),
-        "foreign": {"queued": 0, "running": 0, "stale_queued": 0},
+        "running_truncated": truncated.get("running", False),
+        "queued_truncated": truncated.get("queued", False),
+        "runs_truncated": any(truncated.values()),
+        "foreign": {
+            "queued": 0,
+            "running": 0,
+            "stale_queued": 0,
+            "stale_running": 0,
+        },
     }
 
 

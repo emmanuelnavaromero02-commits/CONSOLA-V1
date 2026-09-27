@@ -1326,28 +1326,50 @@ def _run_without_authority(run: Any) -> Any:
     return {**run, "conf": conf}
 
 
+def _airflow_run_owned_by_context(ctx: dict[str, Any], run: dict[str, Any]) -> bool:
+    """A run is the caller's own only when its conf names the caller's scope."""
+    conf = run.get("conf") if isinstance(run.get("conf"), dict) else {}
+    ctx_tenant = str(ctx.get("tenant_id") or "").strip()
+    ctx_workspace = str(ctx.get("workspace_id") or "").strip()
+    if not ctx_tenant or not ctx_workspace:
+        return False
+    if str(conf.get("tenant_id") or "").strip() != ctx_tenant:
+        return False
+    if str(conf.get("workspace_id") or "").strip() != ctx_workspace:
+        return False
+    cartridge_id = str(conf.get("cartridge_id") or "").strip()
+    if cartridge_id:
+        try:
+            _require_cartridge_scope(ctx, cartridge_id)
+        except HTTPException:
+            return False
+    return True
+
+
 def _filter_airflow_describe_payload(payload: Any, ctx: dict[str, Any]) -> Any:
     if not isinstance(payload, dict):
         return payload
     out = dict(payload)
     own: list[dict[str, Any]] = []
-    foreign = {"queued": 0, "running": 0, "stale_queued": 0}
+    foreign = {"queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0}
     for run in out.get("runs") or []:
         if not isinstance(run, dict):
             continue
-        if _airflow_run_allowed(ctx, run):
+        if _airflow_run_owned_by_context(ctx, run):
             conf = run.get("conf") if isinstance(run.get("conf"), dict) else {}
             projected = {key: value for key, value in run.items() if key != "conf"}
             projected["conf"] = {
-                key: conf[key] for key in ("mode", "target") if key in conf
+                key: conf[key]
+                for key in ("tenant_id", "workspace_id", "mode", "target")
+                if key in conf
             }
             own.append(projected)
             continue
         state = str(run.get("state") or "").lower()
         if state in {"queued", "running"}:
             foreign[state] += 1
-        if run.get("stale"):
-            foreign["stale_queued"] += 1
+            if run.get("stale"):
+                foreign[f"stale_{state}"] += 1
     out["runs"] = own
     out["foreign"] = foreign
     return out

@@ -62,6 +62,8 @@ class FakeAirflow:
         response = self.routes.get((method, url))
         if response is None:
             raise AssertionError(f"unexpected {method} {url}")
+        if callable(response):
+            return response(kwargs)
         return response
 
 
@@ -92,6 +94,19 @@ def _iso(delta: timedelta) -> str:
     return (datetime.now(timezone.utc) - delta).isoformat()
 
 
+def _runs_by_state(pages: dict[str, dict]):
+    """Serve one dagRuns page per requested state, recording the query."""
+
+    def respond(kwargs):
+        params = kwargs.get("params") or []
+        states = [value for key, value in params if key == "state"]
+        assert len(states) == 1, params
+        assert ("order_by", "execution_date") in params
+        return FakeResponse(200, pages.get(states[0], {"dag_runs": [], "total_entries": 0}))
+
+    return respond
+
+
 def test_describe_reports_manual_schedule_scheduler_health_and_stale_runs(monkeypatch):
     dag_url = f"{BASE}/dags/sap_successfactors_extract_all"
     airflow, fake = _tools(
@@ -99,15 +114,22 @@ def test_describe_reports_manual_schedule_scheduler_health_and_stale_runs(monkey
         {
             ("GET", dag_url): FakeResponse(200, _dag()),
             ("GET", f"{BASE}/health"): FakeResponse(200, {"scheduler": {"status": "healthy"}}),
-            ("GET", f"{dag_url}/dagRuns"): FakeResponse(
-                200,
+            ("GET", f"{dag_url}/dagRuns"): _runs_by_state(
                 {
-                    "dag_runs": [
-                        {"dag_run_id": "old", "state": "queued", "queued_at": _iso(timedelta(hours=3)), "conf": {"tenant_id": TENANT, "workspace_id": WORKSPACE, "cartridge_id": "sap_successfactors", "security_context": {"_signature": "secret"}}},
-                        {"dag_run_id": "new", "state": "queued", "queued_at": _iso(timedelta(minutes=2)), "conf": {"tenant_id": TENANT}},
-                    ],
-                    "total_entries": 2,
-                },
+                    "queued": {
+                        "dag_runs": [
+                            {"dag_run_id": "old", "state": "queued", "queued_at": _iso(timedelta(hours=3)), "conf": {"tenant_id": TENANT, "workspace_id": WORKSPACE, "cartridge_id": "sap_successfactors", "security_context": {"_signature": "secret"}}},
+                            {"dag_run_id": "new", "state": "queued", "queued_at": _iso(timedelta(minutes=2)), "conf": {"tenant_id": TENANT}},
+                        ],
+                        "total_entries": 2,
+                    },
+                    "running": {
+                        "dag_runs": [
+                            {"dag_run_id": "stuck", "state": "running", "execution_date": _iso(timedelta(hours=5)), "start_date": _iso(timedelta(hours=4)), "conf": {}},
+                        ],
+                        "total_entries": 1,
+                    },
+                }
             ),
         },
     )
@@ -116,14 +138,40 @@ def test_describe_reports_manual_schedule_scheduler_health_and_stale_runs(monkey
     assert result["is_paused"] is True
     assert result["schedule_kind"] == "manual"
     assert result["scheduler_healthy"] is True
-    assert [run["stale"] for run in result["runs"]] == [True, False]
-    assert "security_context" not in result["runs"][0]["conf"]
-    assert result["runs"][0]["conf"] == {"tenant_id": TENANT, "workspace_id": WORKSPACE, "cartridge_id": "sap_successfactors"}
-    assert result["runs_truncated"] is False
-    list_call = next(call for call in fake.requests if call[1].endswith("/dagRuns"))
-    assert ("state", "queued") in list_call[2]["params"]
-    assert ("state", "running") in list_call[2]["params"]
+    by_id = {run["dag_run_id"]: run for run in result["runs"]}
+    assert (by_id["old"]["stale"], by_id["new"]["stale"], by_id["stuck"]["stale"]) == (True, False, True)
+    assert "security_context" not in by_id["old"]["conf"]
+    assert by_id["old"]["conf"] == {"tenant_id": TENANT, "workspace_id": WORKSPACE, "cartridge_id": "sap_successfactors"}
+    assert (result["running_truncated"], result["queued_truncated"], result["runs_truncated"]) == (False, False, False)
+    list_calls = [call for call in fake.requests if call[1].endswith("/dagRuns")]
+    assert [dict(call[2]["params"])["state"] for call in list_calls] == ["running", "queued"]
     assert all(method == "GET" for method, _url, _kwargs in fake.requests)
+
+
+def test_running_runs_are_never_paged_out_by_a_queued_flood(monkeypatch):
+    dag_url = f"{BASE}/dags/sap_successfactors_extract"
+    flood = [
+        {"dag_run_id": f"q{i}", "state": "queued", "execution_date": _iso(timedelta(minutes=200 - i)), "conf": {}}
+        for i in range(100)
+    ]
+    airflow, _fake = _tools(
+        monkeypatch,
+        {
+            ("GET", dag_url): FakeResponse(200, _dag(dag_id="sap_successfactors_extract", is_paused=False)),
+            ("GET", f"{BASE}/health"): FakeResponse(200, {"scheduler": {"status": "healthy"}}),
+            ("GET", f"{dag_url}/dagRuns"): _runs_by_state(
+                {
+                    "queued": {"dag_runs": flood, "total_entries": 150},
+                    "running": {"dag_runs": [{"dag_run_id": "worker", "state": "running", "execution_date": _iso(timedelta(hours=6)), "conf": {}}], "total_entries": 1},
+                }
+            ),
+        },
+    )
+    result = asyncio.run(airflow.airflow_describe_dag("sap_successfactors_extract"))
+    assert "worker" in {run["dag_run_id"] for run in result["runs"] if run["state"] == "running"}
+    assert result["queued_truncated"] is True
+    assert result["running_truncated"] is False
+    assert result["runs_truncated"] is True
 
 
 def test_describe_falls_back_to_the_logical_date_when_queued_at_is_absent(monkeypatch):
@@ -133,16 +181,18 @@ def test_describe_falls_back_to_the_logical_date_when_queued_at_is_absent(monkey
         {
             ("GET", dag_url): FakeResponse(200, _dag(dag_id="sap_successfactors_extract")),
             ("GET", f"{BASE}/health"): FakeResponse(200, {"scheduler": {"status": "unhealthy"}}),
-            ("GET", f"{dag_url}/dagRuns"): FakeResponse(
-                200,
+            ("GET", f"{dag_url}/dagRuns"): _runs_by_state(
                 {
-                    "dag_runs": [
-                        {"dag_run_id": "old", "state": "queued", "logical_date": _iso(timedelta(hours=2)), "execution_date": _iso(timedelta(hours=2))},
-                        {"dag_run_id": "fresh", "state": "queued", "execution_date": _iso(timedelta(minutes=1))},
-                        {"dag_run_id": "undated", "state": "queued"},
-                    ],
-                    "total_entries": 120,
-                },
+                    "queued": {
+                        "dag_runs": [
+                            {"dag_run_id": "old", "state": "queued", "logical_date": _iso(timedelta(hours=2)), "execution_date": _iso(timedelta(hours=2))},
+                            {"dag_run_id": "fresh", "state": "queued", "execution_date": _iso(timedelta(minutes=1))},
+                            {"dag_run_id": "undated", "state": "queued"},
+                        ],
+                        "total_entries": 3,
+                    },
+                    "running": {"dag_runs": [], "total_entries": 120},
+                }
             ),
         },
     )
@@ -150,6 +200,7 @@ def test_describe_falls_back_to_the_logical_date_when_queued_at_is_absent(monkey
     assert [(run["dag_run_id"], run["stale"]) for run in result["runs"]] == [("old", True), ("fresh", False), ("undated", False)]
     assert result["runs"][0]["queued_at"]
     assert result["scheduler_healthy"] is False
+    assert result["running_truncated"] is True
     assert result["runs_truncated"] is True
 
 
@@ -158,8 +209,14 @@ def test_describe_falls_back_to_the_logical_date_when_queued_at_is_absent(monkey
     [
         ({"schedule_interval": {"__type": "CronExpression", "value": "*/5 * * * *"}, "timetable_description": "Every 5 minutes"}, "scheduled"),
         ({"schedule_interval": None, "timetable_description": "Triggered by datasets"}, "scheduled"),
-        ({"schedule_interval": None, "timetable_summary": "None", "timetable_description": None}, "manual"),
+        ({"schedule_interval": None, "timetable_summary": "None", "timetable_description": "Never, external triggers only"}, "manual"),
+        ({"schedule_interval": None, "timetable_summary": "None", "timetable_description": None}, "scheduled"),
+        ({"schedule_interval": None, "timetable_description": ""}, "scheduled"),
+        ({"schedule_interval": None, "timetable_description": "never, external triggers only (legacy)"}, "scheduled"),
         ({"schedule_interval": None, "timetable_summary": "0 * * * *"}, "scheduled"),
+        ({"schedule_interval": {"__type": "TimeDelta", "days": 1, "seconds": 0, "microseconds": 0}, "timetable_description": ""}, "scheduled"),
+        ({"schedule_interval": {"__type": "RelativeDelta", "months": 1}, "timetable_description": None}, "scheduled"),
+        ({"schedule_interval": "@daily", "timetable_description": "Never, external triggers only"}, "scheduled"),
     ],
 )
 def test_schedule_kind_only_calls_external_trigger_dags_manual(monkeypatch, overrides, kind):
@@ -345,12 +402,34 @@ def test_describe_splits_own_runs_from_foreign_backlog_counts(monkeypatch):
             {"dag_run_id": "mine", "state": "queued", "stale": True, "conf": {"tenant_id": TENANT, "workspace_id": WORKSPACE, "cartridge_id": "sap_successfactors", "mode": "incremental"}},
             {"dag_run_id": "theirs", "state": "queued", "stale": True, "conf": {"tenant_id": "33333333-3333-3333-3333-333333333333", "workspace_id": "44444444-4444-4444-4444-444444444444"}},
             {"dag_run_id": "orphan", "state": "running", "stale": False, "conf": {}},
+            {"dag_run_id": "cartridge_only", "state": "running", "stale": True, "conf": {"cartridge_id": "sap_successfactors"}},
+            {"dag_run_id": "tenant_only", "state": "queued", "stale": False, "conf": {"tenant_id": TENANT, "cartridge_id": "sap_successfactors"}},
+            {"dag_run_id": "other_workspace", "state": "running", "stale": True, "conf": {"tenant_id": TENANT, "workspace_id": "55555555-5555-5555-5555-555555555555"}},
         ],
-        "foreign": {"queued": 0, "running": 0, "stale_queued": 0},
+        "running_truncated": False,
+        "foreign": {"queued": 0, "running": 0, "stale_queued": 0, "stale_running": 0},
     }
     filtered = main._filter_airflow_payload("airflow_describe_dag", payload, reader)
     assert [run["dag_run_id"] for run in filtered["runs"]] == ["mine"]
-    assert filtered["runs"][0]["conf"] == {"mode": "incremental"}
-    assert filtered["foreign"] == {"queued": 1, "running": 1, "stale_queued": 1}
-    assert "theirs" not in str(filtered)
-    assert "33333333" not in str(filtered)
+    assert filtered["runs"][0]["conf"] == {"tenant_id": TENANT, "workspace_id": WORKSPACE, "mode": "incremental"}
+    assert filtered["foreign"] == {"queued": 2, "running": 3, "stale_queued": 1, "stale_running": 2}
+    assert filtered["running_truncated"] is False
+    for hidden in ("theirs", "33333333", "cartridge_only", "tenant_only", "other_workspace", "55555555"):
+        assert hidden not in str(filtered)
+
+
+def test_describe_treats_nothing_as_own_without_a_full_scope(monkeypatch):
+    main = _load_mcp_module(monkeypatch, "app.main")
+    payload = {
+        "runs": [
+            {"dag_run_id": "scoped", "state": "running", "stale": True, "conf": {"tenant_id": TENANT, "workspace_id": WORKSPACE}},
+        ],
+    }
+    unscoped = _pipeline_ctx(["pipelines.read"], tenant_id=None, workspace_id=None)
+    filtered = main._filter_airflow_payload("airflow_describe_dag", payload, unscoped)
+    assert filtered["runs"] == []
+    assert filtered["foreign"]["stale_running"] == 1
+    foreign_cartridge = _pipeline_ctx(["pipelines.read"], allowed_cartridges=["replicon"])
+    payload["runs"][0]["conf"]["cartridge_id"] = "sap_successfactors"
+    filtered = main._filter_airflow_payload("airflow_describe_dag", payload, foreign_cartridge)
+    assert filtered["runs"] == []
