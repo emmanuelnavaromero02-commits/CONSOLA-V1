@@ -1114,8 +1114,12 @@ def cartridge_get_run_logs(
         "required": ["run_id"],
     },
 )
-def cartridge_get_job_status(run_id: str) -> dict[str, Any]:
+def cartridge_get_job_status(
+    run_id: str, security_context: dict[str, Any] | None = None
+) -> dict[str, Any]:
     with _conn() as c, c.cursor() as cur:
+        if not _set_run_scope(cur, security_context):
+            return {"error": f"Run '{run_id}' not found"}
         cur.execute(
             """
             SELECT run_id, dag_id, cartridge_id, entity, mode, status,

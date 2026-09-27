@@ -5467,7 +5467,7 @@
     },
     {
       "path": "tests/test_platform_audit_context_binding.py",
-      "sha256": "d8eb6964feb126aa7a63a60af4d13aac0a2149d6f3a0ef9843c15ca4a137fba1"
+      "sha256": "9d2359327521a33c83aba003d47ecf6edf6e466601384a497a62385dab3444ea"
     },
     {
       "path": "tests/test_platform_role_sets_agree.py",

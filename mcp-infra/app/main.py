@@ -1624,11 +1624,10 @@ def _enforce_data_scope(
     if tool in _RUN_ID_SCOPED_TOOLS:
         _reject_client_owned_scope_args(args)
         _require_pipeline_run_scope(ctx, str(args.get("run_id") or ""))
-        if tool == "cartridge_get_run_logs":
-            args["security_context"] = {
-                **ctx,
-                "_unscoped_admin": _is_unscoped_admin_context(ctx),
-            }
+        args["security_context"] = {
+            **ctx,
+            "_unscoped_admin": _is_unscoped_admin_context(ctx),
+        }
     elif tool in _CARTRIDGE_READ_TOOLS | _CARTRIDGE_EXECUTE_TOOLS:
         _reject_client_owned_scope_args(args)
         if tool != "list_cartridges":
