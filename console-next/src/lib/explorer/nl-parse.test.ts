@@ -89,6 +89,17 @@ const CORPUS: Case[] = [
     text: "departamento es Ventas o Norte ordenado",
     unrecognized: [{ text: "departamento es Ventas o Norte ordenado", hint: /incluye «ordenado»/ }],
   },
+  { text: "ciudad es Monterrey alfabéticamente", unrecognized: [{ text: "ciudad es Monterrey alfabéticamente", hint: /incluye «alfabéticamente»/ }] },
+  { text: "ciudad es Monterrey desc", unrecognized: [{ text: "ciudad es Monterrey desc", hint: /incluye «desc»/ }] },
+  { text: "ciudad es Monterrey de la A a la Z", unrecognized: [{ text: "ciudad es Monterrey de la A a la Z", hint: /incluye «de la A a la Z»/ }] },
+  { text: "ciudad es Monterrey más recientes primero", unrecognized: [{ text: "ciudad es Monterrey más recientes primero", hint: /incluye «más recientes primero»/ }] },
+  { text: "ciudad es Monterrey hoy", unrecognized: [{ text: "ciudad es Monterrey hoy", hint: /incluye «hoy»/ }] },
+  { text: "ciudad es Monterrey este mes", unrecognized: [{ text: "ciudad es Monterrey este mes", hint: /incluye «este mes»/ }] },
+  { text: "ciudad es Monterrey en 2020", unrecognized: [{ text: "ciudad es Monterrey en 2020", hint: /incluye «en 2020»/ }] },
+  { text: "ciudad es Monterrey en marzo de 2024", unrecognized: [{ text: "ciudad es Monterrey en marzo de 2024", hint: /incluye «en marzo»/ }] },
+  { text: "ciudad es Monterrey del año pasado", unrecognized: [{ text: "ciudad es Monterrey del año pasado", hint: /incluye «año pasado»/ }] },
+  { text: "ciudad es Monterrey últimos 30 días", unrecognized: [{ text: "ciudad es Monterrey últimos 30 días", hint: /incluye «últimos 30 días»/ }] },
+  { text: "ciudad es Monterrey hace 3 años", unrecognized: [{ text: "ciudad es Monterrey hace 3 años", hint: /incluye «hace 3 años»/ }] },
   { text: "Mostrar Monterrey", unrecognized: [{ text: "Mostrar Monterrey", hint: /Prueba con/ }] },
   { text: "10 Monterrey", unrecognized: [{ text: "10 Monterrey", hint: /Prueba con/ }] },
   { text: "Mostrar empleados", notes: [/Se omitió «empleados»/] },
@@ -244,6 +255,12 @@ describe("parseNaturalLanguage guarantees", () => {
     const top = parseNaturalLanguage("los 10 mayores salarios", COLUMNS, { today: TODAY, allowLimit: false });
     expect(top.sort).toEqual([]);
     expect(top.unrecognized[0].text).toBe("los 10 mayores salarios");
+  });
+
+  it("only treats date words as conflicts when the source has date columns", () => {
+    const textOnly: NlColumn[] = [{ name: "ciudad", kind: "text" }];
+    expect(parse("ciudad es Monterrey hoy", textOnly).filters).toEqual([f("ciudad", "eq", "Monterrey hoy")]);
+    expect(parse("ciudad es Monterrey desc", textOnly).unrecognized[0].hint).toMatch(/incluye «desc»/);
   });
 
   it("reports latest-load requests when the source cannot honor them", () => {

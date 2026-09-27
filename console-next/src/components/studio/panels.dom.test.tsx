@@ -736,6 +736,83 @@ describe("RefinePanel assisted builder", () => {
     expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe(COMPILED);
   });
 
+  function entitySelect(): HTMLSelectElement | null {
+    const editor = container.querySelector('[data-testid="refine-editor"]');
+    return (
+      [...(editor?.querySelectorAll("select") ?? [])].find((select) =>
+        [...select.options].some((option) => option.value === "Customer"),
+      ) ?? null
+    );
+  }
+
+  async function choose(element: HTMLSelectElement | null, value: string) {
+    expect(element).toBeTruthy();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(element, value);
+      element?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+  }
+
+  it("saves SQL copied from the builder with the compiled sources, not the dataset's old ones", async () => {
+    const save = state.hooks.useSaveDataset as Mutation;
+    await render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RefinePanel
+          cartridge="acme"
+          manifest={{ id: "acme", entities: [{ entity: "Invoice" }, { entity: "Customer" }] }}
+          initialTarget={{ dataset: "orders" }}
+        />
+      </QueryClientProvider>,
+    );
+    await flush();
+    await typeInto(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]'), "");
+    await choose(entitySelect(), "Customer");
+    await click(modeButton("Constructor visual"));
+    await flush();
+    await click(byText("button", /Previsualizar/));
+    await flush();
+    await click(byText("summary", /Ver consulta SQL técnica/));
+    await click(byText("button", /Copiar al editor/));
+    expect(modeButton("SQL técnico")?.getAttribute("aria-checked")).toBe("true");
+    await click(byText("button", /Guardar/));
+    expect(save.mutate.mock.calls[0][0]).toMatchObject({ name: "orders", sql: COMPILED, sources: ["raw/acme/Customer"] });
+  });
+
+  it("hides generated SQL once the filters or the entity change", async () => {
+    await renderDraft();
+    await interpret("credit mayor que 10");
+    await click(byText("button", /Previsualizar/));
+    await flush();
+    expect(container.querySelector('[data-testid="generated-sql"]')?.textContent).toBe(COMPILED);
+    await interpret("credit mayor que 20");
+    expect(container.querySelector('[data-testid="generated-sql"]')).toBeNull();
+    expect(byText("button", /Copiar al editor/)).toBeUndefined();
+    await interpret("credit mayor que 10");
+    expect(container.querySelector('[data-testid="generated-sql"]')?.textContent).toBe(COMPILED);
+    await choose(entitySelect(), "Invoice");
+    expect(container.querySelector('[data-testid="generated-sql"]')).toBeNull();
+  });
+
+  it("starts the next new dataset clean after a successful save", async () => {
+    const save = state.hooks.useSaveDataset as Mutation;
+    save.mutate.mockImplementation((_input: unknown, options: { onSuccess?: () => void }) => options.onSuccess?.());
+    await renderDraft();
+    await interpret("credit mayor que 10");
+    await click(byText("button", /Previsualizar/));
+    await flush();
+    await setName("clientes");
+    await click(byText("button", /Guardar/));
+    await flush();
+    expect(save.mutate).toHaveBeenCalledTimes(1);
+    await click(byText("button", /Nuevo dataset/));
+    await flush();
+    expect(modeButton("Constructor visual")?.getAttribute("aria-checked")).toBe("true");
+    await choose(entitySelect(), "Customer");
+    expect(container.querySelector('[data-testid="filter-builder"]')?.textContent).toContain("Sin filtros");
+    expect(container.querySelector('[data-testid="generated-sql"]')).toBeNull();
+  });
+
   it("does not offer row limits from the sentence when saving a dataset", async () => {
     await renderDraft();
     await interpret("primeros 10");

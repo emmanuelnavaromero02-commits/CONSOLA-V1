@@ -51,6 +51,10 @@ interface PendingSave {
   sources: string[];
 }
 
+interface GeneratedSql extends PendingSave {
+  origin: string;
+}
+
 interface RefineForm {
   name: string;
   layer: StudioLayer;
@@ -90,6 +94,12 @@ function previewColumns(payload: BronzeQueryPayload | null): string[] {
   return [];
 }
 
+function without<T>(record: Record<string, T>, drop: string): Record<string, T> {
+  const next = { ...record };
+  delete next[drop];
+  return next;
+}
+
 function initialDrafts(target: StudioEditorTarget | null | undefined): Record<string, RefineForm> {
   return target?.entity && !target.dataset ? { [NEW_DATASET]: { ...EMPTY_FORM, entity: target.entity } } : {};
 }
@@ -113,7 +123,7 @@ export function RefinePanel({
   const [drafts, setDrafts] = useState<Record<string, RefineForm>>(() => initialDrafts(initialTarget));
   const [specs, setSpecs] = useState<Record<string, ExplorerSpec>>({});
   const [modes, setModes] = useState<Record<string, EditMode>>({});
-  const [generated, setGenerated] = useState<Record<string, string>>({});
+  const [generated, setGenerated] = useState<Record<string, GeneratedSql>>({});
   const [sqlShown, setSqlShown] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -141,7 +151,15 @@ export function RefinePanel({
   const spec = specs[key] ?? EMPTY_SPEC;
   const builderSource = form.entity ? sourceFromKey(`raw/${cartridge}/${form.entity}`) : null;
   const builderActive = Boolean(selected) && mode === "builder";
-  const generatedSql = generated[key] ?? null;
+  const builderOrigin = JSON.stringify([
+    form.entity,
+    spec.columns,
+    spec.filters.map((filter) => [filter.column, filter.op, filter.value, filter.valueTo]),
+    spec.sort,
+    spec.latestOnly,
+  ]);
+  const lastGenerated = generated[key] ?? null;
+  const generatedSql = lastGenerated?.origin === builderOrigin ? lastGenerated.sql : null;
   const displaySources = mode === "builder" && builderSource ? [`raw/${cartridge}/${form.entity}`] : sources;
   const schema = useQuery({
     queryKey: ["explorer", "schema", builderSource ? `raw/${cartridge}/${form.entity}` : ""],
@@ -162,6 +180,7 @@ export function RefinePanel({
         columns: response.columns,
         rows: exploreRowsAsRecords(response),
         sql_definition: response.sql_definition,
+        sources: response.sources,
       };
     },
   });
@@ -186,8 +205,16 @@ export function RefinePanel({
     preview.reset();
   }
 
-  function rememberGenerated(sql: string | null | undefined) {
-    if (sql) setGenerated((current) => ({ ...current, [key]: sql }));
+  function rememberGenerated(sql: unknown, sqlSources: unknown) {
+    if (typeof sql !== "string" || !sql || !Array.isArray(sqlSources) || !sqlSources.length) return;
+    const entry = { sql, sources: sqlSources.map(String), origin: builderOrigin };
+    setGenerated((current) => ({ ...current, [key]: entry }));
+  }
+
+  function forgetDraft(draftKey: string) {
+    setSpecs((current) => without(current, draftKey));
+    setGenerated((current) => without(current, draftKey));
+    setModes((current) => without(current, draftKey));
   }
 
   function editGenerated() {
@@ -207,6 +234,7 @@ export function RefinePanel({
   }
 
   function select(name: string) {
+    if (name === NEW_DATASET && !drafts[NEW_DATASET]) forgetDraft(NEW_DATASET);
     setSelected(name);
     setSqlShown(false);
     preview.reset();
@@ -223,7 +251,7 @@ export function RefinePanel({
         toast.error(problem);
         return;
       }
-      preview.mutate("builder", { onSuccess: (payload) => rememberGenerated(payload.sql_definition as string | null) });
+      preview.mutate("builder", { onSuccess: (payload) => rememberGenerated(payload.sql_definition, payload.sources) });
       return;
     }
     if (!form.sql.trim()) {
@@ -248,8 +276,8 @@ export function RefinePanel({
           }
           const next = { sql: compiled.sql_definition, sources: compiled.sources };
           const typed = form.sql.trim();
-          rememberGenerated(next.sql);
-          if (typed && typed !== next.sql && typed !== generatedSql) {
+          rememberGenerated(next.sql, next.sources);
+          if (typed && typed !== next.sql && typed !== lastGenerated?.sql) {
             setPendingSave(next);
             return;
           }
@@ -264,7 +292,8 @@ export function RefinePanel({
       toast.error(problem);
       return;
     }
-    persist(form.sql.trim(), sources);
+    const typed = form.sql.trim();
+    persist(typed, lastGenerated && typed === lastGenerated.sql ? lastGenerated.sources : sources);
   }
 
   function persistBuilder(next: PendingSave) {
@@ -279,11 +308,8 @@ export function RefinePanel({
       {
         onSuccess: () => {
           toast.success(`Dataset ${name} guardado.`);
-          setDrafts((current) => {
-            const next = { ...current };
-            delete next[key];
-            return next;
-          });
+          setDrafts((current) => without(current, key));
+          forgetDraft(key);
           setModes((current) => ({ ...current, [name]: "technical" }));
           setSelected(name);
         },

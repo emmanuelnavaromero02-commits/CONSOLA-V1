@@ -23,14 +23,24 @@ describe("editorSources", () => {
     expect(normalizeStorageSourceRef(null)).toBe("");
   });
 
-  it("merges registered dataset sources, the chosen entity and read_* calls in the SQL", () => {
+  it("merges read_* calls in the SQL first, then the chosen entity and the registered sources", () => {
     const sources = editorSources({
       detailSources: ["s3://lakehouse/silver/acme/orders/data.parquet", "not-a-path"],
       cartridge: "acme",
       entity: "Invoice",
       sql: "select * from read_parquet('raw/acme/Customer/*.parquet') join read_csv(\"gold/acme/sales\")",
     });
-    expect(sources).toEqual(["silver/acme/orders", "raw/acme/Invoice", "raw/acme/Customer", "gold/acme/sales"]);
+    expect(sources).toEqual(["raw/acme/Customer", "gold/acme/sales", "raw/acme/Invoice", "silver/acme/orders"]);
+  });
+
+  it("puts the source the SQL reads ahead of a stale registered source", () => {
+    const sources = editorSources({
+      detailSources: ["raw/acme/Invoice"],
+      cartridge: "acme",
+      entity: "",
+      sql: "SELECT * FROM read_parquet('s3://{bucket}/raw/acme/Customer/**/*.parquet', hive_partitioning=true)",
+    });
+    expect(sources).toEqual(["raw/acme/Customer", "raw/acme/Invoice"]);
   });
 
   it("does not invent sources when nothing is declared", () => {

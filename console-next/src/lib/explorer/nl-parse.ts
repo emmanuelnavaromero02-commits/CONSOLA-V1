@@ -130,7 +130,13 @@ const SUBJECT_NOUNS = new Set([
 ]);
 const RESERVED_VALUE_WORDS = new Set([
   ...SORT_WORDS, "primeros", "primeras", "top", "limitar", "limite", "solo", "carga", "descendente", "ascendente",
+  "desc", "asc", "alfabeticamente", "descendentemente", "ascendentemente",
 ]);
+const RELATIVE_DATE_PAIRS: Array<[Set<string>, Set<string>]> = [
+  [new Set(["este", "esta"]), new Set(["mes", "ano", "anio", "semana"])],
+  [new Set(["ano", "anio", "mes"]), new Set(["pasado", "anterior", "actual"])],
+  [new Set(["ultimo", "ultima"]), new Set(["mes", "ano", "anio", "semana"])],
+];
 
 const OPERATOR_PHRASES: Array<[string, ExplorerOp | "period"]> = [
   ["mayor o igual que", "gte"], ["mayor o igual a", "gte"], ["mayor o igual al", "gte"],
@@ -346,13 +352,46 @@ function resolveColumnStrict(tokens: Token[], index: ColumnIndex[]): NlColumn | 
   return matches.length ? matches[0].column : null;
 }
 
+function sortPhraseAt(tokens: Token[], at: number): string | null {
+  for (const words of [...DESC_PHRASES, ...ASC_PHRASES]) {
+    if (matchWords(tokens, at, words)) return sliceTokens(tokens.slice(at, at + words.length));
+  }
+  return null;
+}
+
+function relativeDateAt(tokens: Token[], at: number): string | null {
+  const word = tokens[at]?.fold ?? "";
+  const next = tokens[at + 1];
+  if (word === "hoy" || word === "ayer") return tokens[at].raw;
+  if (next && RELATIVE_DATE_PAIRS.some(([first, second]) => first.has(word) && second.has(next.fold))) {
+    return sliceTokens(tokens.slice(at, at + 2));
+  }
+  if ((word === "ultimos" || word === "ultimas" || word === "hace") && next) {
+    const amount = next.type === "number" || next.fold in NUMBER_WORDS;
+    if (amount && unitSpan(tokens[at + 2]?.fold ?? "")) return sliceTokens(tokens.slice(at, at + 3));
+  }
+  const match = operatorAt(tokens, at);
+  if (match?.op === "period" && next) {
+    const value = tokens[match.end];
+    if (value && ((value.type === "number" && /^\d{4}$/.test(value.raw)) || value.fold in MONTH_ALIASES || value.type === "date")) {
+      return sliceTokens(tokens.slice(at, match.end + 1));
+    }
+  }
+  return null;
+}
+
 function valueConflict(tokens: Token[], index: ColumnIndex[]): string | null {
   if (tokens.length < 2) return null;
+  const temporal = index.some((item) => item.column.kind === "temporal");
   for (let at = 0; at < tokens.length; at += 1) {
     if (tokens[at].type === "quoted") continue;
     const match = operatorAt(tokens, at);
     if (match && match.op !== "period") return sliceTokens(tokens.slice(at, match.end));
     if (tokens[at].type === "word" && RESERVED_VALUE_WORDS.has(tokens[at].fold)) return tokens[at].raw;
+    const sortPhrase = sortPhraseAt(tokens, at);
+    if (sortPhrase) return sortPhrase;
+    const relative = temporal ? relativeDateAt(tokens, at) : null;
+    if (relative) return relative;
     for (const size of [1, 2]) {
       const window = tokens.slice(at, at + size);
       if (window.length === size && window.every((token) => token.type === "word") && resolveColumnStrict(window, index)) {
