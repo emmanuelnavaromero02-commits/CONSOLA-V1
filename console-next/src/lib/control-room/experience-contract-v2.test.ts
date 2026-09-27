@@ -334,6 +334,15 @@ describe("direct action contract", () => {
     }
   });
 
+  it("accepts exceptions without an observation date", () => {
+    const withoutDate: Record<string, unknown> = { ...exception };
+    delete withoutDate.observed_at;
+    expect(
+      controlRoomExperienceV2Schema.parse({ ...payload, exceptions: [withoutDate] })
+        .exceptions?.[0].observed_at,
+    ).toBeUndefined();
+  });
+
   it("keeps reopen off open findings and only reopen on exceptions", () => {
     expect(controlRoomExperienceV2Schema.parse({ ...payload, exceptions: [exception] }))
       .toEqual({ ...payload, exceptions: [exception] });

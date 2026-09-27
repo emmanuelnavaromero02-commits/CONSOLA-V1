@@ -22,6 +22,7 @@ from app.services.control_room import (
     business_direct_action_authority,
     business_exception_approval,
     business_exception_resolution,
+    business_state_refresh,
     experience_freshness,
 )
 from app.services.control_room.business_action_authority_policy import (
@@ -32,7 +33,11 @@ from app.services.control_room.business_command_item import (
     load_persisted_command_item,
 )
 from app.services.control_room.business_item_persistence import persist_item_rows
-from app.services.control_room.surface_snapshot import SurfaceScope, SurfaceSnapshot
+from app.services.control_room.surface_snapshot import (
+    SurfaceScope,
+    SurfaceSnapshot,
+    collect_surface_snapshot,
+)
 from app.services.db_scope import run_with_db_scope
 from tests.control_room_action_authority_live import _new_user
 from tests.test_control_room_live_postgres_workflows import _item, _rows
@@ -427,25 +432,37 @@ async def test_direct_actions_are_real_audited_atomic_and_reversible(
             after = await experience_freshness.compute_experience_fingerprint(seed.maker)
         assert after.fingerprint != before.fingerprint
 
-        dismissed_live = {**approve_live, "status": "dismissed"}
-        exception_snapshot = _snapshot(seed, dismissed_live, proposal_live)
         with patch.object(
             business_exception_resolution.auth, "pool", new=AsyncMock(return_value=pool)
         ):
-            resolutions = await business_exception_resolution.load_exception_resolutions(
-                seed.maker, exception_snapshot
+            approved = await business_exception_resolution.load_approved_exceptions(
+                seed.maker
             )
-        assert resolutions[seed.approve_id].reason == REASON
-        assert resolutions[seed.approve_id].actor_user_id == seed.maker["id"]
-        reopen_handles = await _issue(
-            seed, pool, exception_snapshot, {"reopen_exception", "approve_exception"}
+        record = next(r for r in approved if r.item_id == seed.approve_id)
+        assert record.resolution.reason == REASON
+        assert record.resolution.actor_user_id == seed.maker["id"]
+        stored = await _item_row(seed, seed.approve_id)
+        assert stored["metadata"]["resolution_observation_fingerprint"] == (
+            stored["metadata"]["business_eligibility_fingerprint"]
         )
-        assert set(reopen_handles[seed.approve_id]) == {"exception_reopen"}
-        patches = _pool_patches(pool, exception_snapshot)
+        assert len(stored["metadata"]["resolution_evidence_digest"]) == 64
+        with patch.object(
+            business_action_binding_producer.auth,
+            "pool",
+            new=AsyncMock(return_value=pool),
+        ):
+            reopen_actions = await business_action_binding_producer.issue_reopen_bindings(
+                seed.maker,
+                [seed.approve_id],
+                enabled_template_ids={"reopen_exception"},
+            )
+        reopen_handle = reopen_actions[seed.approve_id].action_handle
+        no_live = _snapshot(seed)
+        patches = _pool_patches(pool, no_live)
         with patches[0], patches[1]:
             reopened = await business_exception_approval.reopen_exception(
                 seed.maker,
-                action_handle=reopen_handles[seed.approve_id]["exception_reopen"],
+                action_handle=reopen_handle,
                 reason="Revisar de nuevo",
             )
         assert reopened.status == "exception_reopened"
@@ -533,5 +550,171 @@ async def test_direct_actions_are_real_audited_atomic_and_reversible(
                 )
                 is None
             )
+    finally:
+        await pool.close()
+
+
+def _hcm_fetcher(seed: DirectSeed, detected_at: str):
+    async def _fetch(dataset: str, _user: Any, _limit: int) -> list[dict[str, Any]]:
+        if dataset != "employees_anomalies":
+            return []
+        return [
+            {
+                "tenant_id": seed.tenant_id,
+                "workspace_id": seed.workspace_id,
+                "pernr": "7001",
+                "full_name": "Empleado de prueba",
+                "anomaly_type": "terminated_but_active",
+                "severity": "critical",
+                "details": {"salary_monthly_usd": 4200},
+                "detected_at": detected_at,
+            }
+        ]
+
+    return _fetch
+
+
+def _hcm_patches(pool: asyncpg.Pool, fetcher: Any):
+    async def _installed(_user: Any) -> list[dict[str, Any]]:
+        return [{"cartridge_id": "sap_hcm", "installation_status": "ready"}]
+
+    original = control_room_service.refresh_dashboard_state
+    return (
+        patch.object(control_room_service.auth, "pool", new=AsyncMock(return_value=pool)),
+        patch.object(control_room_service, "_installed_cartridges", new=_installed),
+        patch.object(control_room_service, "query_dataset_rows", new=fetcher),
+        patch.object(
+            control_room_service,
+            "refresh_dashboard_state",
+            new=lambda user: original(user, fetcher=fetcher),
+        ),
+    )
+
+
+async def _hcm_item(user: dict[str, Any]) -> dict[str, Any]:
+    current = await collect_surface_snapshot(user)
+    return next(
+        dict(item)
+        for item in current.items
+        if item.get("source_dataset") == "employees_anomalies"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unpersisted_findings_need_the_audited_refresh_and_new_observations_lapse(
+    direct_seed: DirectSeed,
+):
+    seed = direct_seed
+    user = {**seed.maker, "email": seed.maker["email"]}
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        first = _hcm_patches(pool, _hcm_fetcher(seed, "2026-09-20T10:00:00Z"))
+        with first[0], first[1], first[2], first[3]:
+            live = await _hcm_item(user)
+            item_id = str(live["id"])
+            before = await business_action_binding_producer.issue_action_bindings(
+                user,
+                _snapshot(seed, live),
+                enabled_template_ids={"approve_exception", "create_decision_proposal"},
+            )
+            assert [(a.kind, a.enabled, a.disabled_reason) for a in before[item_id]] == [
+                ("exception_approval", False, "Actualiza los datos antes de continuar."),
+                ("decision_proposal", False, "Actualiza los datos antes de continuar."),
+            ]
+            assert (
+                await _count(
+                    seed,
+                    """SELECT count(*) FROM control_room_action_tokens
+                        WHERE workspace_id = $1::uuid AND item_id = $2""",
+                    seed.workspace_id,
+                    item_id,
+                )
+                == 0
+            )
+
+            refreshed = await business_state_refresh.refresh_control_room_state(user)
+            assert refreshed.status == "refreshed"
+            row = await _item_row(seed, item_id)
+            assert row["metadata"]["business_eligibility_fingerprint"]
+            assert (
+                await _count(
+                    seed,
+                    """SELECT count(*) FROM audit_events
+                        WHERE action = 'control_room.state.refresh'
+                          AND resource_id = $1""",
+                    seed.workspace_id,
+                )
+                >= 1
+            )
+
+            live = await _hcm_item(user)
+            after = await business_action_binding_producer.issue_action_bindings(
+                user,
+                _snapshot(seed, live),
+                enabled_template_ids={"approve_exception", "create_decision_proposal"},
+            )
+            assert [(a.kind, a.enabled) for a in after[item_id]] == [
+                ("exception_approval", True),
+                ("decision_proposal", True),
+            ]
+            approve_handle = after[item_id][0].action_handle
+
+            conn = await asyncpg.connect(seed.admin_dsn)
+            try:
+                await conn.execute(
+                    """UPDATE control_room_action_tokens
+                          SET issued_at = NOW() - INTERVAL '14 minutes',
+                              expires_at = NOW() + INTERVAL '1 minute'
+                        WHERE workspace_id = $1::uuid AND item_id = $2""",
+                    seed.workspace_id,
+                    item_id,
+                )
+            finally:
+                await conn.close()
+            rotated = await business_action_binding_producer.issue_action_bindings(
+                user,
+                _snapshot(seed, live),
+                enabled_template_ids={"approve_exception"},
+            )
+            assert rotated[item_id][0].action_handle != approve_handle
+            assert (
+                await _count(
+                    seed,
+                    """SELECT count(*) FROM control_room_action_tokens
+                        WHERE workspace_id = $1::uuid AND item_id = $2
+                          AND template_id = 'approve_exception'""",
+                    seed.workspace_id,
+                    item_id,
+                )
+                == 1
+            )
+            with patch.object(
+                business_action_handle,
+                "collect_surface_snapshot",
+                new=AsyncMock(return_value=_snapshot(seed, live)),
+            ):
+                await business_exception_approval.approve_exception(
+                    user, action_handle=rotated[item_id][0].action_handle, reason=REASON
+                )
+            approved = await _item_row(seed, item_id)
+            assert approved["status"] == "dismissed"
+
+        drifted = _hcm_patches(pool, _hcm_fetcher(seed, "2026-09-24T10:00:00Z"))
+        with drifted[0], drifted[1], drifted[2], drifted[3]:
+            await business_state_refresh.refresh_control_room_state(user)
+        lapsed = await _item_row(seed, item_id)
+        assert lapsed["status"] == "open"
+        assert not any(key.startswith("resolution") for key in lapsed["metadata"])
+        assert (
+            await _count(
+                seed,
+                """SELECT count(*) FROM control_room_item_events
+                    WHERE workspace_id = $1::uuid AND item_id = $2
+                      AND event_type = 'exception_lapsed'""",
+                seed.workspace_id,
+                item_id,
+            )
+            == 1
+        )
     finally:
         await pool.close()

@@ -15,6 +15,7 @@ import {
   useControlRoomExperienceAction,
 } from "@/lib/control-room/use-control-room-experience-action";
 import { useControlRoomLive } from "@/lib/control-room/use-control-room-live";
+import { useControlRoomRefresh } from "@/lib/control-room/use-control-room-refresh";
 import { cn } from "@/lib/utils";
 
 import { ExperienceActionDialog } from "./ExperienceActionDialog";
@@ -99,6 +100,10 @@ export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } =
     experience: query,
     paused: action.dialogOpen,
   });
+  const persisted = useControlRoomRefresh({
+    workspaceId: query.workspaceId,
+    refetchOnly: live.refreshAll,
+  });
   const retry = live.refreshAll;
 
   return (
@@ -107,9 +112,9 @@ export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } =
       {query.data ? (
         <ControlRoomExperienceContent
           experience={query.data}
-          refreshing={query.isFetching}
-          refreshFailed={query.isRefetchError}
-          onRefresh={retry}
+          refreshing={query.isFetching || persisted.refreshing}
+          refreshFailed={query.isRefetchError || persisted.failed}
+          onRefresh={persisted.refresh}
           onAction={action.openAction}
           checkedAt={live.checkedAt}
           liveOffline={live.offline}

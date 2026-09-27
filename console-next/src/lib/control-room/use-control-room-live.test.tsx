@@ -90,10 +90,19 @@ describe("decideExperienceRefresh", () => {
     expect(MAX_EXPERIENCE_AGE_MS).toBeLessThan(15 * 60_000);
   });
 
-  it("never stacks a refresh on an in-flight load", () => {
+  it("never stacks a refresh on an in-flight load but remembers the change", () => {
+    const inFlight = decideExperienceRefresh({
+      ...base,
+      fingerprint: "b",
+      experienceFetching: true,
+    });
+    expect(inFlight).toEqual({ state: { baseline: "b", pending: true }, refetch: false });
     expect(
-      decideExperienceRefresh({ ...base, fingerprint: "b", experienceFetching: true }),
-    ).toEqual({ state: { baseline: "b", pending: false }, refetch: false });
+      decideExperienceRefresh({ ...base, state: inFlight.state, fingerprint: "b" }),
+    ).toEqual({ state: { baseline: "b", pending: false }, refetch: true });
+    expect(
+      decideExperienceRefresh({ ...base, fingerprint: "a", experienceFetching: true }),
+    ).toEqual({ state: { baseline: "a", pending: false }, refetch: false });
   });
 
   it("does not treat a missing load as aged", () => {

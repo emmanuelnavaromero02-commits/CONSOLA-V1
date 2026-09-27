@@ -62,7 +62,7 @@ export function decideExperienceRefresh({
   const aged =
     experienceUpdatedAt > 0 && now - experienceUpdatedAt >= MAX_EXPERIENCE_AGE_MS;
   if (experienceFetching) {
-    return { state: { baseline, pending: false }, refetch: false };
+    return { state: { baseline, pending: state.pending || changed }, refetch: false };
   }
   if (paused) {
     return { state: { baseline, pending: state.pending || changed }, refetch: false };

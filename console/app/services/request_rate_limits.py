@@ -24,6 +24,7 @@ RATE_LIMITS = {
     "/api/explorer": (180, 60),
     "/apps/content": (60, 60),
     "pipeline_recover": (10, RATE_LIMIT_WINDOW_SECONDS),
+    "/api/control-room/refresh": (6, 60),
 }
 API_RATE_LIMIT_PREFIXES = (
     "/api/copilot",

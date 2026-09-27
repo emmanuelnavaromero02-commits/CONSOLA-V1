@@ -5,6 +5,7 @@ from typing import Any
 
 from app.services.control_room.business_item_persistence_sql import (
     ENSURE_ITEM_SQL,
+    LAPSE_EXCEPTIONS_SQL,
     PERSIST_ITEMS_SQL,
 )
 from app.services.control_room.business_observation_order import (
@@ -15,6 +16,7 @@ from app.services.control_room.business_observation_order import (
 from app.services.control_room.business_policy_metadata import REPLACED_POLICY_KEYS
 from app.services.control_room.business_serialization import dumps_jsonb
 from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     persistence_metadata,
 )
 from app.services.control_room.business_workflow_reconciliation import (
@@ -60,18 +62,45 @@ def _prepared_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return prepared
 
 
-async def _reconciled_rows(
+async def _reconciled(
     conn: Any, rows: Sequence[Mapping[str, Any]]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
     prepared = _prepared_rows(rows)
     reconciliation = await reconcile_workflow_metadata(conn, prepared)
+    lapse_candidates: dict[str, list[str]] = {}
     for row in prepared:
         key = (str(row.get("workspace_id") or ""), str(row.get("item_id") or ""))
         if patch := reconciliation.patches.get(key):
             row["metadata"] = {**dict(row["metadata"]), **patch}
         if baseline := reconciliation.existing_orders.get(key):
             row["metadata"][OBSERVATION_ORDER_BASELINE_KEY] = baseline
-    return prepared
+        approved = reconciliation.approved_exceptions.get(key)
+        incoming = str(row["metadata"].get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or "")
+        if approved is not None and approved != incoming:
+            lapse_candidates.setdefault(key[0], []).append(key[1])
+    return prepared, lapse_candidates
+
+
+async def _reconciled_rows(
+    conn: Any, rows: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    return (await _reconciled(conn, rows))[0]
+
+
+async def _lapse_exceptions(
+    conn: Any,
+    candidates: Mapping[str, Sequence[str]],
+    *,
+    owner_scope_id: int | None,
+    workspace_wide: bool,
+) -> None:
+    for workspace_id, item_ids in sorted(candidates.items()):
+        await conn.execute(
+            LAPSE_EXCEPTIONS_SQL,
+            workspace_id,
+            sorted(set(item_ids)),
+            None if workspace_wide else owner_scope_id,
+        )
 
 
 def _assert_count(result: Any, *, expected: int) -> None:
@@ -110,7 +139,7 @@ async def persist_item_rows(
         owner_scope_id=owner_scope_id,
         workspace_wide=workspace_wide,
     )
-    prepared = await _reconciled_rows(conn, rows)
+    prepared, lapse_candidates = await _reconciled(conn, rows)
     result = await conn.execute(
         PERSIST_ITEMS_SQL,
         dumps_jsonb(prepared),
@@ -119,6 +148,12 @@ async def persist_item_rows(
         bool(workspace_wide),
     )
     _assert_count(result, expected=len(rows))
+    await _lapse_exceptions(
+        conn,
+        lapse_candidates,
+        owner_scope_id=owner_scope_id,
+        workspace_wide=workspace_wide,
+    )
 
 
 async def ensure_item_row(
@@ -154,6 +189,7 @@ async def ensure_item_row(
 
 __all__ = (
     "ENSURE_ITEM_SQL",
+    "LAPSE_EXCEPTIONS_SQL",
     "OwnerScopeConflict",
     "PERSIST_ITEMS_SQL",
     "PersistenceCountMismatch",

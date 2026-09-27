@@ -11,13 +11,16 @@ from app.routers import control_room_surfaces as surfaces
 from app.services.control_room import business_exception_resolution as resolution
 from app.services.control_room.business_action_public_projection import public_action
 from app.services.control_room.business_exception_resolution import (
+    APPROVED_EXCEPTIONS_SQL,
+    ApprovedException,
     ExceptionResolution,
     exception_resolution,
-    load_exception_resolutions,
+    load_approved_exceptions,
 )
 from app.services.control_room.business_experience_v2 import (
     build_business_experience_v2,
 )
+from control_room_direct_action_fixtures import exception_item, exception_row
 from control_room_surface_fixtures import (
     OPERATOR,
     TENANT_ID,
@@ -29,68 +32,76 @@ from control_room_surface_fixtures import (
 
 
 APPROVED_AT = datetime(2026, 9, 25, 10, 0, tzinfo=UTC)
+REASON = "Proveedor validado por auditoría interna"
 
 
-def _resolution(**updates: Any) -> ExceptionResolution:
-    values = {
-        "approved_at": APPROVED_AT,
-        "reason": "Proveedor validado por auditoría interna",
-        "actor_user_id": 9,
-    }
-    values.update(updates)
-    return ExceptionResolution(**values)
+def _record(
+    item_id: str = "business-1", **resolution_updates: Any
+) -> ApprovedException:
+    values = {"approved_at": APPROVED_AT, "reason": REASON, "actor_user_id": 9}
+    values.update(resolution_updates)
+    return ApprovedException(
+        item_id,
+        exception_row(exception_item(item_id)),
+        ExceptionResolution(**values),
+    )
 
 
-def _build(items, resolutions, *, user=OPERATOR, actions=None):
+def _build(items, records, *, user=OPERATOR, reopen=None):
     return build_business_experience_v2(
         snapshot(items=tuple(items)),
         user=user,
         enabled_template_ids=frozenset(),
-        actions_by_item=actions if actions is not None else {},
-        exception_resolutions=resolutions,
+        actions_by_item={},
+        approved_exceptions=records,
+        reopen_actions=reopen or {},
     )
 
 
-def test_approved_exceptions_leave_sections_and_list_with_reopen_only():
-    dismissed = business_item("business-1", status="dismissed")
+def test_exceptions_come_from_approval_records_even_without_a_live_fact():
     open_item = business_item("business-2", title="Otro hallazgo")
-    actions = {
-        "business-1": (
-            public_action("a" * 64, template_id="reopen_exception"),
-            public_action("b" * 64, template_id="approve_exception"),
-        ),
-        "business-2": (
-            public_action("c" * 64, template_id="approve_exception"),
-            public_action("d" * 64, template_id="reopen_exception"),
-        ),
-    }
     response = _build(
-        (dismissed, open_item),
-        {"business-1": _resolution()},
-        actions=actions,
+        (open_item,),
+        [_record("business-1")],
+        reopen={"business-1": public_action("a" * 64, template_id="reopen_exception")},
     )
 
-    titles = [fact.title for section in response.sections for fact in section.facts]
-    assert titles == ["Otro hallazgo"]
-    fact = response.sections[0].facts[0]
-    assert [action.kind for action in fact.actions] == ["exception_approval"]
+    assert [fact.title for fact in response.sections[0].facts] == ["Otro hallazgo"]
     (exception,) = response.exceptions
     assert exception.title == "Observed business condition"
     assert exception.entity_label == "Observed employee"
     assert exception.approved_at == APPROVED_AT
-    assert exception.reason == "Proveedor validado por auditoría interna"
+    assert exception.reason == REASON
     assert exception.approved_by_you is True
+    assert exception.observed_at is not None
     assert [action.kind for action in exception.actions] == ["exception_reopen"]
-    payload = response.model_dump(mode="json")
-    assert "item_id" not in str(payload)
-    assert "business-1" not in str(payload)
+    payload = str(response.model_dump(mode="json"))
+    assert "business-1" not in payload and "item_id" not in payload
+
+
+def test_a_drifted_exception_shows_as_an_open_fact_instead_of_an_exception():
+    live_again = business_item("business-1", title="Observed business condition")
+    response = _build((live_again,), [_record("business-1")])
+
+    assert [fact.title for fact in response.sections[0].facts] == [
+        "Observed business condition"
+    ]
+    assert response.exceptions == []
+
+
+def test_a_dismissed_live_item_keeps_its_exception_listed():
+    dismissed = business_item("business-1", status="dismissed")
+    response = _build((dismissed,), [_record("business-1")])
+
+    assert response.sections == []
+    assert len(response.exceptions) == 1
 
 
 def test_exception_fields_come_only_from_present_values():
-    item = business_item("business-1", status="dismissed")
     response = _build(
-        (item,),
-        {"business-1": _resolution(approved_at=None, reason=None, actor_user_id=4)},
+        (),
+        [_record("business-1", approved_at=None, reason=None, actor_user_id=4)],
+        reopen={"business-1": public_action("a" * 64, template_id="approve_exception")},
     )
     (exception,) = response.exceptions
     assert exception.approved_at is None
@@ -99,47 +110,26 @@ def test_exception_fields_come_only_from_present_values():
     assert exception.actions == []
 
 
-def test_dismissed_without_resolution_and_resolved_items_are_not_exceptions():
-    response = _build(
-        (
-            business_item("business-1", status="dismissed"),
-            business_item("business-2", status="resolved"),
-        ),
-        {"business-2": _resolution()},
-    )
-    assert response.sections == []
-    assert response.exceptions == []
-
-
-def test_viewer_sees_exceptions_without_actions():
-    response = build_business_experience_v2(
-        snapshot(items=(business_item("business-1", status="dismissed"),)),
-        user=VIEWER,
-        enabled_template_ids=frozenset(),
-        actions_by_item=None,
-        exception_resolutions={"business-1": _resolution()},
-    )
-    (exception,) = response.exceptions
-    assert exception.actions == []
-    assert exception.approved_by_you is False
-
-
 def test_exceptions_are_bounded_and_newest_first():
-    items = [
-        business_item(f"business-{index}", status="dismissed") for index in range(25)
-    ]
-    resolutions = {
-        f"business-{index}": _resolution(
-            approved_at=datetime(2026, 9, 1 + index, tzinfo=UTC)
+    records = [
+        _record(
+            f"business-{index}",
+            approved_at=datetime(2026, 9, 1 + index, tzinfo=UTC),
         )
         for index in range(25)
-    }
-    response = _build(items, resolutions)
+    ]
+    response = _build((), records)
 
     assert len(response.exceptions) == 20
     moments = [exception.approved_at for exception in response.exceptions]
     assert moments == sorted(moments, reverse=True)
-    assert moments[0] == datetime(2026, 9, 25, tzinfo=UTC)
+
+
+def test_viewer_sees_exceptions_without_actions():
+    response = _build((), [_record("business-1")], user=VIEWER)
+    (exception,) = response.exceptions
+    assert exception.actions == []
+    assert exception.approved_by_you is False
 
 
 def test_resolution_metadata_parsing_is_strict():
@@ -153,15 +143,14 @@ def test_resolution_metadata_parsing_is_strict():
         }
     )
     assert parsed == ExceptionResolution(APPROVED_AT, "Motivo válido", 9)
-    bad = exception_resolution(
+    assert exception_resolution(
         {
             "resolution": "exception_approved",
             "resolution_at": "ayer",
             "resolution_reason": 12,
             "resolution_actor_id": True,
         }
-    )
-    assert bad == ExceptionResolution(None, None, None)
+    ) == ExceptionResolution(None, None, None)
 
 
 class ReadConn:
@@ -174,41 +163,32 @@ class ReadConn:
         return "SELECT 1"
 
     async def fetch(self, query: str, *args: Any):
-        statement = " ".join(query.split())
-        self.calls.append((statement, args))
+        self.calls.append((" ".join(query.split()), args))
         return self.rows
 
 
 @pytest.mark.asyncio
-async def test_resolution_read_is_select_only_scoped_and_skipped_without_dismissed():
-    conn = ReadConn(
-        [
-            {
-                "item_id": "business-1",
-                "metadata": '{"resolution": "exception_approved", "resolution_actor_id": 9}',
-            },
-            {"item_id": "business-3", "metadata": {"resolution": "other"}},
-        ]
-    )
-    pool = AsyncMock(return_value=conn)
-    with patch.object(resolution.auth, "pool", new=pool):
-        assert (
-            await load_exception_resolutions(
-                OPERATOR, snapshot(items=(business_item(),))
-            )
-            == {}
-        )
-        pool.assert_not_awaited()
-        loaded = await load_exception_resolutions(
-            {**OPERATOR, "role": "analyst"},
-            snapshot(items=(business_item("business-1", status="dismissed"),)),
-        )
+async def test_loader_reads_approval_records_newest_first_with_scope_filters():
+    rows = [
+        exception_row(exception_item("business-1")),
+        exception_row(exception_item("business-2"), status="open"),
+        exception_row(
+            exception_item("business-3"),
+            metadata_updates={"resolution": "false_positive"},
+        ),
+    ]
+    conn = ReadConn(rows)
+    with patch.object(resolution.auth, "pool", new=AsyncMock(return_value=conn)):
+        loaded = await load_approved_exceptions({**OPERATOR, "role": "analyst"})
 
-    assert set(loaded) == {"business-1"}
+    assert [record.item_id for record in loaded] == ["business-1"]
     statements = [statement for statement, _ in conn.calls]
     assert statements[0].upper().startswith("SELECT SET_CONFIG")
-    select_args = conn.calls[1][1]
-    assert select_args[:4] == (WORKSPACE_ID, TENANT_ID, ["business-1"], 9)
+    select, args = conn.calls[1]
+    assert select == " ".join(APPROVED_EXCEPTIONS_SQL.split())
+    assert "ORDER BY item.metadata->>'resolution_at' DESC" in select
+    assert "status = 'dismissed'" in select
+    assert args == (WORKSPACE_ID, TENANT_ID, 9, ["platform", "sap_hcm"], 20)
     for statement in statements:
         assert not any(
             keyword in statement.upper()
@@ -217,52 +197,47 @@ async def test_resolution_read_is_select_only_scoped_and_skipped_without_dismiss
 
 
 @pytest.mark.asyncio
-async def test_resolution_read_failure_omits_exceptions_with_a_sanitized_signal(caplog):
+async def test_loader_failure_omits_exceptions_with_a_sanitized_signal(caplog):
     caplog.set_level(logging.ERROR)
     with patch.object(
         resolution.auth,
         "pool",
         new=AsyncMock(side_effect=RuntimeError("SELECT secret FROM /srv")),
     ):
-        loaded = await load_exception_resolutions(
-            OPERATOR, snapshot(items=(business_item("business-1", status="dismissed"),))
-        )
-    assert loaded == {}
+        assert await load_approved_exceptions(OPERATOR) == []
     assert "control_room_exception_resolution_read_failure" in caplog.text
     assert "/srv" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_v2_route_reads_resolutions_and_publishes_exceptions():
-    item = business_item("business-1", status="dismissed")
-    current = snapshot(items=(item,))
-    loader = AsyncMock(return_value={"business-1": _resolution()})
+async def test_v2_route_lists_records_and_issues_reopen_for_them():
+    records = [_record("business-1")]
+    loader = AsyncMock(return_value=records)
+    reopen = AsyncMock(
+        return_value={
+            "business-1": public_action("a" * 64, template_id="reopen_exception")
+        }
+    )
     with (
         patch.object(
-            surfaces, "collect_surface_snapshot", new=AsyncMock(return_value=current)
+            surfaces,
+            "collect_surface_snapshot",
+            new=AsyncMock(return_value=snapshot(items=())),
         ),
         patch.object(
             surfaces,
             "load_enabled_action_template_ids",
             new=AsyncMock(return_value=frozenset({"reopen_exception"})),
         ),
-        patch.object(
-            surfaces,
-            "issue_action_bindings",
-            new=AsyncMock(
-                return_value={
-                    "business-1": (
-                        public_action("a" * 64, template_id="reopen_exception"),
-                    )
-                }
-            ),
-        ),
-        patch.object(surfaces, "load_exception_resolutions", new=loader),
+        patch.object(surfaces, "issue_action_bindings", new=AsyncMock(return_value={})),
+        patch.object(surfaces, "load_approved_exceptions", new=loader),
+        patch.object(surfaces, "issue_reopen_bindings", new=reopen),
     ):
         response = await surfaces.control_room_experience_v2(OPERATOR)
 
-    loader.assert_awaited_once_with(OPERATOR, current)
-    assert response.sections == []
-    assert [exception.actions[0].label for exception in response.exceptions] == [
-        "Reabrir hallazgo"
-    ]
+    loader.assert_awaited_once_with(OPERATOR)
+    assert list(reopen.await_args.args[1]) == ["business-1"]
+    assert reopen.await_args.kwargs["enabled_template_ids"] == frozenset(
+        {"reopen_exception"}
+    )
+    assert [e.actions[0].label for e in response.exceptions] == ["Reabrir hallazgo"]

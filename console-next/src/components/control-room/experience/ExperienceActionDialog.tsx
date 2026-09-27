@@ -9,6 +9,7 @@ import {
   type ExperienceActionSelection,
   REASON_LIMITS,
   normalizeReason,
+  reasonHasHiddenCharacters,
   reasonIsValid,
 } from "@/lib/control-room/use-control-room-experience-action";
 
@@ -231,6 +232,11 @@ function ActionDialog({
             <p id={counterId} className="mt-1 text-xs text-muted-foreground">
               {`${reasonLength}/${limits.max} · mínimo ${limits.min} caracteres`}
             </p>
+            {reasonHasHiddenCharacters(reason) ? (
+              <p className="mt-1 text-xs font-medium text-destructive">
+                El motivo contiene caracteres invisibles o de control; escríbelo de nuevo.
+              </p>
+            ) : null}
           </div>
         ) : null}
 

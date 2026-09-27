@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 import {
   controlRoomExperienceV2Schema,
   controlRoomFreshnessSchema,
+  controlRoomRefreshResponseSchema,
   decisionProposalResponseSchema,
   exceptionApprovalResponseSchema,
   exceptionReopenResponseSchema,
@@ -9,6 +10,7 @@ import {
   studioTargetResponseSchema,
   type ControlRoomExperienceV2,
   type ControlRoomFreshness,
+  type ControlRoomRefreshResponse,
   type DecisionProposalResponse,
   type ExceptionApprovalResponse,
   type ExceptionReopenResponse,
@@ -19,6 +21,7 @@ import {
 export const CONTROL_ROOM_EXPERIENCE_ENDPOINT = "/api/control-room/experience/v2";
 export const CONTROL_ROOM_FRESHNESS_ENDPOINT =
   "/api/control-room/experience/v2/freshness";
+export const CONTROL_ROOM_REFRESH_ENDPOINT = "/api/control-room/refresh";
 export const CONTROL_ROOM_ACTION_PREVIEW_ENDPOINT =
   "/api/control-room/actions/preview";
 export const CONTROL_ROOM_EXCEPTION_ENDPOINT = "/api/control-room/actions/exception";
@@ -37,6 +40,11 @@ export async function getControlRoomExperience(): Promise<ControlRoomExperienceV
 export async function getControlRoomFreshness(): Promise<ControlRoomFreshness> {
   const response = await api.get<unknown>(CONTROL_ROOM_FRESHNESS_ENDPOINT);
   return controlRoomFreshnessSchema.parse(response.data);
+}
+
+export async function refreshControlRoomState(): Promise<ControlRoomRefreshResponse> {
+  const response = await api.post<unknown>(CONTROL_ROOM_REFRESH_ENDPOINT, {});
+  return controlRoomRefreshResponseSchema.parse(response.data);
 }
 
 function boundToHandle<T extends { action_handle: string }>(

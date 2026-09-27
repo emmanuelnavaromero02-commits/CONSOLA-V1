@@ -103,12 +103,7 @@ async def approve_exception(
         action_handle,
         allowed_template_ids=frozenset({APPROVE_EXCEPTION_TEMPLATE_ID}),
     )
-    resolution = {
-        "resolution": EXCEPTION_RESOLUTION,
-        "resolution_actor_id": actor_id(user),
-        "resolution_reason": reason,
-        "resolution_at": datetime.now(UTC).isoformat(),
-    }
+    approved_at = datetime.now(UTC).isoformat()
     pool = await auth.pool()
 
     async def _write(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
@@ -120,6 +115,16 @@ async def approve_exception(
             template_id=APPROVE_EXCEPTION_TEMPLATE_ID,
         )
         item = _transition_item(locked)
+        resolution = {
+            "resolution": EXCEPTION_RESOLUTION,
+            "resolution_actor_id": actor_id(user),
+            "resolution_reason": reason,
+            "resolution_at": approved_at,
+            "resolution_observation_fingerprint": (
+                locked.contract.observation_fingerprint
+            ),
+            "resolution_evidence_digest": locked.contract.evidence_digest,
+        }
         await persist_status_transition(
             conn,
             user=user,

@@ -26,11 +26,14 @@ _SLOT_TEMPLATE_IDS = frozenset({EXECUTABLE_TEMPLATE_ID, *DIRECT_ACTION_TEMPLATE_
 BindingContract = AuthorityItemContract | DirectActionContract
 
 
-def _handle_from_nonce(value: object) -> str:
+def binding_handle_from_nonce(value: object) -> str:
     nonce = bytes(value) if isinstance(value, (bytes, bytearray, memoryview)) else b""
     if len(nonce) != 32:
         raise RuntimeError("control room action binding nonce is invalid")
     return sign_server_payload(nonce, purpose=_PURPOSE)
+
+
+_handle_from_nonce = binding_handle_from_nonce
 
 
 def _same_optional(left: object, right: object) -> bool:
@@ -190,4 +193,4 @@ async def issue_binding_slot(
     return handle, expires_at
 
 
-__all__ = ("BindingContract", "issue_binding_slot")
+__all__ = ("BindingContract", "binding_handle_from_nonce", "issue_binding_slot")

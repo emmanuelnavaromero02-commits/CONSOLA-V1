@@ -6,8 +6,10 @@ import {
   CONTROL_ROOM_ACTION_PREVIEW_ENDPOINT,
   CONTROL_ROOM_EXPERIENCE_ENDPOINT,
   CONTROL_ROOM_FRESHNESS_ENDPOINT,
+  CONTROL_ROOM_REFRESH_ENDPOINT,
   getControlRoomExperience,
   getControlRoomFreshness,
+  refreshControlRoomState,
   previewControlRoomExperienceAction,
 } from "./experience-client";
 
@@ -167,5 +169,46 @@ describe("getControlRoomFreshness", () => {
     });
 
     await expect(getControlRoomFreshness()).rejects.toThrow();
+  });
+});
+
+describe("refreshControlRoomState", () => {
+  beforeEach(() => {
+    apiGet.mockReset();
+    apiPost.mockReset();
+  });
+
+  it("posts once to the audited refresh endpoint with an empty body", async () => {
+    const payload = {
+      status: "refreshed",
+      refreshed_at: "2026-09-26T12:00:00Z",
+      message: "Información actualizada desde las fuentes.",
+    };
+    apiPost.mockResolvedValue({
+      data: payload,
+      status: 200,
+      headers: new Headers(),
+      requestId: "request-r",
+    });
+
+    await expect(refreshControlRoomState()).resolves.toEqual(payload);
+    expect(apiPost).toHaveBeenCalledWith(CONTROL_ROOM_REFRESH_ENDPOINT, {});
+    expect(CONTROL_ROOM_REFRESH_ENDPOINT).toBe("/api/control-room/refresh");
+  });
+
+  it("fails closed on extra fields", async () => {
+    apiPost.mockResolvedValue({
+      data: {
+        status: "refreshed",
+        refreshed_at: "2026-09-26T12:00:00Z",
+        message: "ok",
+        item_count: 3,
+      },
+      status: 200,
+      headers: new Headers(),
+      requestId: "request-s",
+    });
+
+    await expect(refreshControlRoomState()).rejects.toThrow();
   });
 });

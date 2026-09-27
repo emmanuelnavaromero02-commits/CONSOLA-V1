@@ -20,7 +20,7 @@ PROPOSAL_CREATED_MESSAGE = (
 PROPOSAL_EXISTS_MESSAGE = (
     "La propuesta de decisión ya estaba registrada en el Consejo de Acciones."
 )
-_BIDI_CONTROL_RANGES = ((0x202A, 0x202E), (0x2066, 0x2069))
+_FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 _HANDLE_PATTERN = r"^[a-f0-9]{64}$"
 
 
@@ -32,11 +32,9 @@ def normalize_reason(value: object, *, minimum: int, maximum: int = 500) -> str:
     if not isinstance(value, str):
         raise ValueError("reason must be a string")
     if any(
-        unicodedata.category(character) == "Cc"
-        or any(low <= ord(character) <= high for low, high in _BIDI_CONTROL_RANGES)
-        for character in value
+        unicodedata.category(character) in _FORBIDDEN_CATEGORIES for character in value
     ):
-        raise ValueError("reason contains control characters")
+        raise ValueError("reason contains control or invisible characters")
     normalized = value.strip()
     if len(normalized) < minimum:
         raise ValueError(f"reason must have at least {minimum} characters")

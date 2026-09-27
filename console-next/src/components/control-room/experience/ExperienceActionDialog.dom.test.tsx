@@ -244,6 +244,22 @@ describe("Aprobar Excepción", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it.each([
+    ["zero-width spaces", "\u200b".repeat(10) + "motivo válido"],
+    ["a bidi override", "motivo válido \u202e al revés"],
+    ["an Arabic letter mark", "motivo válido\u061c"],
+    ["a line separator", "motivo válido\u2028otra"],
+  ])("rejects reasons with %s before sending", async (_name, value) => {
+    await render();
+    await act(async () => button("Aprobar Excepción")?.click());
+    await typeReason(value);
+
+    expect(dialogButton("Aprobar Excepción")?.hasAttribute("disabled")).toBe(true);
+    expect(dialog()?.textContent).toContain("caracteres invisibles o de control");
+    await act(async () => dialogButton("Aprobar Excepción")?.click());
+    expect(client.approve).not.toHaveBeenCalled();
+  });
+
   it("keeps focus inside the dialog including the reason field and closes on Escape", async () => {
     await render();
     await act(async () => button("Aprobar Excepción")?.click());

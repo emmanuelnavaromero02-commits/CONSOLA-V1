@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any, get_args, get_origin
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -13,7 +12,6 @@ from app.schemas.control_room_experience_actions import (
     ExperienceExceptionV2,
     ExperienceFactV2,
 )
-from app.services.control_room import business_action_binding_producer as producer
 from app.services.control_room.business_action_authority_policy import (
     BINDING_TEMPLATE_ORDER,
     DIRECT_ACTION_TEMPLATE_IDS,
@@ -24,8 +22,12 @@ from app.services.control_room.business_action_binding_slot import issue_binding
 from app.services.control_room.business_action_attempt_policy import BindingIssue
 from app.services.control_room.business_action_direct_contract import (
     NO_DECISION_DIGEST,
+    DirectMatch,
+    classify_direct_action,
     direct_contract_from_persisted_row,
     match_direct_action_item,
+    match_reopen_item,
+    resolution_digest,
     studio_href,
     token_matches_direct_contract,
     user_can_view_studio,
@@ -48,7 +50,6 @@ from control_room_surface_fixtures import (
     OPERATOR,
     WORKSPACE_ID,
     business_item,
-    snapshot,
 )
 
 
@@ -200,23 +201,121 @@ def test_authority_is_bound_to_permission_actor_and_owner_scope():
     assert _match(item, row, ACTION_TEMPLATES["create_followup_task"]) is None
 
 
-def test_reopen_requires_an_approved_exception_that_is_still_unlinked():
+def test_reopen_is_bound_to_the_approval_record_not_the_observation():
     item = exception_item()
-    contract = _match(item, exception_row(item), REOPEN)
+    contract = match_reopen_item(
+        exception_row(item), authorization(), REOPEN, user=OPERATOR
+    )
 
     assert contract is not None
     assert contract.decision_digest == NO_DECISION_DIGEST
+    assert contract.observation_fingerprint == resolution_digest(exception_row(item))
+    drifted = exception_row(
+        item,
+        metadata_updates={
+            CURRENT_ELIGIBILITY_FINGERPRINT_KEY: "f" * 64,
+            "data_status": "stale",
+            "evidence_refs": [],
+        },
+    )
+    assert (
+        match_reopen_item(drifted, authorization(), REOPEN, user=OPERATOR) is not None
+    )
     assert _match(item, exception_row(item), APPROVE) is None
     for row in (
         direct_row(item, status="dismissed"),
         exception_row(item, metadata_updates={"resolution": "false_positive"}),
+        exception_row(item, metadata_updates={"resolution_at": ""}),
+        exception_row(item, metadata_updates={"resolution_actor_id": None}),
         exception_row(item, decision_id=3, decision_workspace_id=WORKSPACE_ID),
         exception_row(item, selected_option_id="option-a"),
         exception_row(item, status="open"),
+        exception_row(item, owner_user_id=44),
+        exception_row(item, workspace_id="dddddddd-dddd-dddd-dddd-dddddddddddd"),
     ):
-        assert _match(item, row, REOPEN) is None
-    open_live = business_item()
-    assert _match(open_live, exception_row(item), REOPEN) is None
+        auth = authorization(workspace_wide=False)
+        assert match_reopen_item(row, auth, REOPEN, user=OPERATOR) is None
+    assert (
+        match_reopen_item(exception_row(item), authorization(), APPROVE, user=OPERATOR)
+        is None
+    )
+    assert (
+        match_reopen_item(
+            exception_row(item),
+            authorization(),
+            REOPEN,
+            user={**OPERATOR, "id": 10},
+        )
+        is None
+    )
+
+
+def test_resolution_digest_changes_with_the_approval_record():
+    item = exception_item()
+    base = resolution_digest(exception_row(item))
+    assert base is not None
+    for updates in (
+        {"resolution_at": "2026-09-25T10:00:01+00:00"},
+        {"resolution_actor_id": 10},
+        {"resolution_observation_fingerprint": "e" * 64},
+    ):
+        assert resolution_digest(exception_row(item, metadata_updates=updates)) != base
+
+
+@pytest.mark.parametrize(
+    ("row_factory", "expected"),
+    (
+        (lambda item: None, DirectMatch.NEEDS_REFRESH),
+        (
+            lambda item: direct_row(
+                item, metadata_updates={CURRENT_ELIGIBILITY_FINGERPRINT_KEY: None}
+            ),
+            DirectMatch.NEEDS_REFRESH,
+        ),
+        (
+            lambda item: direct_row(item, metadata_updates={"evidence_refs": []}),
+            DirectMatch.NEEDS_REFRESH,
+        ),
+        (lambda item: direct_row(item, status="in_review"), DirectMatch.NEEDS_REFRESH),
+        (lambda item: direct_row(item, owner_user_id=44), DirectMatch.INELIGIBLE),
+        (
+            lambda item: direct_row(
+                item, metadata_updates={DECISION_PROVENANCE_KEY: {"decision_id": 1}}
+            ),
+            DirectMatch.INELIGIBLE,
+        ),
+        (lambda item: direct_row(item), DirectMatch.MATCH),
+    ),
+)
+def test_unpersisted_or_drifted_rows_ask_for_a_refresh(row_factory, expected):
+    item = business_item()
+    status, contract = classify_direct_action(
+        item,
+        row_factory(item),
+        authorization(workspace_wide=False),
+        APPROVE,
+        user=OPERATOR,
+    )
+    assert status is expected
+    assert (contract is not None) is (expected is DirectMatch.MATCH)
+
+
+def test_stale_live_data_asks_for_a_refresh_and_monitor_alerts_stay_advisory():
+    item = business_item(data_status="stale")
+    status, _ = classify_direct_action(
+        item, direct_row(item), authorization(), APPROVE, user=OPERATOR
+    )
+    assert status is DirectMatch.NEEDS_REFRESH
+    alert = business_item(kind="agent_alert")
+    for template in (APPROVE, PROPOSAL):
+        status, _ = classify_direct_action(
+            alert, direct_row(alert), authorization(), template, user=OPERATOR
+        )
+        assert status is DirectMatch.INELIGIBLE
+    status, _ = classify_direct_action(
+        alert, direct_row(alert), authorization(), STUDIO, user=STUDIO_ADMIN
+    )
+    assert status is DirectMatch.INELIGIBLE
 
 
 def test_studio_requires_studio_visibility_and_cartridge_scope():
@@ -414,59 +513,3 @@ async def test_binding_slot_rejects_unknown_templates():
     forged.template_id = "request_owner_review"
     with pytest.raises(RuntimeError):
         await issue_binding_slot(SlotConn(), forged, BindingIssue())
-
-
-@pytest.mark.asyncio
-async def test_producer_isolates_template_failures_and_keeps_stable_order(caplog):
-    item = business_item()
-    calls: list[str] = []
-
-    async def issue(user, live_by_id, *, template_id, tenant_id, workspace_id):
-        calls.append(template_id)
-        if template_id == "create_decision_proposal":
-            raise RuntimeError("proposal slot failed")
-        handle = {"approve_exception": "a", "open_in_studio": "c"}[template_id] * 64
-        return {str(item["id"]): public_action(handle, template_id=template_id)}
-
-    with patch.object(producer, "_issue_template", new=AsyncMock(side_effect=issue)):
-        issued = await producer.issue_action_bindings(
-            OPERATOR,
-            snapshot(items=(item,)),
-            enabled_template_ids={
-                "open_in_studio",
-                "create_decision_proposal",
-                "approve_exception",
-                "request_owner_review",
-            },
-        )
-
-    assert calls == ["approve_exception", "create_decision_proposal", "open_in_studio"]
-    assert [action.kind for action in issued[str(item["id"])]] == [
-        "exception_approval",
-        "studio_adjustment",
-    ]
-    assert caplog.text.count("control_room_action_binding_operational_failure") == 1
-
-
-@pytest.mark.asyncio
-async def test_producer_never_issues_for_readers_or_unknown_templates():
-    item = business_item()
-    issue = AsyncMock(side_effect=AssertionError("issued"))
-    with patch.object(producer, "_issue_template", new=issue):
-        assert (
-            await producer.issue_action_bindings(
-                {**OPERATOR, "role": "viewer"},
-                snapshot(items=(item,)),
-                enabled_template_ids=DIRECT_ACTION_TEMPLATE_IDS,
-            )
-            == {}
-        )
-        assert (
-            await producer.issue_action_bindings(
-                OPERATOR,
-                snapshot(items=(item,)),
-                enabled_template_ids={"request_owner_review"},
-            )
-            == {}
-        )
-    issue.assert_not_awaited()

@@ -65,9 +65,13 @@ export function ExperienceExceptions({
                 <div className="flex flex-wrap gap-x-1">
                   <dt>Dato del:</dt>
                   <dd>
-                    <time dateTime={exception.observed_at}>
-                      {formatObservedAt(exception.observed_at)}
-                    </time>
+                    {exception.observed_at ? (
+                      <time dateTime={exception.observed_at}>
+                        {formatObservedAt(exception.observed_at)}
+                      </time>
+                    ) : (
+                      "Sin información"
+                    )}
                   </dd>
                 </div>
               </dl>

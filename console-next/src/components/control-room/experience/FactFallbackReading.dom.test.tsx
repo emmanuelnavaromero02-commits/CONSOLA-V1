@@ -11,7 +11,9 @@ import {
   FALLBACK_READING_LABEL,
   FALLBACK_RECOMMENDATION,
   FactFallbackReading,
+  NEUTRAL_RECOMMENDATION,
   composeFallbackReading,
+  fallbackRecommendation,
 } from "./FactFallbackReading";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,7 +26,30 @@ const fact = {
   stale: false,
   entity_label: "Ana Gómez",
   metric: { name: "Salario mensual", kind: "amount", value: 4200, unit: "USD" },
-  actions: [],
+  actions: [
+    {
+      action_handle: "a".repeat(64),
+      kind: "exception_approval",
+      label: "Aprobar Excepción",
+      enabled: true,
+      requires_approval: false,
+    },
+    {
+      action_handle: "b".repeat(64),
+      kind: "studio_adjustment",
+      label: "Ajustar en Estudio",
+      enabled: true,
+      requires_approval: false,
+    },
+    {
+      action_handle: "c".repeat(64),
+      kind: "decision_proposal",
+      label: "Crear Propuesta de Decisión",
+      enabled: false,
+      requires_approval: false,
+      disabled_reason: "Actualiza los datos antes de continuar.",
+    },
+  ],
 } as ExperienceFactV2;
 
 let container: HTMLDivElement;
@@ -39,6 +64,23 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+});
+
+describe("fallbackRecommendation", () => {
+  it("names only the actions the fact actually carries", () => {
+    expect(fallbackRecommendation(fact)).toBe(FALLBACK_RECOMMENDATION);
+    expect(fallbackRecommendation({ ...fact, actions: [fact.actions[0]] })).toBe(
+      "Revisa la evidencia y decide si aprobar una excepción.",
+    );
+    expect(
+      fallbackRecommendation({ ...fact, actions: [fact.actions[2], fact.actions[1]] }),
+    ).toBe("Revisa la evidencia y decide si ajustarlo en Estudio o crear una propuesta de decisión.");
+  });
+
+  it("stays neutral for readers and facts without actions", () => {
+    expect(fallbackRecommendation({ ...fact, actions: [] })).toBe(NEUTRAL_RECOMMENDATION);
+    expect(NEUTRAL_RECOMMENDATION).not.toMatch(/aprobar|Estudio|propuesta/i);
+  });
 });
 
 describe("FactFallbackReading", () => {

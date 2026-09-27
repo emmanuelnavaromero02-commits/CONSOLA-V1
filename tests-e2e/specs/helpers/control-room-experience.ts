@@ -19,6 +19,7 @@ export interface ExperienceObservation {
 const shellReads = new Set(["/api/me/access", "/auth/me"]);
 export const EXPERIENCE_PATH = "/api/control-room/experience/v2";
 export const FRESHNESS_PATH = "/api/control-room/experience/v2/freshness";
+export const REFRESH_PATH = "/api/control-room/refresh";
 export const liveFreshness = {
   schema_version: "control-room-freshness/v1",
   fingerprint: "e".repeat(64),
@@ -118,6 +119,14 @@ export async function installExperienceMock(
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(liveFreshness),
+      });
+      return;
+    }
+    if (route.request().method() === "POST" && requestUrl.pathname === REFRESH_PATH) {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "refresh internals" }),
       });
       return;
     }

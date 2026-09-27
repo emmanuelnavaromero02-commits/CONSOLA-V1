@@ -166,6 +166,10 @@ async def test_approval_dismisses_records_resolution_event_audit_and_consumes_on
     assert stored["resolution_actor_id"] == 9
     assert stored["resolution_reason"] == REASON
     assert stored["resolution_at"]
+    assert stored["resolution_observation_fingerprint"] == (
+        locked.contract.observation_fingerprint
+    )
+    assert stored["resolution_evidence_digest"] == locked.contract.evidence_digest
     assert resolution[0][1][1:] == (WORKSPACE_ID, "business-1", 9)
     audit.assert_awaited_once()
     audit_kwargs = audit.await_args.kwargs
@@ -276,6 +280,8 @@ async def test_reopen_restores_open_status_strips_resolution_and_audits():
         "resolution_actor_id",
         "resolution_reason",
         "resolution_at",
+        "resolution_observation_fingerprint",
+        "resolution_evidence_digest",
     ):
         assert f"- '{key}'" in reopen[0]
     assert "status = 'dismissed'" in reopen[0]
@@ -295,6 +301,14 @@ async def test_reopen_restores_open_status_strips_resolution_and_audits():
         "x" * 501,
         "motivo con\ncontrol",
         "motivo con " + chr(0x202E) + " bidi",
+        chr(0x200B) * 10,
+        "motivo " + chr(0x200B) * 10,
+        "motivo válido" + chr(0x200E),
+        "motivo válido" + chr(0x200F),
+        "motivo válido" + chr(0x061C),
+        "motivo válido" + chr(0x2028) + "otra línea",
+        "motivo válido" + chr(0x2029),
+        "motivo válido" + chr(0xFEFF),
         12345678901,
         None,
     ),
@@ -417,3 +431,31 @@ async def test_lock_rechecks_template_authorization_and_contract_under_lock():
             LockConn(token=_lock_token(contract), row=row), "create_followup_task"
         )
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reopen_lock_survives_observation_drift_but_not_a_new_approval():
+    item = exception_item()
+    row = exception_row(item)
+    contract = _locked(item, row, "reopen_exception").contract
+    drifted = exception_row(
+        item,
+        metadata_updates={
+            "business_eligibility_fingerprint": "f" * 64,
+            "data_status": "stale",
+        },
+    )
+
+    locked = await _lock(
+        LockConn(token=_lock_token(contract), row=drifted), "reopen_exception"
+    )
+    assert locked.contract.contract_digest == contract.contract_digest
+
+    reapproved = exception_row(
+        item, metadata_updates={"resolution_at": "2026-09-26T08:00:00+00:00"}
+    )
+    with pytest.raises(HTTPException) as exc:
+        await _lock(
+            LockConn(token=_lock_token(contract), row=reapproved), "reopen_exception"
+        )
+    assert exc.value.status_code == 409

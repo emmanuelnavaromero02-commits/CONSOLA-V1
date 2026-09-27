@@ -20,6 +20,7 @@ from app.services.control_room.business_action_authority_repository import (
 )
 from app.services.control_room.business_action_direct_contract import (
     match_direct_action_item,
+    match_reopen_item,
 )
 from app.services.control_room.business_action_preview_capability import (
     install_preview_authority,
@@ -38,12 +39,14 @@ from app.services.control_room.surface_snapshot import collect_surface_snapshot
 from app.services.control_room.business_action_authority_policy import (
     DIRECT_ACTION_TEMPLATE_IDS,
     EXECUTABLE_TEMPLATE_ID,
+    REOPEN_EXCEPTION_TEMPLATE_ID,
     authority_scope,
 )
 from app.services.db_scope import run_with_db_scope
 
 
 _PREVIEW_ONLY = frozenset({EXECUTABLE_TEMPLATE_ID})
+_RECORD_BOUND = frozenset({REOPEN_EXCEPTION_TEMPLATE_ID})
 
 
 @dataclass(frozen=True)
@@ -69,9 +72,10 @@ async def resolve_business_action_handle(
     )
     if not allowed:
         raise _not_found()
-    snapshot = await collect_surface_snapshot(user)
+    needs_live = bool(allowed - _RECORD_BOUND)
+    snapshot = await collect_surface_snapshot(user) if needs_live else None
     enabled = await load_enabled_action_template_ids(user)
-    if any(
+    if snapshot is not None and any(
         binding.binding_id == action_handle
         for item in snapshot.items
         for binding in verified_explicit_action_bindings(item)
@@ -104,31 +108,8 @@ async def resolve_business_action_handle(
         if template_id not in allowed or template_id not in enabled:
             raise _not_found()
         item_id = str(token.get("item_id") or "")
-        item = next(
-            (
-                candidate
-                for candidate in snapshot.items
-                if str(candidate.get("id") or candidate.get("item_id") or "") == item_id
-            ),
-            None,
-        )
-        if item is None:
-            raise _not_found()
         template = ACTION_TEMPLATES[template_id]
-        if template_id == EXECUTABLE_TEMPLATE_ID:
-            rows = await fetch_authoritative_rows(
-                conn,
-                tenant_id=tenant_id,
-                workspace_id=workspace_id,
-                item_ids=(item_id,),
-            )
-            row = rows.get(item_id)
-            contract = (
-                match_authoritative_item(item, row, authorization, template)
-                if row is not None
-                else None
-            )
-        else:
+        if template_id in _RECORD_BOUND:
             rows = await fetch_direct_rows(
                 conn,
                 tenant_id=tenant_id,
@@ -137,10 +118,50 @@ async def resolve_business_action_handle(
             )
             row = rows.get(item_id)
             contract = (
-                match_direct_action_item(item, row, authorization, template, user=user)
+                match_reopen_item(row, authorization, template, user=user)
                 if row is not None
                 else None
             )
+        else:
+            item = next(
+                (
+                    candidate
+                    for candidate in (snapshot.items if snapshot else ())
+                    if str(candidate.get("id") or candidate.get("item_id") or "")
+                    == item_id
+                ),
+                None,
+            )
+            if item is None:
+                raise _not_found()
+            if template_id == EXECUTABLE_TEMPLATE_ID:
+                rows = await fetch_authoritative_rows(
+                    conn,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    item_ids=(item_id,),
+                )
+                row = rows.get(item_id)
+                contract = (
+                    match_authoritative_item(item, row, authorization, template)
+                    if row is not None
+                    else None
+                )
+            else:
+                rows = await fetch_direct_rows(
+                    conn,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    item_ids=(item_id,),
+                )
+                row = rows.get(item_id)
+                contract = (
+                    match_direct_action_item(
+                        item, row, authorization, template, user=user
+                    )
+                    if row is not None
+                    else None
+                )
         expected = {
             "binding_digest": contract.binding_digest if contract else "",
             "evidence_digest": contract.evidence_digest if contract else "",

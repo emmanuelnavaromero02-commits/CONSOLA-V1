@@ -54,7 +54,6 @@ class ExperienceActionPreviewResponse(_StrictModel):
 
 
 class ExperienceNarrative(_StrictModel):
-
     status: Literal["ready", "template"]
     explanation: str = Field(min_length=1, max_length=600)
     recommendation: str = Field(min_length=1, max_length=600)
@@ -97,7 +96,7 @@ class ExperienceSectionV2(_StrictModel):
 class ExperienceExceptionV2(_StrictModel):
     title: str = Field(min_length=1, max_length=240)
     entity_label: str | None = Field(default=None, max_length=240)
-    observed_at: datetime
+    observed_at: datetime | None = None
     approved_at: datetime | None = None
     reason: str | None = Field(default=None, min_length=1, max_length=500)
     approved_by_you: bool

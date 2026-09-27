@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 
 from app.dependencies import require_authenticated
+from app.schemas.control_room_live import ControlRoomRefreshResponse
 from app.schemas.control_room_direct_actions import (
     DecisionProposalRequest,
     DecisionProposalResponse,
@@ -23,9 +24,13 @@ from app.services.control_room.business_exception_approval import (
     approve_exception,
     reopen_exception,
 )
+from app.services.control_room.business_state_refresh import (
+    refresh_control_room_state,
+)
 from app.services.control_room.business_studio_target import resolve_studio_target
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
+from app.services.request_rate_limits import rate_limit
 
 
 router = APIRouter(tags=["Control Room"])
@@ -33,6 +38,28 @@ router = APIRouter(tags=["Control Room"])
 
 def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
+
+
+@router.post(
+    "/refresh",
+    response_model=ControlRoomRefreshResponse,
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+async def control_room_refresh(
+    request: Request,
+    user: dict = Depends(require_authenticated),
+) -> ControlRoomRefreshResponse:
+    await rate_limit(request, "/api/control-room/refresh", str(user.get("id") or ""))
+    result = await refresh_control_room_state(
+        user,
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    _control_room_cache_invalidate(user)
+    return result
 
 
 @router.post(

@@ -148,7 +148,7 @@ const experienceExceptionSchema = z
   .object({
     title: narrativeTextSchema(1, 240),
     entity_label: narrativeTextSchema(0, 240).optional(),
-    observed_at: dateTimeSchema,
+    observed_at: dateTimeSchema.optional(),
     approved_at: dateTimeSchema.optional(),
     reason: narrativeTextSchema(1, 500).optional(),
     approved_by_you: z.boolean(),
@@ -204,6 +204,14 @@ export const decisionProposalResponseSchema = z
   })
   .strict();
 
+export const controlRoomRefreshResponseSchema = z
+  .object({
+    status: z.literal("refreshed"),
+    refreshed_at: dateTimeSchema,
+    message: z.string().min(1).max(240),
+  })
+  .strict();
+
 export const studioTargetResponseSchema = z
   .object({
     action_handle: experienceActionHandleSchema,
@@ -241,6 +249,7 @@ export type ExceptionApprovalResponse = z.infer<typeof exceptionApprovalResponse
 export type ExceptionReopenResponse = z.infer<typeof exceptionReopenResponseSchema>;
 export type DecisionProposalResponse = z.infer<typeof decisionProposalResponseSchema>;
 export type StudioTargetResponse = z.infer<typeof studioTargetResponseSchema>;
+export type ControlRoomRefreshResponse = z.infer<typeof controlRoomRefreshResponseSchema>;
 export type ExperienceActionPreviewResponse = z.infer<
   typeof experienceActionPreviewResponseSchema
 >;

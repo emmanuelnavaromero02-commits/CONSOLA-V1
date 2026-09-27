@@ -16,22 +16,32 @@ from app.services.control_room.business_access import (
 from app.services.control_room.business_action_direct_contract import (
     EXCEPTION_RESOLUTION,
 )
-from app.services.control_room.surface_snapshot import SurfaceSnapshot
+from app.services.control_room.business_cartridge_scope import (
+    allowed_business_cartridges,
+)
 from app.services.db_scope import run_with_db_scope
 
 
 _LOGGER = logging.getLogger(__name__)
 _READ_FAILURE = "control_room_exception_resolution_read_failure"
-MAX_EXCEPTION_ROWS = 200
-EXCEPTION_ROWS_SQL = """
-SELECT item_id, metadata
-  FROM control_room_items
- WHERE workspace_id = $1::uuid
-   AND tenant_id = $2::uuid
-   AND item_id = ANY($3::text[])
-   AND status = 'dismissed'
-   AND ($4::bigint IS NULL OR owner_user_id = $4::bigint)
- ORDER BY item_id
+MAX_APPROVED_EXCEPTIONS = 20
+APPROVED_EXCEPTIONS_SQL = """
+SELECT item.tenant_id::text AS tenant_id,
+       item.workspace_id::text AS workspace_id,
+       item.owner_user_id, item.item_id, item.cartridge_id, item.domain,
+       item.source_dataset, item.item_kind, item.title, item.severity,
+       item.status, item.decision_id, item.entity_kind, item.entity_id,
+       item.entity_label, item.anomaly_type, item.metadata,
+       item.first_seen_at, item.last_seen_at, item.resolved_at,
+       item.dismissed_at, item.selected_option_id, item.execution_status
+  FROM control_room_items AS item
+ WHERE item.workspace_id = $1::uuid
+   AND item.tenant_id = $2::uuid
+   AND item.status = 'dismissed'
+   AND item.metadata->>'resolution' = 'exception_approved'
+   AND ($3::bigint IS NULL OR item.owner_user_id = $3::bigint)
+   AND ($4::text[] IS NULL OR item.cartridge_id = ANY($4::text[]))
+ ORDER BY item.metadata->>'resolution_at' DESC, item.item_id
  LIMIT $5
 """
 
@@ -41,6 +51,13 @@ class ExceptionResolution:
     approved_at: datetime | None
     reason: str | None
     actor_user_id: int | None
+
+
+@dataclass(frozen=True, repr=False)
+class ApprovedException:
+    item_id: str
+    row: Mapping[str, Any]
+    resolution: ExceptionResolution
 
 
 def _metadata(value: Any) -> Mapping[str, Any]:
@@ -75,37 +92,21 @@ def exception_resolution(metadata: Mapping[str, Any]) -> ExceptionResolution | N
     )
 
 
-def _dismissed_item_ids(snapshot: SurfaceSnapshot) -> list[str]:
-    return sorted(
-        {
-            str(item.get("id") or item.get("item_id") or "").strip()
-            for item in snapshot.items
-            if str(item.get("status") or "").strip().lower() == "dismissed"
-        }
-        - {""}
-    )[:MAX_EXCEPTION_ROWS]
-
-
-async def load_exception_resolutions(
-    user: Mapping[str, Any], snapshot: SurfaceSnapshot
-) -> dict[str, ExceptionResolution]:
-    item_ids = _dismissed_item_ids(snapshot)
-    if not item_ids:
-        return {}
+async def load_approved_exceptions(
+    user: Mapping[str, Any],
+) -> list[ApprovedException]:
     owner_id = None if can_read_workspace_wide(user) else owner_scope_id(user) or 0
-    tenant_id = snapshot.scope.tenant_id
-    workspace_id = snapshot.scope.workspace_id
+    allowed = allowed_business_cartridges(user)
+    cartridges = None if allowed is None else sorted({*allowed, "platform"})
 
-    async def _read(conn: Any, scoped_tenant: str | None, scoped_workspace: str):
-        if scoped_tenant != tenant_id or scoped_workspace != workspace_id:
-            return []
+    async def _read(conn: Any, tenant_id: str | None, workspace_id: str) -> Any:
         return await conn.fetch(
-            EXCEPTION_ROWS_SQL,
+            APPROVED_EXCEPTIONS_SQL,
             workspace_id,
-            tenant_id,
-            item_ids,
+            str(tenant_id or ""),
             owner_id,
-            MAX_EXCEPTION_ROWS,
+            cartridges,
+            MAX_APPROVED_EXCEPTIONS,
         )
 
     try:
@@ -116,18 +117,25 @@ async def load_exception_resolutions(
             _READ_FAILURE,
             extra={"event": _READ_FAILURE, "outcome": "exceptions_omitted"},
         )
-        return {}
-    resolutions: dict[str, ExceptionResolution] = {}
-    for row in rows or ():
-        resolution = exception_resolution(_metadata(row["metadata"]))
-        if resolution is not None:
-            resolutions[str(row["item_id"])] = resolution
-    return resolutions
+        return []
+    approved: list[ApprovedException] = []
+    for raw in rows or ():
+        row = dict(raw)
+        if str(row.get("status") or "").strip().lower() != "dismissed":
+            continue
+        resolution = exception_resolution(_metadata(row.get("metadata")))
+        item_id = str(row.get("item_id") or "").strip()
+        if resolution is None or not item_id:
+            continue
+        approved.append(ApprovedException(item_id, row, resolution))
+    return approved[:MAX_APPROVED_EXCEPTIONS]
 
 
 __all__ = (
-    "EXCEPTION_ROWS_SQL",
+    "APPROVED_EXCEPTIONS_SQL",
+    "ApprovedException",
     "ExceptionResolution",
+    "MAX_APPROVED_EXCEPTIONS",
     "exception_resolution",
-    "load_exception_resolutions",
+    "load_approved_exceptions",
 )

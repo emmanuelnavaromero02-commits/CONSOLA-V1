@@ -37,13 +37,20 @@ export const REASON_LIMITS: Partial<Record<ExperienceActionKind, { min: number; 
   exception_reopen: { min: 3, max: 500 },
 };
 
+const INVISIBLE_OR_CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
 export function normalizeReason(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
+  return value.replace(/[\t\n\r ]+/g, " ").trim();
+}
+
+export function reasonHasHiddenCharacters(value: string): boolean {
+  return INVISIBLE_OR_CONTROL.test(value.replace(/[\t\n\r]/g, " "));
 }
 
 export function reasonIsValid(kind: ExperienceActionKind, value: string): boolean {
   const limits = REASON_LIMITS[kind];
   if (!limits) return true;
+  if (reasonHasHiddenCharacters(value)) return false;
   const length = Array.from(normalizeReason(value)).length;
   return length >= limits.min && length <= limits.max;
 }
