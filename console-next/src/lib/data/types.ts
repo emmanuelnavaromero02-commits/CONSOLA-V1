@@ -92,6 +92,7 @@ export interface CatalogFilters {
 export interface AutoProfileInput {
   cartridge?: string;
   include_sources?: boolean;
+  since?: string;
 }
 
 export interface AutoProfileStatus {

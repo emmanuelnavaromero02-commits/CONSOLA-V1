@@ -8,7 +8,9 @@ import type { AutoProfileStatus } from "@/lib/data/types";
 
 export const AUTO_CATALOG_DEBOUNCE_MS = 800;
 export const AUTO_CATALOG_POLL_MS = 2000;
-export const AUTO_CATALOG_MAX_POLLS = 5;
+export const AUTO_CATALOG_MAX_POLL_MS = 15_000;
+export const AUTO_CATALOG_MAX_WAIT_MS = 180_000;
+export const AUTO_CATALOG_MAX_IDLE_POLLS = 6;
 
 interface AutoCatalogOptions {
   cartridge?: string | null;
@@ -17,9 +19,11 @@ interface AutoCatalogOptions {
 
 /**
  * Zero-click cataloguing: once per mount (and per filter) and only while the
- * tab is visible, ask the console to profile whatever is still undocumented.
- * Failures are silent on purpose: the catalog stays usable without the
- * Copilot, and nothing here blocks rendering.
+ * tab is visible, ask the console to queue whatever is still undocumented,
+ * then follow the background work with a backing-off poll until nothing is
+ * pending (three minutes at most, or six polls without progress). Every new
+ * annotation epoch refreshes the catalog query. Failures are silent on
+ * purpose: the catalog stays usable without the Copilot.
  */
 export function useAutoCatalog({ cartridge, includeSources = false }: AutoCatalogOptions = {}) {
   const queryClient = useQueryClient();
@@ -31,25 +35,42 @@ export function useAutoCatalog({ cartridge, includeSources = false }: AutoCatalo
     if (fired.current === key) return undefined;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let polls = 0;
+    let since: string | undefined;
+    let lastEpoch: string | null | undefined;
     let lastPending: number | null = null;
+    let lastProcessed = 0;
+    let idlePolls = 0;
+    let delay = AUTO_CATALOG_POLL_MS;
+    let startedAt = 0;
 
     const run = async () => {
       try {
         const result = await autoProfileCatalog({
           cartridge: cartridge || undefined,
           include_sources: includeSources,
+          since,
         });
         if (cancelled) return;
         setStatus(result);
-        const progressed = result.processed > 0 || (lastPending !== null && result.pending < lastPending);
-        if (progressed) {
+        if (since === undefined) since = result.annotation_epoch || "start";
+        const epoch = result.annotation_epoch ?? null;
+        const epochChanged = lastEpoch !== undefined && epoch !== lastEpoch;
+        if (epochChanged || result.processed > lastProcessed) {
           void queryClient.invalidateQueries({ queryKey: ["data", "catalog"] });
         }
+        const progressed = epochChanged || (lastPending !== null && result.pending !== lastPending);
+        idlePolls = progressed ? 0 : idlePolls + 1;
+        lastEpoch = epoch;
         lastPending = result.pending;
-        if (result.pending > 0 && polls < AUTO_CATALOG_MAX_POLLS) {
-          polls += 1;
-          timer = setTimeout(() => void run(), AUTO_CATALOG_POLL_MS);
+        lastProcessed = Math.max(lastProcessed, result.processed);
+        const elapsed = Date.now() - startedAt;
+        if (
+          result.pending > 0
+          && elapsed < AUTO_CATALOG_MAX_WAIT_MS
+          && idlePolls < AUTO_CATALOG_MAX_IDLE_POLLS
+        ) {
+          timer = setTimeout(() => void run(), delay);
+          delay = Math.min(Math.round(delay * 1.5), AUTO_CATALOG_MAX_POLL_MS);
         }
       } catch {
         // The catalog renders without the Copilot; nothing to surface.
@@ -61,6 +82,7 @@ export function useAutoCatalog({ cartridge, includeSources = false }: AutoCatalo
       if (cancelled || !debounced || fired.current === key) return;
       if (typeof document !== "undefined" && document.hidden) return;
       fired.current = key;
+      startedAt = Date.now();
       void run();
     };
 

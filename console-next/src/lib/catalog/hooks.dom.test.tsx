@@ -11,7 +11,14 @@ const client = vi.hoisted(() => ({ autoProfileCatalog: vi.fn() }));
 
 vi.mock("@/lib/data/client", () => client);
 
-import { AUTO_CATALOG_DEBOUNCE_MS, AUTO_CATALOG_POLL_MS, useAutoCatalog } from "./hooks";
+import {
+  AUTO_CATALOG_DEBOUNCE_MS,
+  AUTO_CATALOG_MAX_IDLE_POLLS,
+  AUTO_CATALOG_MAX_POLL_MS,
+  AUTO_CATALOG_MAX_WAIT_MS,
+  AUTO_CATALOG_POLL_MS,
+  useAutoCatalog,
+} from "./hooks";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -77,15 +84,68 @@ describe("useAutoCatalog", () => {
     expect(client.autoProfileCatalog).toHaveBeenCalledTimes(1);
   });
 
-  it("re-polls every two seconds while work is pending, at most five times", async () => {
-    client.autoProfileCatalog.mockResolvedValue(status({ status: "working", pending: 3, stale: 3 }));
+  it("follows the background work until nothing is pending, refreshing on every new epoch", async () => {
+    const polls = [
+      status({ status: "working", pending: 9, stale: 9, annotation_epoch: "e0" }),
+      ...Array.from({ length: 9 }, (_, index) =>
+        status({
+          status: index === 8 ? "ready" : "working",
+          pending: 8 - index,
+          processed: index + 1,
+          annotation_epoch: `e${index + 1}`,
+        }),
+      ),
+    ];
+    for (const poll of polls) client.autoProfileCatalog.mockResolvedValueOnce(poll);
+    await render(<Probe cartridge="sap_successfactors" />);
+    await advance(AUTO_CATALOG_DEBOUNCE_MS);
+    await advance(AUTO_CATALOG_MAX_WAIT_MS);
+    expect(client.autoProfileCatalog).toHaveBeenCalledTimes(10);
+    expect(client.autoProfileCatalog.mock.calls[0][0]).toEqual({
+      cartridge: "sap_successfactors",
+      include_sources: false,
+      since: undefined,
+    });
+    for (const call of client.autoProfileCatalog.mock.calls.slice(1)) {
+      expect(call[0].since).toBe("e0");
+    }
+    expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(9);
+    expect(latest()?.processed).toBe(9);
+    expect(latest()?.pending).toBe(0);
+  });
+
+  it("backs off between polls up to the cap", async () => {
+    client.autoProfileCatalog.mockImplementation(async () => {
+      const call = client.autoProfileCatalog.mock.calls.length;
+      return status({ status: "working", pending: 50 - call, annotation_epoch: `e${call}` });
+    });
     await render(<Probe />);
     await advance(AUTO_CATALOG_DEBOUNCE_MS);
-    for (let index = 0; index < 8; index += 1) {
-      await advance(AUTO_CATALOG_POLL_MS);
-    }
-    expect(client.autoProfileCatalog).toHaveBeenCalledTimes(6);
-    expect(client.autoProfileCatalog).toHaveBeenCalledWith({ cartridge: undefined, include_sources: false });
+    expect(client.autoProfileCatalog).toHaveBeenCalledTimes(1);
+    await advance(AUTO_CATALOG_POLL_MS);
+    expect(client.autoProfileCatalog).toHaveBeenCalledTimes(2);
+    await advance(AUTO_CATALOG_POLL_MS);
+    expect(client.autoProfileCatalog).toHaveBeenCalledTimes(2);
+    await advance(AUTO_CATALOG_POLL_MS * 1.5 - AUTO_CATALOG_POLL_MS);
+    expect(client.autoProfileCatalog).toHaveBeenCalledTimes(3);
+    // The poll that starts just before the three-minute limit may still
+    // schedule one last follow-up; after that the hook stops for good.
+    await advance(AUTO_CATALOG_MAX_WAIT_MS + AUTO_CATALOG_MAX_POLL_MS);
+    const calls = client.autoProfileCatalog.mock.calls.length;
+    expect(calls).toBeLessThan(40);
+    await advance(AUTO_CATALOG_MAX_POLL_MS * 4);
+    expect(client.autoProfileCatalog.mock.calls.length).toBe(calls);
+  });
+
+  it("gives up after several polls without progress", async () => {
+    client.autoProfileCatalog.mockResolvedValue(
+      status({ status: "working", pending: 3, stale: 3, annotation_epoch: "same" }),
+    );
+    await render(<Probe />);
+    await advance(AUTO_CATALOG_DEBOUNCE_MS);
+    await advance(AUTO_CATALOG_MAX_WAIT_MS);
+    expect(client.autoProfileCatalog).toHaveBeenCalledTimes(AUTO_CATALOG_MAX_IDLE_POLLS);
+    expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
   });
 
   it("waits while the tab is hidden and fires when it becomes visible", async () => {

@@ -62,6 +62,7 @@ export async function autoProfileCatalog(input: AutoProfileInput = {}): Promise<
   const body: AutoProfileInput = {};
   if (input.cartridge?.trim()) body.cartridge = input.cartridge.trim();
   if (input.include_sources) body.include_sources = true;
+  if (input.since) body.since = input.since;
   const { data } = await api.post<AutoProfileStatus>("/api/catalog/auto-profile", body);
   return data;
 }
