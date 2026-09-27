@@ -2090,9 +2090,11 @@ class DuckDBEngine:
                         """
                         INSERT INTO data_catalog
                             (dataset, layer, cartridge, column_name, data_type, description,
+                             description_origin,
                              null_rate, distinct_count, min_value, max_value, profiled_at,
                              tenant_id, workspace_id, scope_status, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s,
+                                CASE WHEN %s <> '' THEN 'manual' ELSE NULL END,
                                 %s, %s, %s, %s, CASE WHEN %s THEN NOW() ELSE NULL END,
                                 %s::uuid, %s::uuid, 'scoped', NOW())
                         ON CONFLICT (workspace_id, dataset, column_name) WHERE workspace_id IS NOT NULL
@@ -2100,9 +2102,15 @@ class DuckDBEngine:
                             SET data_type   = EXCLUDED.data_type,
                                 layer       = EXCLUDED.layer,
                                 cartridge   = EXCLUDED.cartridge,
+                                -- A mapping description is authored in the dataset
+                                -- definition: it is manual and outranks the Copilot.
                                 description = CASE
                                     WHEN EXCLUDED.description != '' THEN EXCLUDED.description
                                     ELSE data_catalog.description
+                                END,
+                                description_origin = CASE
+                                    WHEN EXCLUDED.description != '' THEN 'manual'
+                                    ELSE data_catalog.description_origin
                                 END,
                                 -- keep prior stats when this run did not profile
                                 null_rate      = CASE WHEN EXCLUDED.profiled_at IS NOT NULL THEN EXCLUDED.null_rate      ELSE data_catalog.null_rate      END,
@@ -2120,6 +2128,7 @@ class DuckDBEngine:
                             cartridge,
                             col,
                             field["type"],
+                            desc,
                             desc,
                             null_rate,
                             distinct_count,

@@ -1,0 +1,264 @@
+{
+  "schema_version": "catalog-human-types/v1",
+  "labels": {
+    "identifier": "Identificador",
+    "text": "Texto",
+    "date": "Fecha",
+    "datetime": "Fecha y hora",
+    "time": "Hora",
+    "money": "Monto Monetario",
+    "number": "Número",
+    "integer": "Número entero",
+    "percent": "Porcentaje",
+    "boolean": "Sí/No",
+    "complex": "Lista o estructura"
+  },
+  "cases": [
+    {
+      "raw_type": "BOOLEAN",
+      "column": "is_active",
+      "is_key": false,
+      "semantic_type": "boolean"
+    },
+    {
+      "raw_type": "boolean",
+      "column": "activo",
+      "is_key": false,
+      "semantic_type": "boolean"
+    },
+    {
+      "raw_type": "DATE",
+      "column": "hireDate",
+      "is_key": false,
+      "semantic_type": "date"
+    },
+    {
+      "raw_type": "date",
+      "column": "fecha_ingreso",
+      "is_key": false,
+      "semantic_type": "date"
+    },
+    {
+      "raw_type": "TIMESTAMP",
+      "column": "created_at",
+      "is_key": false,
+      "semantic_type": "datetime"
+    },
+    {
+      "raw_type": "TIMESTAMP WITH TIME ZONE",
+      "column": "lastModifiedDateTime",
+      "is_key": false,
+      "semantic_type": "datetime"
+    },
+    {
+      "raw_type": "timestamp with time zone",
+      "column": "updated_at",
+      "is_key": false,
+      "semantic_type": "datetime"
+    },
+    {
+      "raw_type": "TIMESTAMP_NS",
+      "column": "event_ts",
+      "is_key": false,
+      "semantic_type": "datetime"
+    },
+    {
+      "raw_type": "DATETIME",
+      "column": "posted",
+      "is_key": false,
+      "semantic_type": "datetime"
+    },
+    {
+      "raw_type": "TIME",
+      "column": "start_time",
+      "is_key": false,
+      "semantic_type": "time"
+    },
+    {
+      "raw_type": "VARCHAR[]",
+      "column": "tags",
+      "is_key": false,
+      "semantic_type": "complex"
+    },
+    {
+      "raw_type": "STRUCT(city VARCHAR, zip VARCHAR)",
+      "column": "address_struct",
+      "is_key": false,
+      "semantic_type": "complex"
+    },
+    {
+      "raw_type": "MAP(VARCHAR, INTEGER)",
+      "column": "attributes",
+      "is_key": false,
+      "semantic_type": "complex"
+    },
+    {
+      "raw_type": "JSON",
+      "column": "payload",
+      "is_key": false,
+      "semantic_type": "complex"
+    },
+    {
+      "raw_type": "jsonb",
+      "column": "metadata",
+      "is_key": false,
+      "semantic_type": "complex"
+    },
+    {
+      "raw_type": "BIGINT",
+      "column": "employee_id",
+      "is_key": false,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "INTEGER",
+      "column": "pernr",
+      "is_key": false,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "integer",
+      "column": "count",
+      "is_key": true,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "DECIMAL(18,0)",
+      "column": "company_code",
+      "is_key": false,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "DECIMAL(18,2)",
+      "column": "salary_amount",
+      "is_key": false,
+      "semantic_type": "money"
+    },
+    {
+      "raw_type": "DOUBLE",
+      "column": "sueldo",
+      "is_key": false,
+      "semantic_type": "money"
+    },
+    {
+      "raw_type": "DOUBLE",
+      "column": "payCompValue",
+      "is_key": false,
+      "semantic_type": "money"
+    },
+    {
+      "raw_type": "numeric",
+      "column": "importe",
+      "is_key": false,
+      "semantic_type": "money"
+    },
+    {
+      "raw_type": "DOUBLE",
+      "column": "total_value",
+      "is_key": false,
+      "semantic_type": "money"
+    },
+    {
+      "raw_type": "INTEGER",
+      "column": "total_employees",
+      "is_key": false,
+      "semantic_type": "integer"
+    },
+    {
+      "raw_type": "INTEGER",
+      "column": "headcount",
+      "is_key": false,
+      "semantic_type": "integer"
+    },
+    {
+      "raw_type": "DOUBLE",
+      "column": "turnover_rate",
+      "is_key": false,
+      "semantic_type": "percent"
+    },
+    {
+      "raw_type": "DECIMAL(5,2)",
+      "column": "porcentaje_avance",
+      "is_key": false,
+      "semantic_type": "percent"
+    },
+    {
+      "raw_type": "DOUBLE",
+      "column": "score",
+      "is_key": false,
+      "semantic_type": "number"
+    },
+    {
+      "raw_type": "REAL",
+      "column": "weight",
+      "is_key": false,
+      "semantic_type": "number"
+    },
+    {
+      "raw_type": "HUGEINT",
+      "column": "events",
+      "is_key": false,
+      "semantic_type": "integer"
+    },
+    {
+      "raw_type": "VARCHAR",
+      "column": "externalCode",
+      "is_key": false,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "VARCHAR",
+      "column": "personIdExternal",
+      "is_key": false,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "character varying",
+      "column": "userId",
+      "is_key": false,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "UUID",
+      "column": "entity_uuid",
+      "is_key": false,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "VARCHAR",
+      "column": "firstName",
+      "is_key": false,
+      "semantic_type": "text"
+    },
+    {
+      "raw_type": "text",
+      "column": "department_name",
+      "is_key": false,
+      "semantic_type": "text"
+    },
+    {
+      "raw_type": "VARCHAR",
+      "column": "department",
+      "is_key": true,
+      "semantic_type": "identifier"
+    },
+    {
+      "raw_type": "VARCHAR",
+      "column": "status",
+      "is_key": false,
+      "semantic_type": "text"
+    },
+    {
+      "raw_type": "BLOB",
+      "column": "raw_bytes",
+      "is_key": false,
+      "semantic_type": "text"
+    },
+    {
+      "raw_type": "",
+      "column": "notes",
+      "is_key": false,
+      "semantic_type": "text"
+    }
+  ]
+}
