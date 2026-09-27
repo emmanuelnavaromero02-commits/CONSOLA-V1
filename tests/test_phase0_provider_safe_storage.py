@@ -395,7 +395,7 @@ def test_cartridge_duckdb_setup_binds_secret_and_returns_safe_error(cartridge):
     sentinel = "SECRET-GCS-HMAC-SENTINEL"
     env = {
         **os.environ,
-        "PYTHONPATH": str(ROOT / "cartridges" / cartridge),
+        "PYTHONPATH": os.pathsep.join((str(ROOT / "cartridges" / cartridge), str(ROOT))),
         "LAKEHOUSE_PROVIDER": "gcs",
         "LAKEHOUSE_ENDPOINT": "storage.googleapis.com",
         "GCS_BUCKET": "omega-gcs",
@@ -464,7 +464,7 @@ def test_cartridge_s3_role_only_uses_imdsv2_and_never_creates_bucket(cartridge):
     }
     env.update(
         {
-            "PYTHONPATH": str(ROOT / "cartridges" / cartridge),
+            "PYTHONPATH": os.pathsep.join((str(ROOT / "cartridges" / cartridge), str(ROOT))),
             "LAKEHOUSE_PROVIDER": "s3",
             "LAKEHOUSE_ENDPOINT": "s3.us-east-1.amazonaws.com",
             "LAKEHOUSE_BUCKET": "omega-role-bucket",
@@ -527,7 +527,7 @@ minio_client.ensure_bucket_exists(settings.minio_bucket)
 def test_cartridge_s3_static_session_uses_only_native_aws_pair(cartridge):
     env = {
         **os.environ,
-        "PYTHONPATH": str(ROOT / "cartridges" / cartridge),
+        "PYTHONPATH": os.pathsep.join((str(ROOT / "cartridges" / cartridge), str(ROOT))),
         "LAKEHOUSE_PROVIDER": "s3",
         "LAKEHOUSE_ENDPOINT": "s3.us-east-1.amazonaws.com",
         "S3_BUCKET_NAME": "omega-static-bucket",
@@ -601,7 +601,7 @@ def test_cartridge_duckdb_s3_role_loads_preinstalled_aws_extension(cartridge):
     }
     env.update(
         {
-            "PYTHONPATH": str(ROOT / "cartridges" / cartridge),
+            "PYTHONPATH": os.pathsep.join((str(ROOT / "cartridges" / cartridge), str(ROOT))),
             "LAKEHOUSE_PROVIDER": "s3",
             "LAKEHOUSE_ENDPOINT": "s3.us-east-1.amazonaws.com",
             "S3_BUCKET_NAME": "omega-role-bucket",

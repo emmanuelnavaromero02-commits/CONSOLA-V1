@@ -165,3 +165,176 @@ def test_live_legacy_rows_and_templates_require_the_platform_flag(postgres_with_
     assert result["template_without_flag"] == "denied"
     assert result["template_rows"] == 1
     assert result["template_read_without_flag"] == 1
+
+
+def _role_dsn(dsn: str, role: str, password: str) -> str:
+    return dsn.replace("postgres:test_postgres_password@", f"{role}:{password}@")
+
+
+def _load_service_module(monkeypatch, service: str, module: str, env: dict[str, str] | None = None):
+    import importlib
+    import sys
+
+    for name in [n for n in sys.modules if n == "app" or n.startswith("app.")]:
+        del sys.modules[name]
+    for key, value in (env or {}).items():
+        monkeypatch.setenv(key, value)
+    services = tuple(str(REPO / name) for name in ("console", "mcp-infra", "refinement"))
+    monkeypatch.setattr(sys, "path", [str(REPO / service), *(p for p in sys.path if p not in services)])
+    return importlib.import_module(module)
+
+
+def test_live_console_startup_seeds_write_platform_templates_under_the_flag(
+    postgres_with_real_init_schema, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from app.domains.system.lifespan import run_packaged_startup_seeds
+    from app.services import seed_dag_sources, seed_packaged_apps, seed_packaged_datasets, seed_packaged_hints
+
+    for module in (seed_packaged_apps, seed_packaged_datasets, seed_packaged_hints):
+        monkeypatch.setattr(module, "_REGISTRY", REPO / "cartridges")
+    monkeypatch.setattr(seed_dag_sources, "_DAG_SEARCH_PATHS", [REPO / "cartridges"])
+
+    async def scenario() -> tuple[list, int, int]:
+        pool = await asyncpg.create_pool(
+            _role_dsn(postgres_with_real_init_schema, "omega_console", OMEGA_CONSOLE_PASSWORD),
+            min_size=1,
+            max_size=2,
+        )
+        failures: list[tuple[str, str]] = []
+
+        async def get_db_pool():
+            return pool
+
+        async def run_startup_seed(_app, component, seed):
+            try:
+                await seed()
+            except Exception as exc:  # noqa: BLE001
+                failures.append((component, repr(exc)))
+
+        try:
+            for _ in range(2):
+                await run_packaged_startup_seeds(
+                    SimpleNamespace(), get_db_pool=get_db_pool, run_startup_seed=run_startup_seed
+                )
+            async with pool.acquire() as conn:
+                unflagged = await conn.fetchval(
+                    "SELECT count(*) FROM analytic_apps WHERE scope_status = 'platform_template'"
+                )
+        finally:
+            await pool.close()
+        admin = await asyncpg.connect(postgres_with_real_init_schema)
+        try:
+            seeded = await admin.fetchval(
+                "SELECT count(*) FROM analytic_apps WHERE scope_status = 'platform_template'"
+            )
+        finally:
+            await admin.close()
+        return failures, seeded, unflagged
+
+    failures, seeded, unflagged = asyncio.run(scenario())
+    packaged = len(list(REPO.glob("cartridges/*/apps/*.html")))
+    assert failures == []
+    assert seeded == packaged > 0
+    assert unflagged == seeded
+
+
+def _seed_legacy_rows(dsn: str, suffix: str) -> tuple[str, str, str, str]:
+    async def seed() -> tuple[str, str, str, str]:
+        admin = await asyncpg.connect(dsn)
+        try:
+            tenant = await admin.fetchval(
+                "INSERT INTO tenants (name, slug) VALUES ($1, $1) RETURNING id::text", f"combo-{suffix}"
+            )
+            workspace = await admin.fetchval(
+                "INSERT INTO workspaces (tenant_id, name) VALUES ($1::uuid, $2) RETURNING id::text",
+                tenant,
+                f"combo-{suffix}",
+            )
+            await admin.execute(
+                """INSERT INTO extraction_runs (run_id, cartridge_id, status, scope_status, tenant_id, workspace_id)
+                   VALUES ($1, 'sap_b1', 'failed', 'legacy_unscoped', NULL, NULL),
+                          ($2, 'sap_b1', 'completed', 'scoped', $3::uuid, $4::uuid)""",
+                f"legacy-{suffix}",
+                f"scoped-{suffix}",
+                tenant,
+                workspace,
+            )
+            await admin.execute(
+                """INSERT INTO data_catalog (dataset, layer, cartridge, column_name, tenant_id, workspace_id, scope_status)
+                   VALUES ($1, 'silver', 'sap_b1', 'legacy_col', NULL, NULL, 'legacy_unscoped'),
+                          ($1, 'silver', 'sap_b1', 'scoped_col', $2::uuid, $3::uuid, 'scoped')""",
+                f"combo_{suffix}",
+                tenant,
+                workspace,
+            )
+        finally:
+            await admin.close()
+        return tenant, workspace, f"legacy-{suffix}", f"scoped-{suffix}"
+
+    return asyncio.run(seed())
+
+
+def test_live_mcp_infra_and_refinement_unscoped_admin_paths_still_read_legacy_rows(
+    postgres_with_real_init_schema, monkeypatch
+):
+    import psycopg2
+
+    suffix = uuid.uuid4().hex[:10]
+    tenant, workspace, legacy, scoped = _seed_legacy_rows(postgres_with_real_init_schema, suffix)
+    pipeline = _load_service_module(
+        monkeypatch,
+        "mcp-infra",
+        "app.tools.pipeline",
+        {
+            "AIRFLOW_URL": "http://airflow:8080/airflow",
+            "AIRFLOW_USER": "admin",
+            "AIRFLOW_PASSWORD": "admin",
+            "PG_PASSWORD": "postgres",
+            "SUPERSET_USER": "admin",
+            "SUPERSET_PASSWORD": "admin",
+        },
+    )
+
+    def catalog(role: str, password: str, apply) -> set[str]:
+        with psycopg2.connect(_role_dsn(postgres_with_real_init_schema, role, password)) as conn:
+            with conn.cursor() as cur:
+                apply(cur)
+                cur.execute("SELECT column_name FROM data_catalog WHERE dataset = %s", (f"combo_{suffix}",))
+                return {row[0] for row in cur.fetchall()}
+
+    def runs(role: str, password: str, apply) -> set[str]:
+        with psycopg2.connect(_role_dsn(postgres_with_real_init_schema, role, password)) as conn:
+            with conn.cursor() as cur:
+                apply(cur)
+                cur.execute("SELECT run_id FROM extraction_runs WHERE run_id IN (%s, %s)", (legacy, scoped))
+                return {row[0] for row in cur.fetchall()}
+
+    mcp = ("omega_mcp_infra", "test_omega_mcp_infra_password")
+    assert catalog(*mcp, lambda cur: pipeline._set_db_scope(cur, None, None)) == {"legacy_col"}
+    assert catalog(*mcp, lambda cur: pipeline._set_db_scope(cur, tenant, workspace)) == {"scoped_col"}
+    assert catalog(*mcp, lambda cur: None) == set()
+    cartridges = _load_service_module(monkeypatch, "mcp-infra", "app.tools.cartridges")
+    admin_ctx = {"trusted": True, "role": "admin", "allowed_cartridges": ["*"]}
+    scoped_ctx = {"trusted": True, "tenant_id": tenant, "workspace_id": workspace}
+    assert catalog(*mcp, lambda cur: cartridges._set_pg_scope(cur, admin_ctx)) == {"legacy_col"}
+    assert catalog(*mcp, lambda cur: cartridges._set_pg_scope(cur, scoped_ctx)) == {"scoped_col"}
+    console = ("omega_console", OMEGA_CONSOLE_PASSWORD)
+    assert runs(*console, lambda cur: cur.execute("SELECT set_config('app.platform_admin', 'true', true)")) == {legacy}
+    assert runs(*console, lambda cur: None) == set()
+
+    store = _load_service_module(monkeypatch, "refinement", "app.dataset_store")
+
+    def columns(apply) -> set[str]:
+        refinement_dsn = _role_dsn(
+            postgres_with_real_init_schema, "omega_refinement", "test_omega_refinement_password"
+        )
+        with psycopg2.connect(refinement_dsn) as conn, conn.cursor() as cur:
+            apply(cur)
+            cur.execute("SELECT column_name FROM data_catalog WHERE dataset = %s", (f"combo_{suffix}",))
+            return {row[0] for row in cur.fetchall()}
+
+    assert columns(lambda cur: store._apply_scope(cur, None, None, platform_admin=True)) == {"legacy_col"}
+    assert columns(lambda cur: store._apply_scope(cur, None, None, platform_admin=False)) == set()
+    assert columns(lambda cur: store._apply_scope(cur, tenant, workspace)) == {"scoped_col"}

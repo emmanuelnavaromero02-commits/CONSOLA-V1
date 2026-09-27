@@ -144,8 +144,9 @@ def _set_pg_scope(
 ) -> tuple[str, str]:
     tenant_id, workspace_id = _scope_values(security_context)
     cur.execute(
-        "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
-        (tenant_id or "", workspace_id or ""),
+        "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true), "
+        "set_config('app.platform_admin', %s, true)",
+        (tenant_id or "", workspace_id or "", "false" if tenant_id and workspace_id else "true"),
     )
     return tenant_id, workspace_id
 

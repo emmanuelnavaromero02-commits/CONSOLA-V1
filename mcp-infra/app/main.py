@@ -2140,8 +2140,13 @@ async def _rebuild_semantic_doc(
     )
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
-            (str(ctx.get("tenant_id") or ""), str(ctx.get("workspace_id") or "")),
+            "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true), "
+            "set_config('app.platform_admin', %s, true)",
+            (
+                str(ctx.get("tenant_id") or ""),
+                str(ctx.get("workspace_id") or ""),
+                "true" if _is_unscoped_admin_context(ctx) else "false",
+            ),
         )
         catalog_scope_sql = ""
         catalog_params: tuple[Any, ...] = ()
