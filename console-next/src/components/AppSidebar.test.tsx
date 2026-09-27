@@ -89,7 +89,7 @@ describe("AppSidebar", () => {
     }, "/operations/users");
 
     expect(markup).toContain("Centro de administración");
-    expect(markup).toContain("Cartuchos");
+    expect(markup).toContain("Fuentes de datos");
     expect(markup).not.toContain("Empresas");
     expect(markup).not.toContain("Usuarios");
     expect(markup).not.toContain("Vault");

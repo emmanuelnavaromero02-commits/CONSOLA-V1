@@ -170,7 +170,7 @@ export function AppCatalog({ cartridge }: { cartridge?: string }) {
         <p className="mt-1 text-sm text-muted-foreground">
           {data?.apps_scope?.message ??
             data?.apps_readiness?.message ??
-            "Activa un cartucho con aplicaciones publicadas para verlas aquí."}
+            "Activa una fuente de datos con aplicaciones publicadas para verlas aquí."}
         </p>
       </div>
     );
@@ -179,7 +179,7 @@ export function AppCatalog({ cartridge }: { cartridge?: string }) {
   return (
     <div className="space-y-4">
       {cartridges.length > 1 ? (
-        <nav className="flex flex-wrap gap-2" aria-label="Filtrar por cartucho">
+        <nav className="flex flex-wrap gap-2" aria-label="Filtrar por fuente de datos">
           <FilterChip href="/analytics" active={!cartridge} label="Todos" />
           {cartridges.map((id) => (
             <FilterChip
@@ -201,7 +201,7 @@ export function AppCatalog({ cartridge }: { cartridge?: string }) {
       {hiddenUnconfigured > 0 ? (
         <p className="text-xs text-muted-foreground">
           {hiddenUnconfigured} aplicación{hiddenUnconfigured === 1 ? "" : "es"} oculta
-          {hiddenUnconfigured === 1 ? "" : "s"} porque su cartucho no tiene conexión activa.
+          {hiddenUnconfigured === 1 ? "" : "s"} porque su fuente de datos no tiene conexión activa.
         </p>
       ) : null}
       {isFetching ? (

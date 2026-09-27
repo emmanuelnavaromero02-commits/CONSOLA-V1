@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, sep } from "node:path";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
@@ -75,6 +76,25 @@ const MIGRATED_SOURCES = [
   "../lib/agents/slug.ts",
   "../lib/agents/templates.ts",
   "../lib/agents/tool-labels.ts",
+];
+
+const SOURCE_ROOT = join(process.cwd(), "src");
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    if (!/\.tsx?$/.test(entry.name) || entry.name.includes(".test.")) return [];
+    return [path];
+  });
+}
+
+const RENAMED_LABELS: Array<[string, string]> = [
+  ["components/AppSidebar.tsx", "Fuentes de datos"],
+  ["components/studio/DagsPanel.tsx", "Nueva automatización"],
+  ["components/studio/DagsPanel.tsx", "Publicar automatización"],
+  ["components/operations/VaultConnectionsTable.tsx", "Campos adicionales"],
+  ["app/(shell)/dashboard/page.tsx", "Fuentes de datos conectadas"],
 ];
 
 let container: HTMLDivElement;
@@ -181,5 +201,19 @@ describe("business copy guard", () => {
       }
     }
     expect(FORBIDDEN_UI_TERMS.length).toBeGreaterThan(10);
+  });
+
+  it("keeps the whole console free of the retired data-source word", () => {
+    const offenders = sourceFiles(SOURCE_ROOT)
+      .filter((path) => !path.endsWith(`lib${sep}glossary.ts`))
+      .filter((path) => /cartucho/i.test(readFileSync(path, "utf8")));
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps the renamed business labels in place", () => {
+    for (const [path, label] of RENAMED_LABELS) {
+      const source = readFileSync(join(SOURCE_ROOT, path), "utf8");
+      expect(source, `${path}: ${label}`).toContain(label);
+    }
   });
 });

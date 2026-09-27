@@ -155,7 +155,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     page.on("request", (req) => {
       if (new URL(req.url()).pathname === "/api/studio/dag-deploy") posted = JSON.parse(req.postData() || "{}");
     });
-    await page.getByRole("button", { name: /Deploy a Airflow/ }).click();
+    await page.getByRole("button", { name: /Publicar automatización/ }).click();
     const dialog = page.getByTestId("deploy-dialog");
     await expect(dialog).toBeVisible();
     expect(posted).toBeNull();
@@ -175,14 +175,14 @@ test.describe("Studio deep — hermetic API contract", () => {
   test("the ALLOW_RCE_TOOLS 403 from deploy is reported, not hidden", async ({ authedPage: page }) => {
     await installStudioHarness(page, {
       "/api/studio/dag-deploy": (route) =>
-        json(route, { detail: "Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local." }, 403),
+        json(route, { detail: "Publicar automatización requiere ALLOW_RCE_TOOLS=true en el entorno local." }, 403),
     });
     await openStudio(page);
     await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
-    await page.getByRole("button", { name: /Deploy a Airflow/ }).click();
+    await page.getByRole("button", { name: /Publicar automatización/ }).click();
     await page.getByTestId("deploy-dialog").getByRole("button", { name: "Desplegar" }).click();
-    await expect(page.getByText("Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local.")).toBeVisible();
+    await expect(page.getByText("Publicar automatización requiere ALLOW_RCE_TOOLS=true en el entorno local.")).toBeVisible();
   });
 
   test("packaged DAGs and production disable deploy with a visible reason", async ({ authedPage: page }) => {
@@ -195,7 +195,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     await expect(packaged).toContainText("Inactivo");
     await expect(packaged).toContainText("Solo manifiesto");
     await page.locator('[data-dag-id="acme_custom"]').click();
-    const deploy = page.getByRole("button", { name: /Deploy a Airflow/ });
+    const deploy = page.getByRole("button", { name: /Publicar automatización/ });
     await expect(deploy).toBeDisabled();
     await expect(page.getByTestId("deploy-disabled-reason")).toContainText("desarrollo");
     await expect(page.getByRole("button", { name: /Eliminar/ })).toBeDisabled();

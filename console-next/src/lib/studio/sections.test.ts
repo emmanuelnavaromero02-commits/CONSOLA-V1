@@ -96,8 +96,8 @@ describe("Studio sections", () => {
 
   it("uses the brief's prompts when the cartridge has those tables", () => {
     expect(quickPromptsForStep(1, SAP_LIKE)).toEqual([
-      "Resume cómo viajan los datos de este cartucho desde el origen hasta los indicadores",
-      "¿Qué le falta a este cartucho para estar listo?",
+      "Resume cómo viajan los datos de esta fuente de datos desde el origen hasta los indicadores",
+      "¿Qué le falta a esta fuente de datos para estar lista?",
     ]);
     expect(quickPromptsForStep(2, SAP_LIKE)).toEqual([
       "¿Por qué falló la última extracción?",
@@ -128,10 +128,10 @@ describe("Studio sections", () => {
     ]);
     expect(quickPromptsForStep(5, OTHER)).toEqual([
       "¿Qué dashboards consumen este dataset?",
-      "Muéstrame, sin publicar, una vista previa de un indicador Oro de este cartucho",
+      "Muéstrame, sin publicar, una vista previa de un indicador Oro de esta fuente de datos",
     ]);
     expect(quickPromptsForStep(3, null)).toEqual([
-      "¿Qué campos incluyen las tablas de origen de este cartucho?",
+      "¿Qué campos incluyen las tablas de origen de esta fuente de datos?",
       "¿Hay registros duplicados en las tablas de origen?",
     ]);
     expect(quickPromptsForStep(4, { id: "x", entities: [] })).toEqual([

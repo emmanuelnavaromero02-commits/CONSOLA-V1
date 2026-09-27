@@ -18,7 +18,7 @@ test.describe("Mobile viewport — primary pages render", () => {
   test("dashboard KPI grid stacks to a single column on mobile",
     async ({ page }) => {
       await page.goto("/dashboard");
-      const tile = page.getByText(/cartuchos conectados/i).first().locator("..");
+      const tile = page.getByText(/fuentes de datos conectadas/i).first().locator("..");
       const box = await tile.boundingBox();
       const viewport = page.viewportSize();
       expect(box?.width,

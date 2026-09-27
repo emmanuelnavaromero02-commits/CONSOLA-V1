@@ -338,7 +338,7 @@ function PipelineViewer({ cartridge }: { cartridge: string }) {
   return (
     <ViewerShell
       title="Pipeline"
-      subtitle={`Cartucho ${cartridge}: bronze, silver, gold y última corrida.`}
+      subtitle={`Fuente de datos ${cartridge}: bronze, silver, gold y última corrida.`}
       actions={<RefreshButton onClick={() => pipeline.refetch()} />}
       activeCartridge={cartridge}
     >
@@ -362,7 +362,7 @@ function WatermarksViewer({ cartridge }: { cartridge: string }) {
   return (
     <ViewerShell
       title="Watermarks"
-      subtitle={`Cartucho ${cartridge}: marcas de agua y último estado por entidad.`}
+      subtitle={`Fuente de datos ${cartridge}: marcas de agua y último estado por entidad.`}
       actions={<RefreshButton onClick={() => freshness.refetch()} />}
       activeCartridge={cartridge}
     >
@@ -401,7 +401,7 @@ function SemanticViewer({ cartridge }: { cartridge: string }) {
   return (
     <ViewerShell
       title="Semantic Layer"
-      subtitle={`Cartucho ${cartridge}: entidades, campos y metadatos expuestos por /api/semantic.`}
+      subtitle={`Fuente de datos ${cartridge}: entidades, campos y metadatos expuestos por /api/semantic.`}
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -486,7 +486,7 @@ function DatasetsViewer() {
   return (
     <ViewerShell
       title="Datasets"
-      subtitle="Inventario Silver/Gold con filtros de capa y cartucho."
+      subtitle="Inventario Silver/Gold con filtros de capa y fuente de datos."
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <select
@@ -503,9 +503,9 @@ function DatasetsViewer() {
             value={cartridge}
             onChange={(event) => setCartridge(event.target.value)}
             className="min-h-[44px] rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Cartucho"
+            aria-label="Fuente de datos"
           >
-            <option value="">Todos los cartuchos</option>
+            <option value="">Todas las fuentes de datos</option>
             {cartridges.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
           <RefreshButton onClick={() => datasets.refetch()} />
@@ -710,7 +710,7 @@ function JobLogTable({ logs }: { logs: JobLogLine[] }) {
 
 function WatermarksTable({ rows }: { rows: FreshnessEntity[] }) {
   if (!rows.length) {
-    return <EmptyPanel icon={Droplets} title="Sin watermarks" detail="El backend no devolvió marcas para este cartucho." />;
+    return <EmptyPanel icon={Droplets} title="Sin watermarks" detail="El backend no devolvió marcas para esta fuente de datos." />;
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
@@ -742,7 +742,7 @@ function WatermarksTable({ rows }: { rows: FreshnessEntity[] }) {
 
 function SemanticTable({ rows }: { rows: SemanticEntity[] }) {
   if (!rows.length) {
-    return <EmptyPanel icon={Database} title="Sin entidades semánticas" detail="El backend no devolvió entidades para este cartucho." />;
+    return <EmptyPanel icon={Database} title="Sin entidades semánticas" detail="El backend no devolvió entidades para esta fuente de datos." />;
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
@@ -840,7 +840,7 @@ export function DatasetTable({ rows }: { rows: DatasetSummary[] }) {
           <tr>
             <th className="px-3 py-2 font-medium">Nombre</th>
             <th className="px-3 py-2 font-medium">Capa</th>
-            <th className="px-3 py-2 font-medium">Cartucho</th>
+            <th className="px-3 py-2 font-medium">Fuente de datos</th>
             <th className="px-3 py-2 font-medium">Fuente</th>
             <th className="px-3 py-2 font-medium">Columnas</th>
             <th className="px-3 py-2 font-medium">Estado</th>
@@ -883,7 +883,7 @@ function DatasetSummaryPanel({ detail, fallbackName }: { detail: DatasetDetail |
         <div>
           <h2 className="text-base font-semibold">{detail?.name || fallbackName}</h2>
           <p className="text-xs text-muted-foreground">
-            {detail?.cartridge || "sin cartucho"} · {detail?.source_entity || "sin fuente"} · {formatDate(detail?.updated_at || detail?.last_refresh)}
+            {detail?.cartridge || "sin fuente de datos"} · {detail?.source_entity || "sin fuente"} · {formatDate(detail?.updated_at || detail?.last_refresh)}
           </p>
         </div>
         <LayerPill layer={detail?.layer} />
@@ -983,7 +983,7 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-xs font-medium text-muted-foreground">
-              Cartucho
+              Fuente de datos
               <select
                 value={cartridgeFilter}
                 onChange={(event) => {
@@ -1138,7 +1138,7 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
                     {shortText(node.label || node.id, 28)}
                   </text>
                   <text x={14} y={44} className="fill-muted-foreground text-[10px]">
-                    {shortText(`${node.cartridge || "sin cartucho"} · ${normaliseLayer(node.type)}`, 34)}
+                    {shortText(`${node.cartridge || "sin fuente de datos"} · ${normaliseLayer(node.type)}`, 34)}
                   </text>
                   <text x={14} y={59} className="fill-muted-foreground text-[10px]">
                     {node.row_count != null ? `${Number(node.row_count).toLocaleString("es")} filas` : formatDate(node.last_refresh) || "sin refresh"}
@@ -1164,7 +1164,7 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
               </div>
               <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
                 <DetailItem label="Capa" value={normaliseLayer(selectedNode.type)} />
-                <DetailItem label="Cartucho" value={selectedNode.cartridge || "-"} />
+                <DetailItem label="Fuente de datos" value={selectedNode.cartridge || "-"} />
                 <DetailItem label="Filas" value={selectedNode.row_count ?? "-"} />
                 <DetailItem label="Último refresh" value={formatDate(selectedNode.last_refresh) || "-"} />
               </dl>
@@ -1325,7 +1325,7 @@ function DependencyList({
 
 function VaultConnectionsTable({ rows }: { rows: VaultConnection[] }) {
   if (!rows.length) {
-    return <EmptyPanel icon={ShieldCheck} title="Sin conexiones" detail="No hay conexiones masked para este cartucho." />;
+    return <EmptyPanel icon={ShieldCheck} title="Sin conexiones" detail="No hay conexiones masked para esta fuente de datos." />;
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-background">

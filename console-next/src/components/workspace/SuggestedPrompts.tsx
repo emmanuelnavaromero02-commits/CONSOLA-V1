@@ -18,8 +18,8 @@ const PROMPTS: SuggestedPrompt[] = [
   },
   {
     icon:   "📊",
-    title:  "Estado de cartuchos",
-    prompt: "Dame el estado actual de todos los cartuchos conectados.",
+    title:  "Estado de fuentes de datos",
+    prompt: "Dame el estado actual de todas las fuentes de datos conectadas.",
   },
   {
     icon:   "💼",

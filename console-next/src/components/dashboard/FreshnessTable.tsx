@@ -43,7 +43,7 @@ export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
       <table className="w-full text-sm">
         <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th className="px-5 py-2 font-medium">Cartucho</th>
+            <th className="px-5 py-2 font-medium">Fuente de datos</th>
             <th className="px-5 py-2 font-medium">Última extracción</th>
             <th className="px-5 py-2 font-medium">Estado</th>
           </tr>

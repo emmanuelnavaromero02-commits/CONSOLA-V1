@@ -730,7 +730,7 @@ def sync_control_room_generic_step_update(*, gold_ready: int) -> dict[str, Any]:
     return {
         "label": "Control Room",
         "status": "success" if gold_ready else "skipped",
-        "detail": "Control Room específico no aplica para este cartucho."
+        "detail": "Control Room específico no aplica para esta fuente de datos."
         if not gold_ready
         else "Gold disponible para consumo.",
         "completed": 1 if gold_ready else 0,
@@ -750,7 +750,7 @@ def sync_agents_intelligence_step_update(
         return {
             "label": "Agentes/IA",
             "status": "skipped",
-            "detail": "Monitores específicos no aplican para este cartucho.",
+            "detail": "Monitores específicos no aplican para esta fuente de datos.",
             "completed": 1,
             "total": 1,
             "percent": 100,

@@ -173,7 +173,7 @@ function MarketplaceTabs({ mode, canAdmin }: { mode: MarketplaceMode; canAdmin: 
     ...(canAdmin ? [{ href: "/admin/installations", label: "Licencias", mode: "admin" }] : []),
   ] as const;
   return (
-    <nav aria-label="Secciones de cartuchos" className="overflow-x-auto border-b">
+    <nav aria-label="Secciones de fuentes de datos" className="overflow-x-auto border-b">
       <ul className="mx-auto flex max-w-6xl items-center gap-1 px-6">
         {items.map((item) => (
           <li key={item.href}>
@@ -244,7 +244,7 @@ function ProductCard({
       </header>
 
       <p className="mt-4 text-sm text-muted-foreground">
-        {profile.headline || product.description || "Cartucho empresarial disponible para este workspace."}
+        {profile.headline || product.description || "Fuente de datos empresarial disponible para este workspace."}
       </p>
 
       <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
@@ -362,7 +362,7 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
       toast.success(`Solicitud enviada para ${cartridgeId}.`);
       queryClient.invalidateQueries({ queryKey: ["marketplace"] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo solicitar el cartucho."),
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo solicitar la fuente de datos."),
     onSettled: () => setBusyId(null),
   });
 
@@ -408,13 +408,13 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
       <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Cartuchos</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Fuentes de datos</p>
             <h1 className="text-3xl font-semibold tracking-tight">
-              {title || (mode === "customer" ? "Cartuchos instalados" : "Catálogo de cartuchos")}
+              {title || (mode === "customer" ? "Fuentes de datos instaladas" : "Catálogo de fuentes de datos")}
             </h1>
             <p className="max-w-3xl text-sm text-muted-foreground">
               {mode === "customer"
-                ? "Estado real de los cartuchos solicitados o activos para tu workspace."
+                ? "Estado real de las fuentes de datos solicitadas o activas para tu workspace."
                 : "Catálogo conectado a permisos reales: solicitud, aprobación, conexión y visibilidad por workspace."}
             </p>
           </div>
@@ -425,7 +425,7 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Buscar cartucho, estado o dominio"
+              placeholder="Buscar fuente de datos, estado o dominio"
               className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
@@ -442,7 +442,7 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
           <ErrorPanel message="No se pudo cargar el catálogo." onRetry={() => products.refetch()} />
         ) : null}
         {installations.isError ? (
-          <ErrorPanel message="No se pudieron cargar tus cartuchos." onRetry={() => installations.refetch()} />
+          <ErrorPanel message="No se pudieron cargar tus fuentes de datos." onRetry={() => installations.refetch()} />
         ) : null}
 
         {mode === "catalog" ? (
@@ -462,7 +462,7 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
                 ))}
           </section>
         ) : (
-          <section className="space-y-3" aria-label="Mis cartuchos">
+          <section className="space-y-3" aria-label="Mis fuentes de datos">
             {installations.isLoading ? (
               Array.from({ length: 3 }).map((_, index) => (
                 <div key={index} className="h-24 animate-pulse rounded-lg border bg-card" aria-hidden />
@@ -478,7 +478,7 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
               ))
             ) : (
               <p className="rounded-lg border bg-card p-5 text-sm text-muted-foreground">
-                No hay cartuchos para este filtro.
+                No hay fuentes de datos para este filtro.
               </p>
             )}
           </section>
@@ -690,7 +690,7 @@ function AdminMarketplace({ title }: { title?: string }) {
       <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Cartuchos</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Fuentes de datos</p>
             <h1 className="text-3xl font-semibold tracking-tight">{title || "Licencias y solicitudes"}</h1>
             <p className="max-w-3xl text-sm text-muted-foreground">
               Aprueba, pausa, revoca y controla el acceso por usuario. Los cambios impactan Workspace, Copilot y MCP desde backend.
@@ -703,7 +703,7 @@ function AdminMarketplace({ title }: { title?: string }) {
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Buscar tenant, workspace, cartucho o estado"
+              placeholder="Buscar tenant, workspace, fuente de datos o estado"
               className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>

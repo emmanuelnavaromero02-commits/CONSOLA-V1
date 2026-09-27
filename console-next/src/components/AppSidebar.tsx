@@ -77,7 +77,7 @@ const NAV_SECTIONS: NavSection[] = [
         capabilitiesAny: ["can_view_catalog", "can_view_lineage", "can_view_knowledge", "can_view_bronze", "can_view_explorer", "can_view_monitor"],
         keywords: "catalog datasets datos schema semantic lineage linaje watermarks explorer studio bronze conocimiento rag",
       },
-      { href: "/studio", label: "Studio", icon: Sparkles, section: "Datos", capability: "can_view_studio", keywords: "studio cartuchos dag refinamiento capas semantica builder" },
+      { href: "/studio", label: "Studio", icon: Sparkles, section: "Datos", capability: "can_view_studio", keywords: "studio fuentes de datos dag refinamiento capas semantica builder" },
     ],
   },
   {
@@ -95,12 +95,12 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       {
         href: "/marketplace",
-        label: "Cartuchos",
+        label: "Fuentes de datos",
         icon: Package,
         section: "Integraciones",
         capabilitiesAny: ["can_view_marketplace", "can_view_cartridges"],
         active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses", "/cartridges", "/cartridges/viewer"],
-        keywords: "marketplace cartuchos licencias instalaciones monitor tecnico conectores integraciones",
+        keywords: "marketplace fuentes de datos licencias instalaciones monitor tecnico conectores integraciones",
       },
       { href: "/analytics", label: "Apps analíticas", icon: Sparkles, section: "Integraciones", capability: "can_view_apps", keywords: "aplicaciones dashboards analiticas graficas explorar" },
     ],

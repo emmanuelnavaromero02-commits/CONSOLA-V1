@@ -46,7 +46,7 @@ const MODULES: TechnicalModule[] = [
   },
   {
     title: "Watermarks",
-    description: "Ultimas marcas de extraccion por entidad y cartucho.",
+    description: "Ultimas marcas de extraccion por entidad y fuente de datos.",
     icon: Droplets,
     href: (cartridge) => `/viewer?type=watermarks&cartridge=${encodeURIComponent(cartridge)}`,
   },
@@ -103,7 +103,7 @@ export function DataTechnicalHub() {
         </div>
         <label className="space-y-1 text-sm">
           <span className="text-xs font-medium uppercase text-muted-foreground">
-            Cartucho para vistas tecnicas
+            Fuente de datos para vistas tecnicas
           </span>
           <select
             value={cartridge}

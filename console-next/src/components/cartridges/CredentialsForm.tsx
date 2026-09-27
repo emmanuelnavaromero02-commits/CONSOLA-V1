@@ -182,7 +182,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
 
         {hasConnectorSchema ? null : (
           <p className="text-sm text-muted-foreground">
-            Este cartucho se valida con las conexiones disponibles en Vault.
+            Esta fuente de datos se valida con las conexiones disponibles en Vault.
           </p>
         )}
 

@@ -117,7 +117,7 @@ function IntrospectionView({ result }: { result: IntrospectionResult }) {
       ) : (
         <Notice tone="warning" title="Esquema estático (fallback)">
           No se pudo introspeccionar la fuente en vivo{result.reason ? `: ${result.reason}` : "."} Se muestran las
-          entidades declaradas en el cartucho.
+          entidades declaradas en la fuente de datos.
         </Notice>
       )}
       <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -345,7 +345,7 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
           {studioErrorMessage(entities.error, "Error al consultar /api/studio/entities.")}
         </Notice>
       ) : !rows.length ? (
-        <Notice testId="entities-empty">El cartucho no tiene entidades registradas.</Notice>
+        <Notice testId="entities-empty">La fuente de datos no tiene entidades registradas.</Notice>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
           <table data-testid="entities-table" className="w-full text-sm">
@@ -353,7 +353,7 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
               <tr>
                 <th scope="col" className="px-3 py-2 font-medium">Entidad</th>
                 <th scope="col" className="px-3 py-2 font-medium">Modo</th>
-                <th scope="col" className="px-3 py-2 font-medium">DAG</th>
+                <th scope="col" className="px-3 py-2 font-medium">Automatización</th>
                 <th scope="col" className="px-3 py-2 font-medium">Origen</th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">Acciones</th>
               </tr>
@@ -429,7 +429,7 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
                                 {{
                                   display_name: "Nombre visible",
                                   primary_key: "Llave primaria",
-                                  dag_id: "DAG",
+                                  dag_id: "Automatización",
                                   description: "Descripción",
                                 }[field]}
                               </span>
@@ -538,7 +538,7 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
       <ConfirmDialog
         open={creating}
         title="Nueva entidad"
-        description={`Se registrará en el cartucho ${cartridge}.`}
+        description={`Se registrará en la fuente de datos ${cartridge}.`}
         confirmLabel="Crear entidad"
         pendingLabel="Creando…"
         pending={create.isPending}
@@ -591,7 +591,7 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
           </label>
         </div>
         <label className="flex flex-col gap-1">
-          <span className="font-medium">DAG</span>
+          <span className="font-medium">Automatización</span>
           <input
             value={newEntity.dag_id}
             onChange={(event) => setNewEntity((current) => ({ ...current, dag_id: event.target.value }))}

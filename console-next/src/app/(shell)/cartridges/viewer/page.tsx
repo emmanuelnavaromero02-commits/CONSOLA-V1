@@ -17,10 +17,10 @@ function CartridgeViewerShell() {
     return (
       <main className="mx-auto max-w-3xl space-y-4 px-6 py-8">
         <Link href="/cartridges" className="text-sm text-muted-foreground underline-offset-2 hover:underline">
-          Volver a cartuchos
+          Volver a fuentes de datos
         </Link>
         <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          Falta el parámetro de cartucho: usa <span className="font-mono">/cartridges/viewer?id=replicon</span>.
+          Falta el parámetro de fuente de datos: usa <span className="font-mono">/cartridges/viewer?id=replicon</span>.
         </div>
       </main>
     );
@@ -30,7 +30,7 @@ function CartridgeViewerShell() {
     <main className="mx-auto max-w-3xl space-y-6 px-6 py-8">
       <nav aria-label="breadcrumb" className="text-sm text-muted-foreground">
         <Link href="/cartridges" className="underline-offset-2 hover:underline">
-          Cartuchos
+          Fuentes de datos
         </Link>
         <span className="px-2" aria-hidden>›</span>
         <span className="text-foreground">{id}</span>
@@ -39,7 +39,7 @@ function CartridgeViewerShell() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">{schema?.name ?? id}</h1>
         <p className="text-sm text-muted-foreground">
-          {schema?.description ?? "Configura credenciales, prueba la conexión y deja el cartucho listo para extracción."}
+          {schema?.description ?? "Configura credenciales, prueba la conexión y deja la fuente de datos lista para extracción."}
         </p>
       </header>
 
@@ -64,7 +64,7 @@ function CartridgeViewerShell() {
         <CredentialsForm cartridgeId={id} schema={schema} />
       ) : (
         <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          El esquema de configuración no está disponible para este cartucho.
+          El esquema de configuración no está disponible para esta fuente de datos.
         </div>
       )}
     </main>
@@ -73,7 +73,7 @@ function CartridgeViewerShell() {
 
 export default function CartridgeViewerPage() {
   return (
-    <Suspense fallback={<main className="p-6 text-sm text-muted-foreground">Cargando cartucho...</main>}>
+    <Suspense fallback={<main className="p-6 text-sm text-muted-foreground">Cargando fuente de datos...</main>}>
       <CartridgeViewerShell />
     </Suspense>
   );

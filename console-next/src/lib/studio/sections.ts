@@ -25,7 +25,7 @@ export const STUDIO_SECTIONS: readonly StudioSection[] = [
     label: "Automatizaciones",
     step: 2,
     icon: Clock,
-    countNoun: { one: "DAG declarado", other: "DAGs declarados" },
+    countNoun: { one: "automatización declarada", other: "automatizaciones declaradas" },
   },
   {
     id: "entidades",
@@ -139,8 +139,8 @@ export function quickPromptsForStep(step: number, manifest?: StudioManifest | nu
   switch (step) {
     case 1:
       return [
-        "Resume cómo viajan los datos de este cartucho desde el origen hasta los indicadores",
-        "¿Qué le falta a este cartucho para estar listo?",
+        "Resume cómo viajan los datos de esta fuente de datos desde el origen hasta los indicadores",
+        "¿Qué le falta a esta fuente de datos para estar lista?",
       ];
     case 2:
       return ["¿Por qué falló la última extracción?", "¿Cómo cambio la frecuencia a diaria?"];
@@ -150,7 +150,7 @@ export function quickPromptsForStep(step: number, manifest?: StudioManifest | nu
           ? "¿Qué campos incluye la tabla de Clientes?"
           : first
             ? `¿Qué campos incluye la tabla ${first}?`
-            : "¿Qué campos incluyen las tablas de origen de este cartucho?",
+            : "¿Qué campos incluyen las tablas de origen de esta fuente de datos?",
         has("facturas")
           ? "¿Hay registros duplicados en facturas?"
           : second
@@ -175,7 +175,7 @@ export function quickPromptsForStep(step: number, manifest?: StudioManifest | nu
         "¿Qué dashboards consumen este dataset?",
         has("clientes")
           ? "Muéstrame, sin publicar, una vista previa del ranking de clientes"
-          : "Muéstrame, sin publicar, una vista previa de un indicador Oro de este cartucho",
+          : "Muéstrame, sin publicar, una vista previa de un indicador Oro de esta fuente de datos",
       ];
     default:
       return [];

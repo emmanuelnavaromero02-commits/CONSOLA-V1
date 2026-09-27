@@ -6,7 +6,7 @@ export default function MePage() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Mi perfil</h1>
         <p className="text-sm text-muted-foreground">
-          Identidad, permisos efectivos y cartuchos visibles para tu sesión.
+          Identidad, permisos efectivos y fuentes de datos visibles para tu sesión.
         </p>
       </header>
       <MeAccessPanel />

@@ -11,9 +11,9 @@ const PAD_BOTTOM = 24;
 const KIND_RANK: Record<string, number> = { cartridge: 0, entity: 1, dag: 2, dataset: 2 };
 const KIND_ORDER: Record<string, number> = { cartridge: 0, entity: 1, dag: 2, dataset: 3 };
 const KIND_LABEL: Record<string, string> = {
-  cartridge: "Cartucho",
+  cartridge: "Fuente de datos",
   entity: "Entidad",
-  dag: "DAG",
+  dag: "Automatización",
   dataset: "Dataset",
 };
 const COLUMN_LABELS = ["Conector", "Tablas de origen", "Automatizaciones", "Plata", "Oro", "Datasets", "Otros"];

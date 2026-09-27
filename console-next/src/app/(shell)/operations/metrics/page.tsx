@@ -138,7 +138,7 @@ function SlowEntities({ rows }: { rows: SlowEntityMetric[] }) {
         <div key={`${row.cartridge_id}:${row.entity_name}:${index}`} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
           <div className="min-w-0">
             <div className="truncate font-medium">{row.entity_name || "Entidad"}</div>
-            <div className="truncate text-xs text-muted-foreground">{row.cartridge_id || "sin cartucho"}</div>
+            <div className="truncate text-xs text-muted-foreground">{row.cartridge_id || "sin fuente de datos"}</div>
           </div>
           <span className="rounded-md border bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
             {formatSeconds(Number(row.avg_sec ?? 0))}

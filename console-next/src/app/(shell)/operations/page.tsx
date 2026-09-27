@@ -52,7 +52,7 @@ const READY_MODULES: ModuleCard[] = [
   {
     href:        "/operations/vault",
     title:       "Vault",
-    description: "Inspecciona las conexiones guardadas por cartucho.",
+    description: "Inspecciona las conexiones guardadas por fuente de datos.",
     icon:        KeySquare,
     permission:  "vault.connections.read",
   },

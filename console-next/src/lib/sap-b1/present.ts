@@ -347,7 +347,7 @@ export function setupChecklist(overview: SapB1Overview): ChecklistItem[] {
   const installed = overview.installed;
   items.push({
     id: "installed",
-    label: "Cartucho instalado",
+    label: "Fuente de datos instalada",
     state: installed === "active" || installed === "ready" ? "ok" : "pendiente",
     detail: installed ? `Estado de la instalación: ${installed}` : "Sin instalación en este workspace",
   });

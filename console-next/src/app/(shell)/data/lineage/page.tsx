@@ -72,7 +72,7 @@ export default function DataLineagePage() {
       <section className="rounded-lg border bg-card p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(260px,1fr)]">
           <label className="space-y-1 text-sm">
-            <span className="text-xs font-medium uppercase text-muted-foreground">Cartucho</span>
+            <span className="text-xs font-medium uppercase text-muted-foreground">Fuente de datos</span>
             <select
               value={cartridge}
               onChange={(event) => setCartridge(event.target.value)}
@@ -90,7 +90,7 @@ export default function DataLineagePage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                placeholder="Dataset, capa o cartucho"
+                placeholder="Dataset, capa o fuente de datos"
               />
             </div>
           </label>
@@ -260,7 +260,7 @@ function LineageBoard({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
                       {shortText(node.label || node.id, 28)}
                     </text>
                     <text x={14} y={44} className="fill-muted-foreground text-[10px]">
-                      {shortText(`${node.cartridge || "sin cartucho"} · ${normaliseLayer(node)}`, 34)}
+                      {shortText(`${node.cartridge || "sin fuente de datos"} · ${normaliseLayer(node)}`, 34)}
                     </text>
                     <text x={14} y={61} className="fill-muted-foreground text-[10px]">
                       {node.row_count != null ? `${formatNumber(node.row_count)} filas` : node.last_refresh || "sin refresh"}
@@ -423,7 +423,7 @@ function NodeCard({ node }: { node: LineageNode }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="truncate font-medium">{node.label || node.id}</h3>
-          <p className="truncate text-xs text-muted-foreground">{node.cartridge || "sin cartucho"}</p>
+          <p className="truncate text-xs text-muted-foreground">{node.cartridge || "sin fuente de datos"}</p>
         </div>
         {node.is_stale ? <span className="rounded-md bg-destructive/10 px-2 py-0.5 text-xs text-destructive">stale</span> : null}
       </div>

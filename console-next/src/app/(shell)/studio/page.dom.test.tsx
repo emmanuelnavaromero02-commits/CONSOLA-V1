@@ -312,7 +312,7 @@ describe("Studio page", () => {
   it("shows the cartridge health only from real fields", async () => {
     await render();
     const health = container.querySelector('[data-testid="studio-health"]');
-    expect(health?.getAttribute("aria-label")).toBe("Salud del cartucho");
+    expect(health?.getAttribute("aria-label")).toBe("Salud de la fuente de datos");
     expect(health?.querySelector('[data-metric="tables"] dd')?.textContent).toBe("1");
     expect(health?.querySelector('[data-metric="gold-ready"] dd')?.textContent).toBe("Sin datasets Oro");
     expect(health?.querySelector('[data-metric="last-refresh"]')).toBeNull();
@@ -444,13 +444,13 @@ describe("Studio page", () => {
     expect(airflow?.getAttribute("target")).toBe("_blank");
     expect(airflow?.getAttribute("rel")).toContain("noopener");
 
-    await click(byText("button", /Deploy a Airflow/));
+    await click(byText("button", /Publicar automatización/));
     expect(deploy.mutate).not.toHaveBeenCalled();
     const dialog = container.querySelector('[data-testid="deploy-dialog"]');
     expect(dialog?.getAttribute("role")).toBe("dialog");
     expect(dialog?.textContent).toContain("acme_custom");
 
-    await click(byText('[data-testid="deploy-dialog"] button', "Desplegar"));
+    await click(byText('[data-testid="deploy-dialog"] button', "Publicar"));
     expect(deploy.mutate).toHaveBeenCalledTimes(1);
     expect(deploy.mutate.mock.calls[0][0]).toMatchObject({
       cartridge: "acme",
@@ -458,7 +458,7 @@ describe("Studio page", () => {
       dag_id: "acme_custom",
       code: "dag_id='acme_custom'\n",
     });
-    expect(toastMock.success).toHaveBeenCalledWith("DAG acme_custom desplegado en Airflow.");
+    expect(toastMock.success).toHaveBeenCalledWith("Automatización acme_custom publicada en Airflow.");
     expect(container.querySelector('[data-testid="deploy-dialog"]')).toBeNull();
   });
 
@@ -467,7 +467,7 @@ describe("Studio page", () => {
     await render();
     await openDagsTab();
     await click(container.querySelector('[data-dag-id="acme_custom"]'));
-    await click(byText("button", /Deploy a Airflow/));
+    await click(byText("button", /Publicar automatización/));
     await click(byText('[data-testid="deploy-dialog"] button', "Cancelar"));
     expect(container.querySelector('[data-testid="deploy-dialog"]')).toBeNull();
     expect(deploy.mutate).not.toHaveBeenCalled();
@@ -481,18 +481,18 @@ describe("Studio page", () => {
     await render();
     await openDagsTab();
     await click(container.querySelector('[data-dag-id="acme_custom"]'));
-    await click(byText("button", /Deploy a Airflow/));
-    await click(byText('[data-testid="deploy-dialog"] button', "Desplegar"));
-    expect(toastMock.error).toHaveBeenCalledWith("No se pudo desplegar acme_custom: SyntaxError en línea 3");
+    await click(byText("button", /Publicar automatización/));
+    await click(byText('[data-testid="deploy-dialog"] button', "Publicar"));
+    expect(toastMock.error).toHaveBeenCalledWith("No se pudo publicar acme_custom: SyntaxError en línea 3");
   });
 
   it("disables deploy with a visible reason for packaged DAGs and when the environment forbids it", async () => {
     await render();
     await openDagsTab();
     await click(container.querySelector('[data-dag-id="acme_packaged"]'));
-    expect(byText("button", /Deploy a Airflow/)?.hasAttribute("disabled")).toBe(true);
+    expect(byText("button", /Publicar automatización/)?.hasAttribute("disabled")).toBe(true);
     expect(container.querySelector('[data-testid="deploy-disabled-reason"]')?.textContent).toContain(
-      "DAG empaquetado por el cartucho",
+      "Automatización instalada por la fuente de datos",
     );
     expect(container.textContent).toContain("Solo manifiesto");
     expect(byText('[data-dag-id="acme_packaged"] span', "Inactivo")).toBeTruthy();
@@ -503,7 +503,7 @@ describe("Studio page", () => {
     await render();
     await openDagsTab();
     await click(container.querySelector('[data-dag-id="acme_custom"]'));
-    const deployButton = byText("button", /Deploy a Airflow/);
+    const deployButton = byText("button", /Publicar automatización/);
     expect(deployButton?.hasAttribute("disabled")).toBe(true);
     expect(deployButton?.getAttribute("title")).toContain("desarrollo");
     expect(byText("button", /Eliminar/)?.hasAttribute("disabled")).toBe(true);

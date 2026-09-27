@@ -240,7 +240,7 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
       terms: ["performance", "review", "goal", "competency"],
       metric: widgetValue(widgets, ["performance", "review"]),
       unit: "evaluaciones disponibles",
-      decision: "Usar evaluaciones solo cuando el cartucho tenga datos suficientes.",
+      decision: "Usar evaluaciones solo cuando la fuente de datos tenga datos suficientes.",
     },
     {
       id: "aprendizaje",
@@ -679,7 +679,7 @@ export function SuccessFactorsGoldPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300/80">Mapa ejecutivo SuccessFactors</p>
               <h3 className="text-lg font-semibold text-foreground dark:text-white">Frentes que importan al negocio</h3>
             </div>
-            <p className="text-sm text-muted-foreground">Cada frente se alimenta de datos reales del cartucho SuccessFactors.</p>
+            <p className="text-sm text-muted-foreground">Cada frente se alimenta de datos reales de la fuente de datos SuccessFactors.</p>
           </div>
           <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
             {businessFronts.map((front) => (
@@ -718,7 +718,7 @@ export function SuccessFactorsGoldPanel({
 
           {decisionModelLoading ? (
             <OperationalNotice tone="info" title="Actualizando decisiones">
-              Revisando las capacidades del cartucho para mostrar solo decisiones con respaldo real.
+              Revisando las capacidades de la fuente de datos para mostrar solo decisiones con respaldo real.
             </OperationalNotice>
           ) : null}
           {decisionModelError ? (

@@ -62,7 +62,7 @@ describe("CredentialsForm", () => {
   it("renders an explicit empty state when a cartridge has no connector schema", () => {
     const markup = renderCredentials("internal", { fields: [] });
 
-    expect(markup).toContain("Este cartucho se valida con las conexiones disponibles en Vault.");
+    expect(markup).toContain("Esta fuente de datos se valida con las conexiones disponibles en Vault.");
     expect(markup).toContain("Configurar en Vault");
     expect(markup).not.toContain("Guardar credenciales");
   });

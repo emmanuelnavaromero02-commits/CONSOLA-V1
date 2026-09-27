@@ -32,7 +32,7 @@ import {
 } from "./ui";
 
 const NEW_DAG = "__new__";
-export const PACKAGED_DAG_REASON = "DAG empaquetado por el cartucho: se gestiona desde el cartucho, no desde Studio.";
+export const PACKAGED_DAG_REASON = "Automatización instalada por la fuente de datos: se gestiona desde la fuente de datos, no desde Studio.";
 
 function dagState(dag: StudioDag): { label: string; tone: string } {
   if (dag.is_paused) return { label: "Pausado", tone: "border-warning/30 bg-warning/10 text-warning" };
@@ -87,7 +87,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
     : isPackaged
       ? PACKAGED_DAG_REASON
       : !selected
-        ? "Selecciona un DAG o crea uno nuevo."
+        ? "Selecciona una automatización o crea una nueva."
         : null;
 
   function selectDag(id: string) {
@@ -106,7 +106,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
       return;
     }
     if (!entity) {
-      toast.error("Selecciona la entidad del DAG.");
+      toast.error("Selecciona la entidad de la automatización.");
       return;
     }
     const useTemplate = isNew && Boolean(templateId);
@@ -119,7 +119,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
       entity,
       dag_id: targetDagId,
       ...(useTemplate ? { template_id: templateId, templateName: template?.name || templateId } : { code }),
-      description: `DAG del cartucho ${cartridge}`,
+      description: `Automatización de la fuente de datos ${cartridge}`,
     });
   }
 
@@ -136,7 +136,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
       return;
     }
     if (!code.trim()) {
-      toast.error("No hay código fuente para renombrar este DAG.");
+      toast.error("No hay código fuente para renombrar esta automatización.");
       return;
     }
     setPendingDeploy({ cartridge, entity: entity || "Entity", dag_id: next, code, renameFrom: existingId });
@@ -159,7 +159,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
               notifyDeployResult(result, request.dag_id);
             }
           },
-          onError: (error) => toast.error(studioErrorMessage(error, "No se pudo renombrar el DAG.")),
+          onError: (error) => toast.error(studioErrorMessage(error, "No se pudo renombrar la automatización.")),
           onSettled: () => setPendingDeploy(null),
         },
       );
@@ -180,7 +180,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
           }
         }
       },
-      onError: (error) => toast.error(studioErrorMessage(error, "No se pudo desplegar el DAG.")),
+      onError: (error) => toast.error(studioErrorMessage(error, "No se pudo publicar la automatización.")),
       onSettled: () => setPendingDeploy(null),
     });
   }
@@ -192,10 +192,10 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
       { cartridge, dagId },
       {
         onSuccess: () => {
-          toast.success(`DAG ${dagId} eliminado.`);
+          toast.success(`Automatización ${dagId} eliminada.`);
           setSelected(null);
         },
-        onError: (error) => toast.error(studioErrorMessage(error, "No se pudo eliminar el DAG.")),
+        onError: (error) => toast.error(studioErrorMessage(error, "No se pudo eliminar la automatización.")),
         onSettled: () => setPendingDelete(null),
       },
     );
@@ -203,15 +203,15 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-      <section aria-label="DAGs del cartucho" className="space-y-3">
+      <section aria-label="Automatizaciones de la fuente de datos" className="space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">DAGs ({dags.data?.total ?? 0})</h3>
+          <h3 className="text-sm font-semibold">Automatizaciones ({dags.data?.total ?? 0})</h3>
           <div className="flex gap-2">
-            <button type="button" className={buttonClass} onClick={() => dags.refetch()} aria-label="Recargar DAGs">
+            <button type="button" className={buttonClass} onClick={() => dags.refetch()} aria-label="Recargar automatizaciones">
               <RefreshCw aria-hidden className={cn("h-4 w-4", dags.isFetching && "animate-spin")} />
             </button>
             <button type="button" className={buttonClass} onClick={() => selectDag(NEW_DAG)}>
-              <FilePlus2 aria-hidden className="h-4 w-4" /> Nuevo DAG
+              <FilePlus2 aria-hidden className="h-4 w-4" /> Nueva automatización
             </button>
           </div>
         </div>
@@ -226,10 +226,10 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
               <button type="button" className={buttonClass} onClick={() => dags.refetch()}>Reintentar</button>
             }
           >
-            {studioErrorMessage(dags.error, "No se pudo listar los DAGs.")}
+            {studioErrorMessage(dags.error, "No se pudieron listar las automatizaciones.")}
           </Notice>
         ) : !dags.data?.dags.length ? (
-          <Notice testId="dags-empty">Airflow no reporta DAGs para este cartucho.</Notice>
+          <Notice testId="dags-empty">Airflow no reporta automatizaciones para esta fuente de datos.</Notice>
         ) : (
           <ul data-testid="dag-list" className="max-h-[520px] space-y-1 overflow-y-auto">
             {dags.data.dags.map((dag) => {
@@ -268,14 +268,14 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
         )}
       </section>
 
-      <section aria-label="Editor de DAG" data-testid="dag-editor" className="space-y-3 rounded-lg border bg-card p-4">
+      <section aria-label="Editor de automatización" data-testid="dag-editor" className="space-y-3 rounded-lg border bg-card p-4">
         {!selected ? (
-          <Notice>Selecciona un DAG para ver su código o crea uno nuevo.</Notice>
+          <Notice>Selecciona una automatización para ver su código o crea una nueva.</Notice>
         ) : (
           <>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs uppercase text-muted-foreground">{isNew ? "Nuevo DAG" : "DAG seleccionado"}</p>
+                <p className="text-xs uppercase text-muted-foreground">{isNew ? "Nueva automatización" : "Automatización seleccionada"}</p>
                 <h3 className="break-all font-mono text-sm font-semibold">{isNew ? newDagId || "—" : existingId}</h3>
                 {selectedDag?.registered_only ? (
                   <p className="text-xs text-muted-foreground">Declarado en el manifiesto; Airflow no lo reporta.</p>
@@ -349,10 +349,10 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
             {existingId && source.isLoading ? (
               <p className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Cargando código fuente…</p>
             ) : existingId && source.isError ? (
-              <Notice tone="error">{studioErrorMessage(source.error, "No se pudo leer el código del DAG.")}</Notice>
+              <Notice tone="error">{studioErrorMessage(source.error, "No se pudo leer el código de la automatización.")}</Notice>
             ) : existingId && source.data && !source.data.found ? (
               <Notice tone="warning" title="Código fuente no encontrado">
-                {source.data.error || "mcp-infra no devolvió el archivo de este DAG."}
+                {source.data.error || "El servidor no devolvió el archivo de esta automatización."}
               </Notice>
             ) : null}
 
@@ -365,7 +365,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
                 rows={18}
                 spellCheck={false}
                 disabled={isNew && Boolean(templateId)}
-                placeholder={isNew && templateId ? "El código se genera desde la plantilla en el servidor." : "Código del DAG"}
+                placeholder={isNew && templateId ? "El código se genera desde la plantilla en el servidor." : "Código de la automatización"}
                 className={cn(codeAreaClass, "code-editor")}
               />
               {source.data?.path ? (
@@ -411,7 +411,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
                 data-disabled-reason={deployBlockReason ?? ""}
                 className={primaryButtonClass}
               >
-                {deploy.isPending ? <Spinner /> : <Rocket aria-hidden className="h-4 w-4" />} Deploy a Airflow
+                {deploy.isPending ? <Spinner /> : <Rocket aria-hidden className="h-4 w-4" />} Publicar automatización
               </button>
               {existingId ? (
                 <>
@@ -419,7 +419,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
                     type="button"
                     className={buttonClass}
                     disabled={Boolean(deployBlockReason) || !code.trim()}
-                    title={deployBlockReason ?? (code.trim() ? "Renombrar DAG" : "Sin código fuente para renombrar")}
+                    title={deployBlockReason ?? (code.trim() ? "Renombrar automatización" : "Sin código fuente para renombrar")}
                     onClick={() => setRenameValue(existingId)}
                   >
                     <Pencil aria-hidden className="h-4 w-4" /> Renombrar
@@ -428,7 +428,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
                     type="button"
                     className={dangerButtonClass}
                     disabled={!gate.enabled}
-                    title={gate.reason ?? "Eliminar DAG"}
+                    title={gate.reason ?? "Eliminar automatización"}
                     onClick={() => setPendingDelete(existingId)}
                   >
                     <Trash2 aria-hidden className="h-4 w-4" /> Eliminar
@@ -448,7 +448,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
       />
       <ConfirmDialog
         open={Boolean(pendingDelete)}
-        title="Eliminar DAG"
+        title="Eliminar automatización"
         tone="danger"
         confirmLabel="Eliminar"
         pendingLabel="Eliminando…"
@@ -456,11 +456,11 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
         onConfirm={confirmDelete}
         onCancel={() => setPendingDelete(null)}
         testId="delete-dag-dialog"
-        description={`Se eliminará ${pendingDelete ?? ""} de Airflow para el cartucho ${cartridge}. Esta acción no se puede deshacer.`}
+        description={`Se eliminará ${pendingDelete ?? ""} de Airflow para la fuente de datos ${cartridge}. Esta acción no se puede deshacer.`}
       >
         {pendingDelete && managed.has(pendingDelete) ? (
           <Notice tone="warning">
-            Este DAG está empaquetado por el cartucho; eliminarlo detiene las extracciones que dependen de él.
+            Esta automatización la instala la fuente de datos; eliminarla detiene las extracciones que dependen de ella.
           </Notice>
         ) : null}
       </ConfirmDialog>
