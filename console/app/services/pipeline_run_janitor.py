@@ -14,11 +14,13 @@ from app.domains.pipeline.stuck_run_recovery import (
     MISSING_IN_AIRFLOW,
     STALLED_CLASSES,
 )
+from app.services.db_scope import system_platform_db
 
 
 logger = logging.getLogger(__name__)
 
 LOCK_KEY = "omega:pipeline_run_janitor"
+PLATFORM_PURPOSE = "pipeline_run_janitor.workspaces"
 JANITOR_ACTOR = "system:pipeline-janitor"
 MODES = ("off", "sync", "recover")
 DEFAULT_MODE = "sync"
@@ -111,16 +113,19 @@ async def run_janitor_tick(
         if not leader:
             return {"status": "skipped", "reason": "not_leader", "mode": mode}
         try:
-            rows = await pool.fetch(
-                """
-                SELECT w.id::text AS workspace_id, w.tenant_id::text AS tenant_id
-                  FROM workspaces w
-                 WHERE w.tenant_id IS NOT NULL
-                 ORDER BY w.created_at ASC, w.name ASC
-                 LIMIT $1
-                """,
-                max(1, int(workspace_limit)),
-            )
+            # The workspace list is the only cross-workspace read; each
+            # workspace is then recovered under its own tenant/workspace scope.
+            async with system_platform_db(pool, purpose=PLATFORM_PURPOSE) as platform:
+                rows = await platform.fetch(
+                    """
+                    SELECT w.id::text AS workspace_id, w.tenant_id::text AS tenant_id
+                      FROM workspaces w
+                     WHERE w.tenant_id IS NOT NULL
+                     ORDER BY w.created_at ASC, w.name ASC
+                     LIMIT $1
+                    """,
+                    max(1, int(workspace_limit)),
+                )
             for row in rows:
                 summary["workspaces"] += 1
                 user = system_user(row["tenant_id"], row["workspace_id"])

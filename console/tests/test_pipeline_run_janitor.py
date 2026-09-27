@@ -44,14 +44,33 @@ class LockConn:
         return "OK"
 
 
+class PlatformConn:
+    def __init__(self, pool):
+        self.pool = pool
+
+    def transaction(self):
+        return _Ctx(self)
+
+    async def execute(self, sql, *args):
+        self.pool.platform_statements.append(sql)
+        return "OK"
+
+    async def fetch(self, sql, *args):
+        self.pool.platform_statements.append(sql)
+        return await self.pool.fetch(sql, *args)
+
+
 class Pool:
     def __init__(self, leader: bool, workspaces=WORKSPACES):
         self.lock_conn = LockConn(leader)
         self.workspaces = workspaces
         self.fetches: list[str] = []
+        self.platform_statements: list[str] = []
+        self.acquired = 0
 
     def acquire(self):
-        return _Ctx(self.lock_conn)
+        self.acquired += 1
+        return _Ctx(self.lock_conn if self.acquired == 1 else PlatformConn(self))
 
     async def fetch(self, sql, *args):
         self.fetches.append(sql)
@@ -212,3 +231,21 @@ def test_janitor_is_started_and_cancelled_with_the_console_lifespan():
     lifespan = source.split("async def lifespan(app: FastAPI):", 1)[1].split("INTERNAL_API_KEY = ", 1)[0]
     assert "pipeline_run_janitor.janitor_loop()" in lifespan
     assert "pipeline_janitor_task" in lifespan.split("finally:", 1)[1]
+
+
+def test_workspace_listing_runs_in_the_system_platform_scope():
+    janitor = _janitor()
+    pool = Pool(leader=True)
+
+    async def recover(_user, **_kwargs):
+        return SimpleNamespace(counts={})
+
+    asyncio.run(janitor.run_janitor_tick(mode="sync", get_db_pool=_pool_getter(pool), recover=recover))
+    assert len(pool.platform_statements) == 2
+    scope_sql, listing_sql = pool.platform_statements
+    assert "set_config('app.platform_admin', 'true', true)" in scope_sql
+    assert "set_config('app.workspace_id', '', true)" in scope_sql
+    assert "FROM workspaces w" in listing_sql
+    source = (CONSOLE / "app" / "services" / "pipeline_run_janitor.py").read_text(encoding="utf-8")
+    assert "system_platform_db(pool, purpose=PLATFORM_PURPOSE)" in source
+    assert source.count("FROM workspaces") == 1
