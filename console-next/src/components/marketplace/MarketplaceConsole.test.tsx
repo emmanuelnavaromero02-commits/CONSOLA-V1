@@ -14,7 +14,9 @@ vi.mock("sonner", () => ({
 
 import {
   ConnectedSourceCard,
+  connectedSearchValues,
   connectionStatusFor,
+  Counter,
   deriveTab,
   mergeConnectedSources,
   stepLabel,
@@ -68,6 +70,8 @@ describe("deriveTab", () => {
 
 describe("stepLabel", () => {
   it("translates every known installation step to Spanish", () => {
+    expect(stepLabel("activated")).toBe("Activada");
+    expect(stepLabel("seeded_from_existing_dataset")).toBe("Sembrada desde datos existentes");
     expect(stepLabel("pending_admin_approval")).toBe("Pendiente de aprobación");
     expect(stepLabel("approved_ready")).toBe("Aprobada y lista");
     expect(stepLabel("reactivated_ready")).toBe("Reactivada y lista");
@@ -86,11 +90,14 @@ describe("stepLabel", () => {
 
 describe("connectionStatusFor", () => {
   it("maps freshness to connection status like the legacy grid", () => {
-    expect(connectionStatusFor(undefined)).toBe("unconfigured");
     expect(connectionStatusFor({ age_hours: null, status: "never" })).toBe("unconfigured");
     expect(connectionStatusFor({ age_hours: 30, status: "stale" })).toBe("stale");
     expect(connectionStatusFor({ age_hours: 120, status: "very_stale" })).toBe("very_stale");
     expect(connectionStatusFor({ age_hours: 1, status: "fresh" })).toBe("connected");
+  });
+
+  it("returns null when there is no freshness data for the source", () => {
+    expect(connectionStatusFor(undefined)).toBeNull();
   });
 });
 
@@ -113,7 +120,7 @@ describe("mergeConnectedSources", () => {
     expect(replicon?.ageHours).toBe(2);
     expect(hubspot?.name).toBe("HubSpot CRM Plus");
     expect(hubspot?.installation).toBeNull();
-    expect(hubspot?.connection).toBe("unconfigured");
+    expect(hubspot?.connection).toBeNull();
   });
 
   it("keeps installations whose cartridge is not in the technical list", () => {
@@ -126,6 +133,7 @@ describe("mergeConnectedSources", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe("SAP Business One");
     expect(rows[0].installation?.id).toBe("i2");
+    expect(rows[0].connection).toBeNull();
   });
 
   it("does not duplicate a cartridge present in both lists", () => {
@@ -191,6 +199,14 @@ describe("ConnectedSourceCard freshness-to-status rendering", () => {
     expect(markup).not.toContain("Conectado");
     expect(markup).not.toContain("Falló");
   });
+
+  it("shows a neutral Sin información badge while freshness is unknown", () => {
+    const markup = card({ connection: null });
+    expect(markup).toContain("Sin información");
+    expect(markup).not.toContain("Sin configurar");
+    expect(markup).not.toContain("Conectado");
+    expect(markup).not.toContain("Falló");
+  });
 });
 
 describe("ConnectedSourceCard actions and copy", () => {
@@ -235,5 +251,82 @@ describe("ConnectedSourceCard actions and copy", () => {
     });
     expect(unknown).toContain("Sin información");
     expect(unknown).not.toContain("brand_new_step");
+  });
+
+  it("renders the seeded and activated prod steps in Spanish", () => {
+    const seeded = card({
+      installation: { id: "i1", cartridge_id: "replicon", status: "ready", current_step: "seeded_from_existing_dataset" },
+    });
+    expect(seeded).toContain("Sembrada desde datos existentes");
+    expect(seeded).not.toContain("seeded_from_existing_dataset");
+    const activated = card({
+      installation: { id: "i1", cartridge_id: "replicon", status: "ready", current_step: "activated" },
+    });
+    expect(activated).toContain("Activada");
+    expect(activated).not.toContain("activated");
+  });
+});
+
+describe("connectedSearchValues", () => {
+  it("includes the Spanish labels users see on screen", () => {
+    const values = connectedSearchValues({
+      cartridgeId: "replicon",
+      name: "Replicon",
+      description: null,
+      installation: { id: "i1", cartridge_id: "replicon", status: "requested", current_step: "pending_admin_approval" },
+      product: null,
+      connection: "connected",
+      ageHours: 1,
+    });
+    expect(values).toContain("Conectado");
+    expect(values).toContain("Solicitado");
+    expect(values).toContain("Pendiente de aprobación");
+  });
+
+  it("keeps the raw machine values searchable too", () => {
+    const values = connectedSearchValues({
+      cartridgeId: "replicon",
+      name: "Replicon",
+      description: null,
+      installation: { id: "i1", cartridge_id: "replicon", status: "requested", current_step: "pending_admin_approval" },
+      product: null,
+      connection: "connected",
+      ageHours: 1,
+    });
+    expect(values).toContain("requested");
+    expect(values).toContain("pending_admin_approval");
+  });
+
+  it("does not fabricate labels for sources without installation data", () => {
+    const values = connectedSearchValues({
+      cartridgeId: "banxico",
+      name: "Banxico SIE",
+      description: null,
+      installation: null,
+      product: null,
+      connection: null,
+      ageHours: null,
+    });
+    expect(values).not.toContain("Sin información");
+    expect(values).toContain("Banxico SIE");
+  });
+});
+
+describe("Counter", () => {
+  it("renders the number when real data exists", () => {
+    const markup = renderToStaticMarkup(<Counter label="Instaladas" value={3} />);
+    expect(markup).toContain(">3<");
+    expect(markup).not.toContain("Sin información");
+  });
+
+  it("renders Sin información instead of a fake zero when data is unavailable", () => {
+    const markup = renderToStaticMarkup(<Counter label="Instaladas" value={null} />);
+    expect(markup).toContain("Sin información");
+    expect(markup).not.toContain(">0<");
+  });
+
+  it("never links a tile without a real value", () => {
+    const markup = renderToStaticMarkup(<Counter label="Apps" value={null} href="/analytics" />);
+    expect(markup).not.toContain("href");
   });
 });

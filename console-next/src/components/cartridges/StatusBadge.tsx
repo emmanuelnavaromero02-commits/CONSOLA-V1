@@ -8,7 +8,7 @@ export type ConnectionStatus =
   | "stale"
   | "very_stale";
 
-const LABEL: Record<ConnectionStatus, string> = {
+export const CONNECTION_LABELS: Record<ConnectionStatus, string> = {
   connected:    "Conectado",
   untested:     "Sin probar",
   unconfigured: "Sin configurar",
@@ -49,7 +49,7 @@ export function StatusBadge({
   ageHours?: number | null;
 }) {
   const age = typeof ageHours === "number" && Number.isFinite(ageHours) ? formatAge(ageHours) : null;
-  const label = age ? `${LABEL[status]} (${age})` : LABEL[status];
+  const label = age ? `${CONNECTION_LABELS[status]} (${age})` : CONNECTION_LABELS[status];
   return (
     <span
       className={cn(

@@ -21,6 +21,7 @@ import { getMeAccess } from "@/lib/admin-surfaces";
 import { useActivateCartridge, useCartridgeList } from "@/lib/hooks/useCartridges";
 import { useKpis } from "@/lib/hooks/useKpis";
 import {
+  CONNECTION_LABELS,
   StatusBadge as ConnectionStatusBadge,
   type ConnectionStatus,
 } from "@/components/cartridges/StatusBadge";
@@ -79,6 +80,8 @@ export function deriveTab(param: string | null | undefined, access: TabAccess): 
 }
 
 export const STEP_LABELS: Record<string, string> = {
+  activated: "Activada",
+  seeded_from_existing_dataset: "Sembrada desde datos existentes",
   pending_admin_approval: "Pendiente de aprobación",
   approved_ready: "Aprobada y lista",
   reactivated_ready: "Reactivada y lista",
@@ -96,8 +99,8 @@ export interface FreshnessEntry {
   status: "fresh" | "stale" | "very_stale" | "never";
 }
 
-export function connectionStatusFor(info: FreshnessEntry | undefined): ConnectionStatus {
-  if (!info) return "unconfigured";
+export function connectionStatusFor(info: FreshnessEntry | undefined): ConnectionStatus | null {
+  if (!info) return null;
   if (info.status === "never") return "unconfigured";
   if (info.status === "very_stale") return "very_stale";
   if (info.status === "stale") return "stale";
@@ -145,7 +148,7 @@ export interface ConnectedSource {
   description: string | null;
   installation: CartridgeInstallation | null;
   product: MarketplaceProduct | null;
-  connection: ConnectionStatus;
+  connection: ConnectionStatus | null;
   ageHours: number | null;
 }
 
@@ -165,7 +168,7 @@ export function mergeConnectedSources(input: {
       description: null,
       installation: null,
       product: null,
-      connection: "unconfigured",
+      connection: null,
       ageHours: null,
     };
     byId.set(cartridgeId, created);
@@ -196,6 +199,30 @@ export function mergeConnectedSources(input: {
     row.ageHours = info?.age_hours ?? null;
   }
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
+}
+
+export function connectedLifecycle(source: ConnectedSource): MarketplaceStatus | null {
+  if (source.installation) {
+    return source.installation.access_status || source.installation.status || "available";
+  }
+  return source.product?.access_status ?? null;
+}
+
+export function connectedSearchValues(source: ConnectedSource): Array<string | null | undefined> {
+  const lifecycle = connectedLifecycle(source);
+  return [
+    source.name,
+    source.cartridgeId,
+    source.description,
+    source.connection,
+    source.connection ? CONNECTION_LABELS[source.connection] : null,
+    source.installation?.status,
+    source.installation?.access_status,
+    source.installation?.current_step,
+    source.installation ? stepLabel(source.installation.current_step) : null,
+    lifecycle,
+    lifecycle ? statusCopy(lifecycle).label : null,
+  ];
 }
 
 interface StatusCopy {
@@ -302,14 +329,18 @@ function textSearch(values: Array<string | number | boolean | null | undefined>,
   return values.some((value) => String(value ?? "").toLowerCase().includes(q));
 }
 
-function Counter({ label, value, href }: { label: string; value: number; href?: string }) {
+export function Counter({ label, value, href }: { label: string; value: number | null; href?: string }) {
   const body = (
     <>
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+      {value === null ? (
+        <p className="mt-2 text-sm font-medium text-muted-foreground">Sin información</p>
+      ) : (
+        <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+      )}
     </>
   );
-  if (href && value > 0) {
+  if (href && value !== null && value > 0) {
     return (
       <Link
         href={href}
@@ -504,9 +535,7 @@ export function ConnectedSourceCard({
   onActivate: (cartridgeId: string) => void;
 }) {
   const installation = source.installation;
-  const lifecycle = installation
-    ? installation.access_status || installation.status || "available"
-    : source.product?.access_status ?? null;
+  const lifecycle = connectedLifecycle(source);
   const isActive = lifecycle === "active" || lifecycle === "ready";
   return (
     <article className="flex flex-col gap-4 rounded-lg border bg-card p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -525,7 +554,13 @@ export function ConnectedSourceCard({
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <ConnectionStatusBadge status={source.connection} ageHours={source.ageHours} />
+        {source.connection ? (
+          <ConnectionStatusBadge status={source.connection} ageHours={source.ageHours} />
+        ) : (
+          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            Sin información
+          </span>
+        )}
         {lifecycle ? <StatusBadge status={lifecycle} /> : null}
         {installation && installation.can_retry ? (
           <button
@@ -625,30 +660,20 @@ function ConnectedView({
   );
 
   const filtered = useMemo(
-    () =>
-      merged.filter((source) =>
-        textSearch(
-          [
-            source.name,
-            source.cartridgeId,
-            source.description,
-            source.connection,
-            source.installation?.status,
-            source.installation?.access_status,
-            source.installation?.current_step,
-          ],
-          query,
-        ),
-      ),
+    () => merged.filter((source) => textSearch(connectedSearchValues(source), query)),
     [merged, query],
   );
 
-  const connectedCount = merged.filter((source) => source.connection === "connected").length;
-  const pendingCount = merged.filter((source) => {
-    const lifecycle = source.installation?.access_status || source.installation?.status;
-    return ["requested", "pending_approval", "pending_connection", "waiting_credentials"].includes(String(lifecycle || ""));
-  }).length;
-  const loading = cartridgeList.isLoading || installations.isLoading;
+  const connectedCount = kpis.data
+    ? merged.filter((source) => source.connection === "connected").length
+    : null;
+  const pendingCount = installations.data
+    ? merged.filter((source) => {
+        const lifecycle = source.installation?.access_status || source.installation?.status;
+        return ["requested", "pending_approval", "pending_connection", "waiting_credentials"].includes(String(lifecycle || ""));
+      }).length
+    : null;
+  const loading = cartridgeList.isLoading || installations.isLoading || kpis.isLoading;
 
   return (
     <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
@@ -671,7 +696,7 @@ function ConnectedView({
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Métricas de fuentes conectadas">
         <Counter label="Fuentes" value={merged.length} />
         <Counter label="Conectadas" value={connectedCount} />
-        <Counter label="Instaladas" value={installations.data?.installations.length ?? 0} />
+        <Counter label="Instaladas" value={installations.data ? installations.data.installations.length : null} />
         <Counter label="Pendientes" value={pendingCount} />
       </section>
 
@@ -734,13 +759,19 @@ function CatalogView({ canAdmin }: { canAdmin: boolean }) {
       product.cartridge_id,
       product.description,
       product.category,
+      product.access_status,
+      statusCopy(product.access_status ?? "available").label,
       ...(product.commercial?.data_domains ?? []),
     ], query)),
     [products.data?.products, query],
   );
 
-  const activeCount = (products.data?.products ?? []).filter((p) => p.access_status === "active").length;
-  const pendingCount = (products.data?.products ?? []).filter((p) => p.access_status === "pending_approval").length;
+  const activeCount = products.data
+    ? products.data.products.filter((p) => p.access_status === "active").length
+    : null;
+  const pendingCount = products.data
+    ? products.data.products.filter((p) => p.access_status === "pending_approval").length
+    : null;
 
   return (
     <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
@@ -761,8 +792,8 @@ function CatalogView({ canAdmin }: { canAdmin: boolean }) {
       </header>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Métricas marketplace">
-        <Counter label="Productos" value={products.data?.products.length ?? 0} />
-        <Counter label="Instalados" value={installations.data?.installations.length ?? 0} />
+        <Counter label="Productos" value={products.data ? products.data.products.length : null} />
+        <Counter label="Instalados" value={installations.data ? installations.data.installations.length : null} />
         <Counter label="Activos" value={activeCount} />
         <Counter label="Pendientes" value={pendingCount} />
       </section>
@@ -945,7 +976,7 @@ function AdminInstallationRow({
   );
 }
 
-function AdminView({ canAdmin, accessLoading }: { canAdmin: boolean; accessLoading: boolean }) {
+function AdminView({ canAdmin }: { canAdmin: boolean }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [openAccessId, setOpenAccessId] = useState<string | null>(null);
@@ -975,14 +1006,18 @@ function AdminView({ canAdmin, accessLoading }: { canAdmin: boolean; accessLoadi
       row.tenant_name,
       row.workspace_name,
       row.status,
+      statusCopy(row.access_status || row.status).label,
       row.current_step,
+      stepLabel(row.current_step),
       row.created_by_email,
     ], query)),
     [installations.data?.installations, query],
   );
-  const ready = rows.filter((row) => row.status === "ready").length;
-  const requested = rows.filter((row) => row.status === "requested").length;
-  const blocked = rows.filter((row) => ["paused", "revoked", "expired", "suspended"].includes(String(row.status))).length;
+  const ready = installations.data ? rows.filter((row) => row.status === "ready").length : null;
+  const requested = installations.data ? rows.filter((row) => row.status === "requested").length : null;
+  const blocked = installations.data
+    ? rows.filter((row) => ["paused", "revoked", "expired", "suspended"].includes(String(row.status))).length
+    : null;
 
   return (
     <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
@@ -1003,13 +1038,13 @@ function AdminView({ canAdmin, accessLoading }: { canAdmin: boolean; accessLoadi
       </header>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Métricas de instalaciones">
-        <Counter label="Instalaciones" value={installations.data?.installations.length ?? 0} />
+        <Counter label="Instalaciones" value={installations.data ? installations.data.installations.length : null} />
         <Counter label="Pendientes" value={requested} />
         <Counter label="Activas" value={ready} />
         <Counter label="Bloqueadas" value={blocked} />
       </section>
 
-      {!canAdmin && !accessLoading ? (
+      {!canAdmin ? (
         <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           No tienes permiso para administrar marketplace.
         </div>
@@ -1019,7 +1054,7 @@ function AdminView({ canAdmin, accessLoading }: { canAdmin: boolean; accessLoadi
       ) : null}
 
       <section className="space-y-3" aria-label="Instalaciones">
-        {installations.isLoading || accessLoading ? (
+        {installations.isLoading ? (
           Array.from({ length: 4 }).map((_, index) => (
             <div key={index} className="h-32 animate-pulse rounded-lg border bg-card" aria-hidden />
           ))
@@ -1061,21 +1096,33 @@ function MarketplaceShell() {
   const access = useQuery({ queryKey: ["me", "access"], queryFn: getMeAccess, staleTime: 60_000 });
   const capabilities = access.data?.ui_capabilities;
   const canAdmin = capabilities?.can_admin_marketplace === true;
-  const canCatalog = access.isError ? true : capabilities?.can_view_marketplace === true;
-  const canConfigure = access.isError ? true : capabilities?.can_view_cartridges === true;
+  const canCatalog = capabilities?.can_view_marketplace === true;
+  const canConfigure = capabilities?.can_view_cartridges === true;
   const canConnected = canConfigure || canCatalog;
   const installations = useQuery({
     queryKey: ["marketplace", "customer"],
     queryFn: listCustomerCartridges,
-    enabled: !access.isLoading && canCatalog,
+    enabled: access.isSuccess && canCatalog,
   });
   const hasConnected = (installations.data?.installations.length ?? 0) > 0;
   const tabAccess: TabAccess = { canConnected, canCatalog, canAdmin, hasConnected };
 
-  const requestedIsValid = ["conectadas", "catalogo", "licencias"].includes(String(tabParam || "").trim().toLowerCase());
-  const waitingForDefault = !requestedIsValid && canCatalog && canConnected && installations.isLoading;
+  const normalized = String(tabParam || "").trim().toLowerCase();
+  const requestedTab: MarketplaceTab | null =
+    normalized === "conectadas" || normalized === "catalogo" || normalized === "licencias" ? normalized : null;
+  const requestedAllowed =
+    requestedTab !== null &&
+    (requestedTab === "conectadas" ? canConnected : requestedTab === "catalogo" ? canCatalog : canAdmin);
+  const waitingForDefault = !requestedAllowed && canCatalog && canConnected && installations.isLoading;
   if (access.isLoading || waitingForDefault) {
     return <MarketplaceSkeleton />;
+  }
+  if (access.isError) {
+    return (
+      <main className="mx-auto max-w-6xl px-6 py-8">
+        <ErrorPanel message="No se pudo cargar tu acceso." onRetry={() => access.refetch()} />
+      </main>
+    );
   }
 
   const tab = deriveTab(tabParam, tabAccess);
@@ -1084,7 +1131,7 @@ function MarketplaceShell() {
     <>
       <MarketplaceTabs tab={tab} access={tabAccess} />
       {mode === "admin" ? (
-        <AdminView canAdmin={canAdmin} accessLoading={access.isLoading} />
+        <AdminView canAdmin={canAdmin} />
       ) : mode === "catalog" ? (
         <CatalogView canAdmin={canAdmin} />
       ) : (
