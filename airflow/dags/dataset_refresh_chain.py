@@ -13,6 +13,7 @@ from dataset_refresh_graph import _required_scope, resolve_chain as _resolve_cha
 from dataset_refresh_finalization import finalize_pipeline_status
 from dataset_refresh_materialize import materialize_in_order as _materialize_in_order
 from dataset_refresh_outcome import (
+    materialization_breakdown,
     materialization_status,
     require_successful_intelligence_response,
     require_successful_registry_response,
@@ -194,6 +195,10 @@ def record_run(**ctx):
     allow_partial = bool(conf.get("allow_partial"))
     raw_invocation, task_state = _materialization_result(ctx)
     status = materialization_status(raw_invocation, task_state=task_state)
+    breakdown = materialization_breakdown(raw_invocation)
+    skips_only_partial = (
+        status == "partial" and breakdown is not None and breakdown["failed"] == 0
+    )
     invocation = dict(raw_invocation) if isinstance(raw_invocation, dict) else {}
     tenant_id, workspace_id = _required_scope(conf)
     cartridge = str(
@@ -250,12 +255,15 @@ def record_run(**ctx):
     finalize_pipeline_status(
         final_status=status,
         should_trigger_intelligence=(
-            status == "success" or (status == "partial" and allow_partial)
+            status == "success"
+            or (status == "partial" and (allow_partial or skips_only_partial))
         ),
         save_status=save_status,
         trigger_intelligence=trigger_intelligence,
     )
-    if status == "failed" or (status == "partial" and not allow_partial):
+    if status == "failed" or (
+        status == "partial" and not allow_partial and not skips_only_partial
+    ):
         raise RuntimeError("dataset_refresh_chain recorded a failed run")
 
 

@@ -169,7 +169,10 @@ def test_dataset_refresh_chain_notifies_console_after_pipeline_save_only_for_gol
     assert "/internal/intelligence/gold-refresh" in source
     assert "pipeline_run_id = f\"dataset_refresh_chain:{ctx['run_id']}\"" in source
     assert "_successful_materialized_datasets(results)" in source
-    assert 'status == "success" or (status == "partial" and allow_partial)' in source
+    assert 'status == "success"' in source
+    assert (
+        'or (status == "partial" and (allow_partial or skips_only_partial))' in source
+    )
     pipeline_save_pos = source.index('"tool": "pipeline_run_save"')
     trigger_pos = source.rindex("_trigger_gold_refresh_intelligence(")
     assert pipeline_save_pos < trigger_pos

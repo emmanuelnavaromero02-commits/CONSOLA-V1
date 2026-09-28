@@ -3,6 +3,42 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+RESULT_OK = "ok"
+RESULT_SKIPPED_UPSTREAM_MISSING = "skipped_upstream_missing"
+RESULT_FAILED = "failed"
+
+_MISSING_UPSTREAM_ERROR_CODES = {
+    "source_files_missing",
+    "dependency_not_materialized",
+    "missing_materialized_dependencies",
+}
+_MISSING_UPSTREAM_FALLBACK_REASON = "missing_materialized_dependency"
+
+
+def missing_upstream_error_code(exc: Any) -> str | None:
+    if getattr(exc, "status_code", None) != 409:
+        return None
+    result = getattr(exc, "result", None)
+    detail = result.get("detail") if isinstance(result, Mapping) else None
+    code = str(detail.get("code") or "") if isinstance(detail, Mapping) else ""
+    return code if code in _MISSING_UPSTREAM_ERROR_CODES else None
+
+
+def missing_upstream_fallback_reason(payload: Any, *, expected_name: str) -> str | None:
+    if not isinstance(payload, Mapping) or payload.get("error"):
+        return None
+    if "ok" in payload and payload.get("ok") is not True:
+        return None
+    if payload.get("fallback") is not True:
+        return None
+    if str(payload.get("fallback_reason") or "") != _MISSING_UPSTREAM_FALLBACK_REASON:
+        return None
+    if str(payload.get("name") or "") != expected_name:
+        return None
+    if payload.get("layer") not in {"silver", "gold"}:
+        return None
+    return _MISSING_UPSTREAM_FALLBACK_REASON
+
 
 def _payload(response: Any) -> Mapping[str, Any]:
     if not 200 <= int(getattr(response, "status_code", 0)) < 300:
@@ -70,11 +106,9 @@ def require_successful_intelligence_response(response: Any) -> dict[str, Any]:
     return dict(payload)
 
 
-def materialization_status(invocation: object, *, task_state: str) -> str:
-    if task_state != "success" or not isinstance(invocation, Mapping):
-        return "failed"
-    if "error" in invocation:
-        return "failed"
+def _classified_counts(invocation: object) -> tuple[int, int, int, int] | None:
+    if not isinstance(invocation, Mapping) or "error" in invocation:
+        return None
     results = invocation.get("results")
     completed = invocation.get("materialized")
     if (
@@ -83,26 +117,77 @@ def materialization_status(invocation: object, *, task_state: str) -> str:
         or not isinstance(completed, int)
         or completed < 0
     ):
-        return "failed"
-    typed: list[Mapping[str, Any]] = []
+        return None
+    succeeded = skipped = failed = 0
     for item in results:
         if not isinstance(item, Mapping):
-            return "failed"
-        if not isinstance(item.get("ok"), bool):
-            return "failed"
+            return None
+        ok = item.get("ok")
+        if not isinstance(ok, bool):
+            return None
         if not str(item.get("name") or "").strip():
-            return "failed"
-        typed.append(item)
-    succeeded = sum(1 for item in typed if item.get("ok") is True)
+            return None
+        classification = item.get("classification")
+        if classification is None:
+            classification = RESULT_OK if ok else RESULT_FAILED
+        if classification == RESULT_OK:
+            if ok is not True:
+                return None
+            succeeded += 1
+        elif classification == RESULT_SKIPPED_UPSTREAM_MISSING:
+            if ok is not False:
+                return None
+            skipped += 1
+        elif classification == RESULT_FAILED:
+            if ok is not False:
+                return None
+            failed += 1
+        else:
+            return None
     if completed != succeeded:
+        return None
+    declared = invocation.get("breakdown")
+    if declared is not None:
+        if not isinstance(declared, Mapping):
+            return None
+        if any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in declared.values()
+        ):
+            return None
+        if dict(declared) != {
+            RESULT_OK: succeeded,
+            RESULT_SKIPPED_UPSTREAM_MISSING: skipped,
+            RESULT_FAILED: failed,
+        }:
+            return None
+    return succeeded, skipped, failed, len(results)
+
+
+def materialization_breakdown(invocation: object) -> dict[str, int] | None:
+    counts = _classified_counts(invocation)
+    if counts is None:
+        return None
+    succeeded, skipped, failed, _ = counts
+    return {
+        RESULT_OK: succeeded,
+        RESULT_SKIPPED_UPSTREAM_MISSING: skipped,
+        RESULT_FAILED: failed,
+    }
+
+
+def materialization_status(invocation: object, *, task_state: str) -> str:
+    if task_state != "success":
         return "failed"
+    counts = _classified_counts(invocation)
+    if counts is None:
+        return "failed"
+    succeeded, skipped, failed, total = counts
     reported = invocation.get("status")
     if reported == "no_downstream_datasets":
-        return "noop" if completed == 0 and not typed else "failed"
-    if reported != "completed" or not typed:
+        return "noop" if total == 0 else "failed"
+    if reported != "completed" or total == 0:
         return "failed"
-    if succeeded == len(typed):
-        return "success"
-    if 0 < succeeded < len(typed):
-        return "partial"
-    return "failed"
+    if failed == 0:
+        return "success" if skipped == 0 else "partial"
+    return "partial" if succeeded > 0 else "failed"

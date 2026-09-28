@@ -13,7 +13,14 @@ from dataset_refresh_idempotency import (
     heartbeat_materialization,
     reserve_materialization,
 )
-from dataset_refresh_outcome import require_successful_materialization_payload
+from dataset_refresh_outcome import (
+    RESULT_FAILED,
+    RESULT_OK,
+    RESULT_SKIPPED_UPSTREAM_MISSING,
+    missing_upstream_error_code,
+    missing_upstream_fallback_reason,
+    require_successful_materialization_payload,
+)
 from runtime_security_context import build_materialize_context
 from service_job_client import ServiceJobError, run_service_job
 
@@ -29,8 +36,18 @@ def _safe_result(
         "name": name,
         "layer": str(payload.get("layer") or ""),
         "ok": True,
+        "classification": RESULT_OK,
         "reused": reused,
         "row_count": int(payload.get("row_count") or 0),
+    }
+
+
+def _skipped_result(name: str, reason: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "ok": False,
+        "classification": RESULT_SKIPPED_UPSTREAM_MISSING,
+        "reason": reason,
     }
 
 
@@ -113,7 +130,16 @@ def materialize_in_order(
         raise RuntimeError("scoped cartridge is unavailable")
     _validate_plan(plan, cartridge_id)
     if not plan:
-        result = {"materialized": 0, "results": [], "status": "no_downstream_datasets"}
+        result = {
+            "materialized": 0,
+            "results": [],
+            "status": "no_downstream_datasets",
+            "breakdown": {
+                RESULT_OK: 0,
+                RESULT_SKIPPED_UPSTREAM_MISSING: 0,
+                RESULT_FAILED: 0,
+            },
+        }
         context["ti"].xcom_push(key="result", value=result)
         return result
     allow_partial = bool(conf.get("allow_partial"))
@@ -161,30 +187,44 @@ def materialize_in_order(
                 "runtime materialization authority failed closed"
             ) from exc
         try:
-            payload = require_successful_materialization_payload(
-                _invoke_materialize(
-                    refinement_url,
-                    headers=headers("REFINEMENT", context),
-                    name=name,
-                    first_context=security_context,
-                    context_factory=lambda: build_materialize_context(
-                        tenant_id=tenant_id,
-                        workspace_id=workspace_id,
-                        cartridge_id=cartridge_id,
-                        dataset_name=name,
-                        run_id=str(context["run_id"]),
-                    ),
-                    keep_lease=_lease_keeper(
-                        postgres_dsn,
-                        slot_id=slot_id,
-                        tenant_id=tenant_id,
-                        workspace_id=workspace_id,
-                        lease_token=lease_token,
-                    ),
-                    key="materialize:"
-                    + hashlib.sha256(f"{slot_id}:{lease_token}".encode()).hexdigest(),
+            raw_payload = _invoke_materialize(
+                refinement_url,
+                headers=headers("REFINEMENT", context),
+                name=name,
+                first_context=security_context,
+                context_factory=lambda: build_materialize_context(
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    cartridge_id=cartridge_id,
+                    dataset_name=name,
+                    run_id=str(context["run_id"]),
                 ),
-                expected_name=name,
+                keep_lease=_lease_keeper(
+                    postgres_dsn,
+                    slot_id=slot_id,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    lease_token=lease_token,
+                ),
+                key="materialize:"
+                + hashlib.sha256(f"{slot_id}:{lease_token}".encode()).hexdigest(),
+            )
+            fallback_reason = missing_upstream_fallback_reason(
+                raw_payload, expected_name=name
+            )
+            if fallback_reason is not None:
+                finish_materialization(
+                    postgres_dsn,
+                    slot_id=slot_id,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    lease_token=lease_token,
+                    success=False,
+                )
+                results.append(_skipped_result(name, fallback_reason))
+                continue
+            payload = require_successful_materialization_payload(
+                raw_payload, expected_name=name
             )
             safe = _safe_result(name, payload)
             finish_materialization(
@@ -210,12 +250,36 @@ def materialize_in_order(
                 raise RuntimeError(
                     "runtime materialization authority failed closed"
                 ) from exc
-            results.append(
-                {"name": name, "ok": False, "error_code": type(exc).__name__}
-            )
+            missing_code = missing_upstream_error_code(exc)
+            if missing_code is not None:
+                results.append(_skipped_result(name, missing_code))
+            else:
+                results.append(
+                    {
+                        "name": name,
+                        "ok": False,
+                        "classification": RESULT_FAILED,
+                        "error_code": type(exc).__name__,
+                    }
+                )
     materialized = sum(1 for item in results if item["ok"])
-    result = {"materialized": materialized, "results": results, "status": "completed"}
+    skipped = sum(
+        1
+        for item in results
+        if item.get("classification") == RESULT_SKIPPED_UPSTREAM_MISSING
+    )
+    failed = len(results) - materialized - skipped
+    result = {
+        "materialized": materialized,
+        "results": results,
+        "status": "completed",
+        "breakdown": {
+            RESULT_OK: materialized,
+            RESULT_SKIPPED_UPSTREAM_MISSING: skipped,
+            RESULT_FAILED: failed,
+        },
+    }
     context["ti"].xcom_push(key="result", value=result)
-    if materialized != len(results) and not allow_partial:
+    if failed and not allow_partial:
         raise RuntimeError("dataset_refresh_chain has failed materializations")
     return result
