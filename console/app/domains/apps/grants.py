@@ -81,6 +81,23 @@ async def reconcile_app(
     ]
 
 
+async def reconcile_workspace_app(
+    conn: Any,
+    *,
+    app_name: str,
+) -> list[dict[str, str]]:
+    if not APP_NAME_RE.fullmatch(str(app_name or "")):
+        return []
+    rows = await conn.fetch(
+        "SELECT dataset_name, action FROM "
+        "public.reconcile_workspace_app_dataset_grants($1)",
+        str(app_name),
+    )
+    return [
+        {"dataset": str(r["dataset_name"]), "action": str(r["action"])} for r in rows
+    ]
+
+
 async def reconcile_workspace(
     conn: Any,
     *,

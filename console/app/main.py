@@ -61,7 +61,9 @@ from app.domains.apps.embed import (
     workspace_server_url as _workspace_server_url_impl,
 )
 from app.domains.apps.manifests import (
+    active_workspace_manifest as _active_workspace_manifest,
     drift_report as _app_drift_report,
+    html_sha256 as _app_html_sha256,
     packaged_manifest as _packaged_manifest,
     served_digest as _served_manifest_digest,
 )
@@ -2871,12 +2873,12 @@ async def _build_app_embed_response(
     request: Request, name: str, user: dict | None
 ) -> HTMLResponse:
     _validate_dataset_name(name)
-    _html_text, granted, digest, cartridge = await _app_grant_context(
+    _html_text, granted, digest, cartridge, stale = await _app_grant_context(
         request, name, user
     )
     nonce = secrets.token_urlsafe(16)
     capability = None
-    if digest:
+    if digest and not stale:
         tenant_id, workspace_id = await _app_scope_for(user)
         capability = _issue_content_capability(
             app_name=name,
@@ -2887,7 +2889,9 @@ async def _build_app_embed_response(
             manifest_digest=digest,
         )
     return HTMLResponse(
-        content=_app_embed_wrapper_html(name, granted, nonce, capability=capability),
+        content=_app_embed_wrapper_html(
+            name, granted, nonce, capability=capability, stale=stale
+        ),
         headers={
             "Content-Security-Policy": _app_embed_csp(nonce),
             "X-Frame-Options": "SAMEORIGIN",
@@ -2905,12 +2909,12 @@ async def _require_app_scoped_grant(
     if _api_navigation_blocked(request.headers):
         raise denied
     try:
-        html_text, granted, digest, _cartridge = await _app_grant_context(
+        html_text, granted, digest, _cartridge, stale = await _app_grant_context(
             request, app_name, user
         )
     except HTTPException:
         raise denied
-    if not digest or dataset not in granted:
+    if stale or not digest or dataset not in granted:
         raise denied
 
 
@@ -2929,7 +2933,7 @@ async def _app_scope_for(user: dict | None) -> tuple[str, str]:
 
 async def _app_grant_context(
     request: Request, name: str, user: dict | None
-) -> tuple[str, list[str], str | None, str | None]:
+) -> tuple[str, list[str], str | None, str | None, bool]:
     html_text, app_row = await _refinement_app_html(
         name, getattr(request.state, "user", None) or user or {}
     )
@@ -2939,6 +2943,31 @@ async def _app_grant_context(
         {"name": name, **(app_row or {})}
     )
     granted: list[str] = []
+    stale = False
+    if manifest is None and not digest:
+        # Not packaged: fall back to the scoped active workspace publication.
+        tenant_id, workspace_id = await _app_scope_for(user)
+        registered = None
+        try:
+            pool = await _get_db_pool()
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await _set_rls_scope(conn, tenant_id, workspace_id)
+                    registered = await _active_workspace_manifest(conn, name)
+        except Exception:
+            logger.warning(
+                "[app-grants] workspace manifest lookup failed for %s",
+                name,
+                exc_info=True,
+            )
+        if registered is not None:
+            if _app_html_sha256(html_text) == registered["html_sha256"]:
+                digest = registered["manifest_digest"]
+                cartridge = registered["cartridge_id"]
+            else:
+                # Fail closed: served HTML drifted from the registered
+                # publication, so no digest, no capability, no grants.
+                stale = True
     if digest:
         tenant_id, workspace_id = await _app_scope_for(user)
         try:
@@ -2956,7 +2985,7 @@ async def _app_grant_context(
         except Exception:
             logger.warning("[app-grants] grant lookup failed for %s", name, exc_info=True)
             granted = []
-    return html_text, granted, digest, cartridge
+    return html_text, granted, digest, cartridge, stale
 
 
 async def _workspace_app_content_for_embed(
