@@ -1,12 +1,23 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Database, FilePlus2, Play, Save, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { AssistedExplorer } from "@/components/explorer/AssistedExplorer";
+import { TechnicalSqlDisclosure } from "@/components/explorer/TechnicalSqlDisclosure";
 import { queryBronze } from "@/lib/data/client";
 import type { BronzeQueryPayload } from "@/lib/data/types";
+import { describeSource, exploreData, exploreRowsAsRecords } from "@/lib/explorer/client";
+import {
+  BRONZE_ROW_CAP,
+  EMPTY_SPEC,
+  buildExploreRequest,
+  sourceFromKey,
+  specProblems,
+  type ExplorerSpec,
+} from "@/lib/explorer/spec";
 import { useDatasetDetail, useDatasets } from "@/lib/monitor/hooks";
 import type { DatasetDetail } from "@/lib/monitor/types";
 import { studioErrorMessage } from "@/lib/studio/client";
@@ -31,6 +42,18 @@ import {
 } from "./ui";
 
 const NEW_DATASET = "__new__";
+const PREVIEW_ROWS = 50;
+
+type EditMode = "builder" | "technical";
+
+interface PendingSave {
+  sql: string;
+  sources: string[];
+}
+
+interface GeneratedSql extends PendingSave {
+  origin: string;
+}
 
 interface RefineForm {
   name: string;
@@ -71,6 +94,12 @@ function previewColumns(payload: BronzeQueryPayload | null): string[] {
   return [];
 }
 
+function without<T>(record: Record<string, T>, drop: string): Record<string, T> {
+  const next = { ...record };
+  delete next[drop];
+  return next;
+}
+
 function initialDrafts(target: StudioEditorTarget | null | undefined): Record<string, RefineForm> {
   return target?.entity && !target.dataset ? { [NEW_DATASET]: { ...EMPTY_FORM, entity: target.entity } } : {};
 }
@@ -92,6 +121,11 @@ export function RefinePanel({
     initialTarget?.dataset ?? (initialTarget?.entity ? NEW_DATASET : null),
   );
   const [drafts, setDrafts] = useState<Record<string, RefineForm>>(() => initialDrafts(initialTarget));
+  const [specs, setSpecs] = useState<Record<string, ExplorerSpec>>({});
+  const [modes, setModes] = useState<Record<string, EditMode>>({});
+  const [generated, setGenerated] = useState<Record<string, GeneratedSql>>({});
+  const [sqlShown, setSqlShown] = useState(false);
+  const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const existing = selected && selected !== NEW_DATASET ? selected : null;
   const detail = useDatasetDetail(existing);
@@ -112,8 +146,46 @@ export function RefinePanel({
     sql: form.sql,
   });
 
+  // Existing datasets keep arbitrary SQL that cannot be mapped back to the builder.
+  const mode: EditMode = modes[key] ?? (existing ? "technical" : "builder");
+  const spec = specs[key] ?? EMPTY_SPEC;
+  const builderSource = form.entity ? sourceFromKey(`raw/${cartridge}/${form.entity}`) : null;
+  const builderActive = Boolean(selected) && mode === "builder";
+  const builderOrigin = JSON.stringify([
+    form.entity,
+    spec.columns,
+    spec.filters.map((filter) => [filter.column, filter.op, filter.value, filter.valueTo]),
+    spec.sort,
+    spec.latestOnly,
+  ]);
+  const lastGenerated = generated[key] ?? null;
+  const generatedSql = lastGenerated?.origin === builderOrigin ? lastGenerated.sql : null;
+  const displaySources = mode === "builder" && builderSource ? [`raw/${cartridge}/${form.entity}`] : sources;
+  const schema = useQuery({
+    queryKey: ["explorer", "schema", builderSource ? `raw/${cartridge}/${form.entity}` : ""],
+    queryFn: () => describeSource(builderSource!),
+    enabled: builderActive && Boolean(builderSource),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const builderColumns = schema.data?.available_columns ?? [];
+
   const preview = useMutation({
-    mutationFn: () => queryBronze({ sql: form.sql.trim(), limit: 50, sources }),
+    mutationFn: async (runMode: EditMode): Promise<BronzeQueryPayload> => {
+      if (runMode === "technical") return queryBronze({ sql: form.sql.trim(), limit: PREVIEW_ROWS, sources });
+      const response = await exploreData(
+        buildExploreRequest(builderSource!, { ...spec, limit: PREVIEW_ROWS }, { execute: true }),
+      );
+      return {
+        columns: response.columns,
+        rows: exploreRowsAsRecords(response),
+        sql_definition: response.sql_definition,
+        sources: response.sources,
+      };
+    },
+  });
+  const compile = useMutation({
+    mutationFn: () => exploreData(buildExploreRequest(builderSource!, spec, { execute: false })),
   });
   const rows = previewRows(preview.data ?? null);
   const columns = previewColumns(preview.data ?? null);
@@ -127,8 +199,44 @@ export function RefinePanel({
     setDrafts((current) => ({ ...current, [key]: { ...form, ...patch } }));
   }
 
+  function setMode(next: EditMode) {
+    if (next === mode) return;
+    setModes((current) => ({ ...current, [key]: next }));
+    preview.reset();
+  }
+
+  function rememberGenerated(sql: unknown, sqlSources: unknown) {
+    if (typeof sql !== "string" || !sql || !Array.isArray(sqlSources) || !sqlSources.length) return;
+    const entry = { sql, sources: sqlSources.map(String), origin: builderOrigin };
+    setGenerated((current) => ({ ...current, [key]: entry }));
+  }
+
+  function forgetDraft(draftKey: string) {
+    setSpecs((current) => without(current, draftKey));
+    setGenerated((current) => without(current, draftKey));
+    setModes((current) => without(current, draftKey));
+  }
+
+  function editGenerated() {
+    if (!generatedSql) return;
+    if (form.sql.trim() && form.sql.trim() !== generatedSql) {
+      toast.error("El editor SQL técnico ya tiene otra consulta; bórrala antes de copiar la generada.");
+      return;
+    }
+    update({ sql: generatedSql });
+    setMode("technical");
+  }
+
+  function builderProblem(): string | null {
+    if (!builderSource) return "Elige la entidad bronze para usar el constructor.";
+    if (schema.isLoading) return "Espera a que carguen las columnas de la entidad.";
+    return specProblems(spec, builderColumns)[0] ?? null;
+  }
+
   function select(name: string) {
+    if (name === NEW_DATASET && !drafts[NEW_DATASET]) forgetDraft(NEW_DATASET);
     setSelected(name);
+    setSqlShown(false);
     preview.reset();
   }
 
@@ -137,30 +245,72 @@ export function RefinePanel({
   }
 
   function runPreview() {
+    if (mode === "builder") {
+      const problem = builderProblem();
+      if (problem) {
+        toast.error(problem);
+        return;
+      }
+      preview.mutate("builder", { onSuccess: (payload) => rememberGenerated(payload.sql_definition, payload.sources) });
+      return;
+    }
     if (!form.sql.trim()) {
       toast.error("Escribe una consulta SQL.");
       return;
     }
-    preview.mutate();
+    preview.mutate("technical");
   }
 
   function runSave() {
+    if (mode === "builder") {
+      const problem = identifierError(form.name, "El nombre") ?? builderProblem();
+      if (problem) {
+        toast.error(problem);
+        return;
+      }
+      compile.mutate(undefined, {
+        onSuccess: (compiled) => {
+          if (!compiled.sql_definition || !compiled.sources.length) {
+            toast.error("El servidor no devolvió la definición SQL.");
+            return;
+          }
+          const next = { sql: compiled.sql_definition, sources: compiled.sources };
+          const typed = form.sql.trim();
+          rememberGenerated(next.sql, next.sources);
+          if (typed && typed !== next.sql && typed !== lastGenerated?.sql) {
+            setPendingSave(next);
+            return;
+          }
+          persistBuilder(next);
+        },
+        onError: (error) => toast.error(studioErrorMessage(error, "No se pudo generar la consulta del dataset.")),
+      });
+      return;
+    }
     const problem = validate();
     if (problem) {
       toast.error(problem);
       return;
     }
+    const typed = form.sql.trim();
+    persist(typed, lastGenerated && typed === lastGenerated.sql ? lastGenerated.sources : sources);
+  }
+
+  function persistBuilder(next: PendingSave) {
+    update({ sql: next.sql });
+    persist(next.sql, next.sources);
+  }
+
+  function persist(sql: string, declaredSources: string[]) {
     const name = form.name.trim();
     save.mutate(
-      { name, layer: form.layer, sql: form.sql.trim(), description: form.description.trim(), cartridge, sources },
+      { name, layer: form.layer, sql, description: form.description.trim(), cartridge, sources: declaredSources },
       {
         onSuccess: () => {
           toast.success(`Dataset ${name} guardado.`);
-          setDrafts((current) => {
-            const next = { ...current };
-            delete next[key];
-            return next;
-          });
+          setDrafts((current) => without(current, key));
+          forgetDraft(key);
+          setModes((current) => ({ ...current, [name]: "technical" }));
           setSelected(name);
         },
         onError: (error) => toast.error(studioErrorMessage(error, "No se pudo guardar el dataset.")),
@@ -277,7 +427,66 @@ export function RefinePanel({
               <span className="font-medium">Descripción</span>
               <input value={form.description} onChange={(event) => update({ description: event.target.value })} className={inputClass} />
             </label>
-            <div className="flex flex-col gap-1 text-sm">
+            <div role="radiogroup" aria-label="Modo de edición" className="inline-flex flex-wrap gap-1 rounded-md border p-1">
+              {([
+                ["builder", "Constructor visual"],
+                ["technical", "SQL técnico"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === value}
+                  onClick={() => setMode(value)}
+                  className={cn(
+                    "min-h-[40px] rounded px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    mode === value ? "bg-primary text-primary-foreground" : "hover:bg-accent/5",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {mode === "builder" ? (
+              <section aria-label="Constructor de consulta" className="space-y-3 rounded-md border p-3">
+                {existing ? (
+                  <Notice tone="warning">
+                    Este dataset ya tiene SQL propio. Si guardas desde el constructor, la consulta se reemplaza por una nueva
+                    generada a partir de la entidad bronze elegida.
+                  </Notice>
+                ) : null}
+                {!form.entity ? (
+                  <Notice>Elige la entidad bronze para construir la consulta sin escribir SQL.</Notice>
+                ) : !builderSource ? (
+                  <Notice tone="error">La entidad «{form.entity}» no tiene un nombre compatible con el constructor.</Notice>
+                ) : (
+                  <AssistedExplorer
+                    columns={builderColumns}
+                    spec={spec}
+                    onSpecChange={(next) => setSpecs((current) => ({ ...current, [key]: next }))}
+                    rowCap={BRONZE_ROW_CAP}
+                    showRowLimit={false}
+                    latestAvailable={builderColumns.some((column) => column.name === "load_date")}
+                    loading={schema.isLoading}
+                    error={schema.isError ? studioErrorMessage(schema.error, "No se pudo leer el esquema de la entidad.") : null}
+                    disabled={preview.isPending || compile.isPending}
+                  />
+                )}
+                <TechnicalSqlDisclosure
+                  open={sqlShown}
+                  onToggle={setSqlShown}
+                  generatedSql={generatedSql}
+                  onUseGenerated={editGenerated}
+                >
+                  {generatedSql ? null : (
+                    <p className="text-xs text-muted-foreground">
+                      Previsualiza o guarda para ver la consulta SQL que genera el servidor.
+                    </p>
+                  )}
+                </TechnicalSqlDisclosure>
+              </section>
+            ) : null}
+            <div hidden={mode !== "technical"} className="flex flex-col gap-1 text-sm">
               <label htmlFor="studio-sql" className="font-medium">SQL</label>
               <CodeEditor
                 id="studio-sql"
@@ -289,14 +498,14 @@ export function RefinePanel({
               />
             </div>
             <p className="break-all text-xs text-muted-foreground">
-              Fuentes: {sources.length ? sources.join(", ") : "ninguna declarada"}
+              Fuentes: {displaySources.length ? displaySources.join(", ") : "ninguna declarada"}
             </p>
             <div className="flex flex-wrap gap-2">
               <button type="button" className={buttonClass} onClick={runPreview} disabled={preview.isPending}>
                 {preview.isPending ? <Spinner /> : <Play aria-hidden className="h-4 w-4" />} Previsualizar
               </button>
-              <button type="button" className={primaryButtonClass} onClick={runSave} disabled={save.isPending}>
-                {save.isPending ? <Spinner /> : <Save aria-hidden className="h-4 w-4" />} Guardar
+              <button type="button" className={primaryButtonClass} onClick={runSave} disabled={save.isPending || compile.isPending}>
+                {save.isPending || compile.isPending ? <Spinner /> : <Save aria-hidden className="h-4 w-4" />} Guardar
               </button>
               {existing ? (
                 <>
@@ -326,6 +535,20 @@ export function RefinePanel({
         )}
       </section>
 
+      <ConfirmDialog
+        open={pendingSave !== null}
+        title="Reemplazar el SQL técnico"
+        confirmLabel="Reemplazar y guardar"
+        pendingLabel="Guardando…"
+        pending={save.isPending}
+        onConfirm={() => {
+          if (pendingSave) persistBuilder(pendingSave);
+          setPendingSave(null);
+        }}
+        onCancel={() => setPendingSave(null)}
+        testId="replace-sql-dialog"
+        description="El SQL escrito en el modo «SQL técnico» se reemplazará por la consulta que genera el constructor visual."
+      />
       <ConfirmDialog
         open={confirmDelete}
         title="Eliminar dataset"

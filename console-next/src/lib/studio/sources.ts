@@ -19,13 +19,13 @@ export function editorSources(input: {
   sql?: string | null;
 }): string[] {
   const found = new Set<string>();
-  for (const source of input.detailSources ?? []) {
-    const normalized = normalizeStorageSourceRef(source);
+  for (const match of (input.sql ?? "").matchAll(READ_CALL_RE)) {
+    const normalized = normalizeStorageSourceRef(match[1]);
     if (normalized) found.add(normalized);
   }
   if (input.cartridge && input.entity) found.add(`raw/${input.cartridge}/${input.entity}`);
-  for (const match of (input.sql ?? "").matchAll(READ_CALL_RE)) {
-    const normalized = normalizeStorageSourceRef(match[1]);
+  for (const source of input.detailSources ?? []) {
+    const normalized = normalizeStorageSourceRef(source);
     if (normalized) found.add(normalized);
   }
   return [...found];

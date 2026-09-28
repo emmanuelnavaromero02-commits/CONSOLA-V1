@@ -319,7 +319,7 @@ def test_describe_source_schema_only_skips_the_preview(monkeypatch):
     monkeypatch.setattr(
         refinement_main.engine,
         "get_source_schema",
-        lambda source, ctx: {"fields": [{"name": "a", "type": "VARCHAR"}]},
+        lambda source, ctx, timeout_seconds=None: {"fields": [{"name": "a", "type": "VARCHAR"}]},
     )
     monkeypatch.setattr(
         refinement_main.engine,

@@ -36,6 +36,7 @@ ROUTE_SURFACE_REGISTRY: tuple[RouteSurfaceRule, ...] = (
         "Control Room legacy intelligence facade",
     ),
     RouteSurfaceRule("/api/control-room", "frontend", "Control Room API"),
+    RouteSurfaceRule("/api/sap-b1", "frontend", "SAP Business One Control Room API"),
     RouteSurfaceRule("/api/admin", "admin_only", "administration API"),
     RouteSurfaceRule("/api/settings", "admin_only", "settings API"),
     RouteSurfaceRule("/api/operations", "admin_only", "operations API"),

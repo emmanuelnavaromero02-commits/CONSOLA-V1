@@ -2355,14 +2355,17 @@ def _mcp_invoke_sync(body: dict):
         _require_source_scope(body, source)
         limit = args.get("limit", 3)
         ctx = _trusted_user_context(body, args)
-        schema = engine.get_source_schema(source, ctx)
         if args.get("schema_only") is True:
+            schema = engine.get_source_schema(
+                source, ctx, timeout_seconds=engine._STATEMENT_TIMEOUT_SECONDS
+            )
             return {
                 "source": source,
                 "fields": schema.get("fields", []),
                 "sample": [],
                 "error": schema.get("error"),
             }
+        schema = engine.get_source_schema(source, ctx)
         preview = engine.preview_source(source, limit, ctx)
         return {
             "source": source,

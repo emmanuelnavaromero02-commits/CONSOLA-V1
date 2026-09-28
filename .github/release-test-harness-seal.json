@@ -2942,6 +2942,10 @@
       "sha256": "52cea4ce3d463d93007bf1d23237e97f7e707050907573ea07e8a0fab7bb6813"
     },
     {
+      "path": "console/tests/test_data_explorer_router.py",
+      "sha256": "0fe6c567102c67e0231de55ec003cf8cf826d6a6491259d3886a9eb3b7fc55b9"
+    },
+    {
       "path": "console/tests/test_data_platform_modules.py",
       "sha256": "99ca85a4e6fd47cf73d93042e76f7f0c09b13047bd0a5a097fe7672ea140dd66"
     },
@@ -3008,6 +3012,10 @@
     {
       "path": "console/tests/test_explorer_access_helpers.py",
       "sha256": "f8452be349479a05b7ccbec4a5909fd2d79776f4a9a7ec9952626b434a6801ae"
+    },
+    {
+      "path": "console/tests/test_explorer_query.py",
+      "sha256": "b4bcc6984e6249fe7056fb3508f531d6cfb6b22da56cbb67db109b1e539ff6e3"
     },
     {
       "path": "console/tests/test_external_cartridges_operational_scope.py",
@@ -3539,7 +3547,7 @@
     },
     {
       "path": "refinement/tests/test_catalog_copilot_tools.py",
-      "sha256": "26296c99d5056b84e8cc545faa1597c0280dca617b999524d6feaf623529844a"
+      "sha256": "bd783b778435eada17ae8f82990c54f1523baa7b0756748753b5740978d5e83a"
     },
     {
       "path": "refinement/tests/test_catalog_copilot_worker.py",
@@ -3558,6 +3566,10 @@
       "sha256": "41aa2c4a60dd10afa90ba7f27376d3867b3cfbb2591c810887c439d29afb1534"
     },
     {
+      "path": "refinement/tests/test_describe_source_schema_only.py",
+      "sha256": "eb3c023a9d0eeb9cf9abbab5a21a984efe787a5323410783a04a4c95cb3bade1"
+    },
+    {
       "path": "refinement/tests/test_duckdb_resource_limits.py",
       "sha256": "384e18d02eda1053040b7000df7eab19067a530504d5057ac1b0002e4caf90b7"
     },
@@ -3568,6 +3580,10 @@
     {
       "path": "refinement/tests/test_e11_talent_readfree_fallbacks.py",
       "sha256": "064ae58970c1cee7e0b0254ccf7a2c2e81f956a34e64b77f438e0d8aaeabbfd2"
+    },
+    {
+      "path": "refinement/tests/test_explorer_sql_storage_scope.py",
+      "sha256": "bbf8f8121bc25c13eaba3081c11b1e5c67cde6bd0b25c5b66c849bdffc7f65f8"
     },
     {
       "path": "refinement/tests/test_hotfix_runtime.py",
@@ -3660,6 +3676,10 @@
     {
       "path": "refinement/tests/test_sec_edgar_manifest_materializer.py",
       "sha256": "6ed3b7d7340557a2cfa0ddb58a7d0e9244d923ccbb447f98cb99c25a7ce6f59a"
+    },
+    {
+      "path": "refinement/tests/test_source_schema_timeout.py",
+      "sha256": "334d1d49cf3ed73468a0a565fe9a8cc84dc5f34183ad879a9612044502376f42"
     },
     {
       "path": "refinement/tests/test_sql_timeout.py",
@@ -3851,7 +3871,7 @@
     },
     {
       "path": "tests-e2e/specs/05-studio.spec.ts",
-      "sha256": "bc0089e048eb3ff524530e904f1b46b52942c8fe56ab52011bcbfa94f8658b76"
+      "sha256": "45a814dad7f92aee2cd466456b5c6631f19379092b4fa971526c4d48bc6edeca"
     },
     {
       "path": "tests-e2e/specs/06-html-pages.spec.ts",
@@ -3915,7 +3935,7 @@
     },
     {
       "path": "tests/console_route_source.py",
-      "sha256": "d2a2f742f8767e0341a5cff45f4b77c2d397cfc04fae92c961001a20fab5edbd"
+      "sha256": "2b801cea40a1f8a90edc260c6e73d54c78587901b6e0f64f9af508ed60af1009"
     },
     {
       "path": "tests/control_room_action_authority_dry_run.py",

@@ -7758,6 +7758,7 @@ from app.routers import pipeline_automations as pipeline_automations_router
 from app.routers import catalog_copilot as catalog_copilot_router
 from app.routers import (
     control_room,
+    data_explorer,
     mcp,
     mcp_public,
     operations,
@@ -7801,6 +7802,7 @@ app.include_router(sap_b1_router.router)
 app.include_router(pipeline_operations_router.router)
 app.include_router(pipeline_automations_router.router)
 app.include_router(catalog_copilot_router.router)
+app.include_router(data_explorer.router)
 
 
 app.add_middleware(RequestIDMiddleware)

@@ -1023,12 +1023,27 @@ class DuckDBEngine:
             pass
         return self._list_sources_from_duckdb_glob(user_context)
 
-    def get_source_schema(self, source: str, user_context: dict | None = None) -> dict:
+    def get_source_schema(
+        self,
+        source: str,
+        user_context: dict | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict:
         try:
             with self._duckdb_lock:
                 con = self._conn()
                 expr = self._bronze_read(source, user_context)
-                rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
+                timer = None
+                if timeout_seconds:
+                    timer = threading.Timer(timeout_seconds, con.interrupt)
+                    timer.daemon = True
+                    timer.start()
+                try:
+                    rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
+                finally:
+                    if timer is not None:
+                        timer.cancel()
             return {
                 "source": source,
                 "fields": [{"name": r[0], "type": r[1]} for r in rows],
