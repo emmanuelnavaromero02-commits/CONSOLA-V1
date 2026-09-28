@@ -222,3 +222,177 @@ async def test_chat_reports_anthropic_credit_limit_clearly(monkeypatch):
     message = str(exc_info.value)
     assert "Anthropic billing or credit limit reached" in message
     assert "fake-anthropic-key-for-test" not in message
+
+
+class _FakeUsage:
+    input_tokens = 10
+    output_tokens = 5
+    cache_read_input_tokens = 1
+    cache_creation_input_tokens = 2
+
+
+class _FakeFinalMessage:
+    usage = _FakeUsage()
+    content = []
+
+
+class _FakeAnthropicStream:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    @property
+    def text_stream(self):
+        async def _gen():
+            return
+            yield  # pragma: no cover
+
+        return _gen()
+
+    async def get_final_message(self):
+        return _FakeFinalMessage()
+
+
+class _FakeAnthropicMessages:
+    def stream(self, **_kwargs):
+        return _FakeAnthropicStream()
+
+
+class _FakeAnthropicClient:
+    messages = _FakeAnthropicMessages()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_chat_records_duration_and_surface(monkeypatch):
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key-for-test")
+    llm_client = _load_llm_client()
+    recorded = {}
+
+    async def fake_record(provider, model, input_tokens, output_tokens, *args, **kwargs):
+        recorded.update(
+            provider=provider,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            duration_ms=kwargs.get("duration_ms"),
+            surface=kwargs.get("surface"),
+        )
+
+    monkeypatch.setattr(llm_client, "_anthropic_client", lambda _key=None: _FakeAnthropicClient())
+    monkeypatch.setattr(llm_client.token_store, "record", fake_record)
+
+    await llm_client.chat(
+        system="sys",
+        messages=[],
+        tools=[],
+        invoke_tool=None,
+        tool_server_map={},
+        surface="copilot",
+    )
+
+    assert recorded["provider"] == "anthropic"
+    assert recorded["input_tokens"] == 10
+    assert recorded["output_tokens"] == 5
+    assert isinstance(recorded["duration_ms"], int)
+    assert recorded["duration_ms"] >= 0
+    assert recorded["surface"] == "copilot"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_chat_leaves_surface_null_when_untagged(monkeypatch):
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key-for-test")
+    llm_client = _load_llm_client()
+    recorded = {}
+
+    async def fake_record(*_args, **kwargs):
+        recorded.update(surface=kwargs.get("surface", "missing"))
+
+    monkeypatch.setattr(llm_client, "_anthropic_client", lambda _key=None: _FakeAnthropicClient())
+    monkeypatch.setattr(llm_client.token_store, "record", fake_record)
+
+    await llm_client.chat(
+        system="sys",
+        messages=[],
+        tools=[],
+        invoke_tool=None,
+        tool_server_map={},
+    )
+
+    assert recorded["surface"] is None
+
+
+@pytest.mark.asyncio
+async def test_openai_compat_chat_records_duration_and_surface(monkeypatch):
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "ollama")
+    monkeypatch.delenv("CHAT_LLM_MODEL", raising=False)
+    llm_client = _load_llm_client()
+    recorded = {}
+
+    async def fake_record(provider, model, input_tokens, output_tokens, *args, **kwargs):
+        recorded.update(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            duration_ms=kwargs.get("duration_ms"),
+            surface=kwargs.get("surface"),
+        )
+
+    class _Message:
+        content = "hola"
+        tool_calls = None
+
+    class _Choice:
+        message = _Message()
+        finish_reason = "stop"
+
+    class _OaiUsage:
+        prompt_tokens = 4
+        completion_tokens = 3
+
+    class _OaiResponse:
+        choices = [_Choice()]
+        usage = _OaiUsage()
+
+    class _Completions:
+        async def create(self, **_kwargs):
+            return _OaiResponse()
+
+    class _Chat:
+        completions = _Completions()
+
+    class _OaiClient:
+        chat = _Chat()
+
+    monkeypatch.setattr(llm_client, "_ollama_client", lambda: _OaiClient())
+    monkeypatch.setattr(llm_client.token_store, "record", fake_record)
+
+    reply, _viewer, _messages = await llm_client.chat(
+        system="sys",
+        messages=[{"role": "user", "content": "hola"}],
+        tools=[],
+        invoke_tool=None,
+        tool_server_map={},
+        surface="studio",
+    )
+
+    assert reply == "hola"
+    assert recorded["input_tokens"] == 4
+    assert recorded["output_tokens"] == 3
+    assert isinstance(recorded["duration_ms"], int)
+    assert recorded["surface"] == "studio"
+
+
+def test_named_callers_tag_their_llm_surface():
+    repo = Path(__file__).resolve().parents[1]
+    expectations = {
+        "console/app/services/copilot_service.py": ('surface="copilot"', 2),
+        "console/app/services/studio_assistant.py": ('surface="studio"', 1),
+        "console/app/domains/data_platform/rag_requests.py": ('surface="rag"', 1),
+        "workspace/app/services/llm_client.py": ('surface="workspace"', 2),
+    }
+    for path, (needle, minimum) in expectations.items():
+        source = (repo / path).read_text(encoding="utf-8")
+        assert source.count(needle) >= minimum, f"{path} must tag {needle}"

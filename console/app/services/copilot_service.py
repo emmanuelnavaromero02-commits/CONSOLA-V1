@@ -1102,6 +1102,7 @@ async def _run_loop(
             tool_server_map=server_map,
             on_event=emit_event if on_event is not None else None,
             user_context=user,
+            surface="copilot",
         )
     except Exception as exc:                    # noqa: BLE001
         import logging
@@ -1287,6 +1288,7 @@ async def _maybe_extract_facts(
             tool_server_map={},
             on_event=None,
             user_context=user_context,
+            surface="copilot",
         )
         return reply or ""
     await memory_service.extract_facts_from_turn(

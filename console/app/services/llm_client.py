@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -195,6 +196,7 @@ async def chat(
     max_tokens: int | None = None,
     temperature: float | None = None,
     user_context: dict | None = None,
+    surface: str | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     provider = _current_provider()
     anthropic_api_key: str | None = None
@@ -208,13 +210,13 @@ async def chat(
                 system, messages, tools, invoke_tool, tool_server_map, _ollama_client(),
                 on_event,
                 model=model, max_tokens=max_tokens, temperature=temperature,
-                user_context=user_context,
+                user_context=user_context, surface=surface,
             )
         return await _anthropic_chat(
             system, messages, tools, invoke_tool, tool_server_map, on_event,
             model=model, max_tokens=max_tokens, temperature=temperature,
             api_key=anthropic_api_key,
-            user_context=user_context,
+            user_context=user_context, surface=surface,
         )
     except LLMConfigurationError:
         raise
@@ -349,6 +351,7 @@ async def _anthropic_chat(
     temperature: float | None = None,
     api_key: str | None = None,
     user_context: dict | None = None,
+    surface: str | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     chat_model = _resolve_chat_model(model)
     chat_max_tokens = int(max_tokens or 32000)
@@ -382,11 +385,13 @@ async def _anthropic_chat(
         }
         if temperature is not None:
             kwargs["temperature"] = temperature
+        started = time.perf_counter()
         async with _anthropic_client(api_key).messages.stream(**kwargs) as stream:
             async for text_delta in stream.text_stream:
                 if text_delta:
                     await _emit(on_event, {"type": "text_delta", "text": text_delta})
             response = await stream.get_final_message()
+        duration_ms = int((time.perf_counter() - started) * 1000)
         usage = response.usage
         cache_read   = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
@@ -395,6 +400,8 @@ async def _anthropic_chat(
             usage.input_tokens, usage.output_tokens,
             cache_create, cache_read,
             user_context=user_context,
+            duration_ms=duration_ms,
+            surface=surface,
         )
         content_dicts = _content_to_dicts(response.content)
         tool_use_blocks = [b for b in content_dicts if b.get("type") == "tool_use"]
@@ -502,6 +509,7 @@ async def _openai_compat_chat(
     max_tokens: int | None = None,
     temperature: float | None = None,
     user_context: dict | None = None,
+    surface: str | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     chat_model = _resolve_chat_model(model)
     oai_tools = _to_oai_tools(tools) if tools else []
@@ -522,7 +530,9 @@ async def _openai_compat_chat(
         if temperature is not None:
             kwargs["temperature"] = temperature
 
+        started = time.perf_counter()
         response = await client.chat.completions.create(**kwargs)
+        duration_ms = int((time.perf_counter() - started) * 1000)
         choice = response.choices[0]
         msg    = choice.message
 
@@ -532,6 +542,8 @@ async def _openai_compat_chat(
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
                 user_context=user_context,
+                duration_ms=duration_ms,
+                surface=surface,
             )
 
         tool_calls = _oai_message_value(msg, "tool_calls") or []

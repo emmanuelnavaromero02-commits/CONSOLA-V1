@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Any, Callable
 
 import anthropic
@@ -207,6 +208,7 @@ async def _anthropic_chat(
     viewer_urls: list[dict] = []
 
     for _i in range(20):
+        started = time.perf_counter()
         response = await _anthropic_client().messages.create(
             model=CHAT_MODEL,
             max_tokens=8192,
@@ -214,6 +216,7 @@ async def _anthropic_chat(
             tools=ant_tools or [],
             messages=msgs,
         )
+        duration_ms = int((time.perf_counter() - started) * 1000)
         usage = response.usage
         cache_read   = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
@@ -222,6 +225,8 @@ async def _anthropic_chat(
             usage.input_tokens, usage.output_tokens,
             cache_create, cache_read,
             user_context,
+            duration_ms=duration_ms,
+            surface="workspace",
         )
         content_dicts = _content_to_dicts(response.content)
         tool_use_blocks = [b for b in content_dicts if b.get("type") == "tool_use"]
@@ -302,7 +307,9 @@ async def _openai_compat_chat(
         if oai_tools:
             kwargs["tools"] = oai_tools
 
+        started = time.perf_counter()
         response = await client.chat.completions.create(**kwargs)
+        duration_ms = int((time.perf_counter() - started) * 1000)
         choice = response.choices[0]
         msg    = choice.message
         finish = choice.finish_reason or "stop"
@@ -313,6 +320,8 @@ async def _openai_compat_chat(
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
                 user_context=user_context,
+                duration_ms=duration_ms,
+                surface="workspace",
             )
 
         if finish != "tool_calls" or not msg.tool_calls:

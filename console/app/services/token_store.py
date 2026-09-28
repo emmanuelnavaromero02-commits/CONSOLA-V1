@@ -14,6 +14,8 @@ _COST_PER_1M: dict[str, dict[str, float]] = {
     "claude-opus-4-6":            {"input": 15.00, "output": 75.00},
 }
 
+ALLOWED_SURFACES = frozenset({"copilot", "studio", "rag", "catalog", "workspace", "other"})
+
 _pool: asyncpg.Pool | None = None
 
 
@@ -37,6 +39,19 @@ def _scope_from_context(user_context: dict | None) -> tuple[int | None, str | No
         user_context.get("active_workspace_id") or user_context.get("workspace_id") or ""
     ).strip() or None
     return user_id, tenant_id, workspace_id
+
+
+def _clean_surface(surface: str | None) -> str | None:
+    value = str(surface or "").strip().lower()
+    return value if value in ALLOWED_SURFACES else None
+
+
+def _clean_duration_ms(duration_ms: int | None) -> int | None:
+    try:
+        value = int(duration_ms) if duration_ms is not None else None
+    except (TypeError, ValueError):
+        return None
+    return value if value is not None and value >= 0 else None
 
 
 async def _get_pool() -> asyncpg.Pool:
@@ -73,6 +88,9 @@ async def record(
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
     user_context: dict | None = None,
+    *,
+    duration_ms: int | None = None,
+    surface: str | None = None,
 ) -> None:
     try:
         pool = await _get_pool()
@@ -83,24 +101,43 @@ async def record(
                 await conn.execute(
                     "INSERT INTO token_usage "
                     "(provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
-                    "user_id, tenant_id, workspace_id) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)",
+                    "user_id, tenant_id, workspace_id, duration_ms, surface) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, $10, $11)",
                     provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
                     user_id, tenant_id, workspace_id,
+                    _clean_duration_ms(duration_ms), _clean_surface(surface),
                 )
     except Exception:
         pass
+
+
+def _unavailable_summary() -> dict:
+    return {
+        "available": False,
+        "input_tokens": None,
+        "output_tokens": None,
+        "cache_creation_tokens": None,
+        "cache_read_tokens": None,
+        "calls": None,
+        "cost_usd": None,
+        "models": [],
+        "unpriced_models": [],
+        "avg_response_ms": None,
+        "queries_count": None,
+    }
 
 
 async def summary(user_context: dict | None = None) -> dict:
     try:
         pool = await _get_pool()
         _user_id, tenant_id, workspace_id = _scope_from_context(user_context)
+        scoped = bool(user_context and not _is_platform_admin_context(user_context))
         where_clause = ""
         args: tuple = ()
-        if user_context and not _is_platform_admin_context(user_context):
+        if scoped:
             if not tenant_id or not workspace_id:
                 return {
+                    "available": True,
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "cache_creation_tokens": 0,
@@ -108,6 +145,9 @@ async def summary(user_context: dict | None = None) -> dict:
                     "calls": 0,
                     "cost_usd": 0.0,
                     "models": [],
+                    "unpriced_models": [],
+                    "avg_response_ms": None,
+                    "queries_count": 0,
                 }
             where_clause = "WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid"
             args = (tenant_id, workspace_id)
@@ -126,31 +166,59 @@ async def summary(user_context: dict | None = None) -> dict:
                     GROUP BY model
                     ORDER BY model
                 """, *args)
+                latency_where = f"{where_clause} AND" if where_clause else "WHERE"
+                avg_response_ms = await conn.fetchval(f"""
+                    SELECT AVG(duration_ms)
+                    FROM token_usage
+                    {latency_where} duration_ms IS NOT NULL AND surface = 'copilot'
+                """, *args)
+                if scoped:
+                    queries_count = await conn.fetchval("""
+                        SELECT COUNT(*)::int
+                        FROM audit_events ae
+                        JOIN conversations c ON c.id = ae.conversation_id
+                        WHERE ae.action = 'copilot.message.send'
+                          AND c.workspace_id = $1::uuid
+                    """, workspace_id)
+                else:
+                    queries_count = await conn.fetchval("""
+                        SELECT COUNT(*)::int
+                        FROM audit_events
+                        WHERE action = 'copilot.message.send'
+                    """)
 
         total_in = total_out = total_calls = 0
         total_cache_create = total_cache_read = 0
         total_cost = 0.0
         models = []
+        unpriced_models: list[str] = []
 
         for r in rows:
             m = dict(r)
-            rates  = _COST_PER_1M.get(m["model"], {"input": 0.0, "output": 0.0})
-            cost = (
-                m["input_tokens"]          / 1_000_000 * rates["input"]
-                + m["output_tokens"]       / 1_000_000 * rates["output"]
-                + m["cache_creation_tokens"] / 1_000_000 * rates["input"] * 1.25
-                + m["cache_read_tokens"]     / 1_000_000 * rates["input"] * 0.10
-            )
-            m["cost_usd"] = round(cost, 6)
+            priced = m["model"] in _COST_PER_1M
+            m["priced"] = priced
+            if priced:
+                rates = _COST_PER_1M[m["model"]]
+                cost = (
+                    m["input_tokens"]          / 1_000_000 * rates["input"]
+                    + m["output_tokens"]       / 1_000_000 * rates["output"]
+                    + m["cache_creation_tokens"] / 1_000_000 * rates["input"] * 1.25
+                    + m["cache_read_tokens"]     / 1_000_000 * rates["input"] * 0.10
+                )
+                m["cost_usd"] = round(cost, 6)
+                total_cost += cost
+            else:
+                m["cost_usd"] = None
+                unpriced_models.append(m["model"])
             total_in           += m["input_tokens"]
             total_out          += m["output_tokens"]
             total_cache_create += m["cache_creation_tokens"]
             total_cache_read   += m["cache_read_tokens"]
             total_calls        += m["calls"]
-            total_cost         += cost
             models.append(m)
 
         return {
+            "available":             True,
             "input_tokens":          total_in,
             "output_tokens":         total_out,
             "cache_creation_tokens": total_cache_create,
@@ -158,10 +226,9 @@ async def summary(user_context: dict | None = None) -> dict:
             "calls":                 total_calls,
             "cost_usd":              round(total_cost, 6),
             "models":                models,
+            "unpriced_models":       unpriced_models,
+            "avg_response_ms":       float(avg_response_ms) if avg_response_ms is not None else None,
+            "queries_count":         int(queries_count) if queries_count is not None else 0,
         }
     except Exception:
-        return {
-            "input_tokens": 0, "output_tokens": 0,
-            "cache_creation_tokens": 0, "cache_read_tokens": 0,
-            "calls": 0, "cost_usd": 0.0, "models": [],
-        }
+        return _unavailable_summary()
