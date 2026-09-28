@@ -3275,7 +3275,7 @@
     },
     {
       "path": "console/tests/test_scoped_surface_hardening.py",
-      "sha256": "42224b8a5634ce2cf3d9348d1d8444029200a20b1d8848afda56aacf1bd3fc99"
+      "sha256": "7123dc23c876729c736e1dcd5730fe800060876ac2cef097f2bef7233604643e"
     },
     {
       "path": "console/tests/test_security_context_scope.py",
