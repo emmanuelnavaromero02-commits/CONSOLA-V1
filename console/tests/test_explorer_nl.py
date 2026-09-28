@@ -126,7 +126,7 @@ def test_nl_route_is_mounted_on_the_console_app():
     assert len(matches) == 1
 
 
-def test_valid_llm_spec_is_compiled_and_executed_by_the_real_compiler(refinement, llm):
+def test_valid_llm_spec_is_compiled_but_not_executed(refinement, llm):
     response = _nl(_client(MAKER), source=GOLD, question="ventas con salario mayor a 20000")
     assert response.status_code == 200, response.text
     body = response.json()
@@ -135,13 +135,16 @@ def test_valid_llm_spec_is_compiled_and_executed_by_the_real_compiler(refinement
         {"column": "salario", "op": "gt", "value": 20000, "values": None}
     ]
     assert body["spec"]["limit"] == 10
-    assert body["executed"] is True
-    assert body["row_count"] == 1
+    assert body["executed"] is False
+    assert body["rows"] == []
+    assert body["row_count"] == 0
     assert '"salario" > 20000' in body["sql_display"]
-    executed = [args for tool, args in refinement.calls if tool == "preview_transform" and "WHERE 1 = 0" not in args["sql"]]
-    assert len(executed) == 1
-    assert executed[0]["params"] == ["20000"]
-    assert "?" in executed[0]["sql"]
+    executed = [
+        args
+        for tool, args in refinement.calls
+        if tool == "preview_transform" and "WHERE 1 = 0" not in args["sql"]
+    ]
+    assert executed == []
     system = llm["calls"][0]["system"]
     assert "nombre:text" in system
     assert "salario:number" in system
@@ -231,7 +234,7 @@ def test_question_bounds_are_enforced(refinement, llm):
     assert llm["calls"] == []
 
 
-def test_bronze_source_executes_with_write_permission(refinement, llm):
+def test_bronze_source_compiles_with_write_permission(refinement, llm):
     llm["reply"] = json.dumps({"filters": [], "limit": 5, "latest_only": True})
     response = _nl(_client(MAKER), source=BRONZE, question="lo más reciente")
     assert response.status_code == 200, response.text
@@ -239,3 +242,17 @@ def test_bronze_source_executes_with_write_permission(refinement, llm):
     assert body["source"] == "raw/acme/Employee"
     assert body["spec"]["latest_only"] is True
     assert body["sources"] == ["raw/acme/Employee"]
+    assert body["executed"] is False
+    assert all(tool != "preview_transform" or "WHERE 1 = 0" in args["sql"] for tool, args in refinement.calls)
+
+
+def test_in_values_with_commas_round_trip_in_the_spec(refinement, llm):
+    llm["reply"] = json.dumps(
+        {"filters": [{"column": "nombre", "op": "in", "values": ["García, Juan", "Ana"]}]}
+    )
+    response = _nl(_client(MAKER), source=GOLD, question="de García, Juan o Ana")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["spec"]["filters"] == [
+        {"column": "nombre", "op": "in", "value": None, "values": ["García, Juan", "Ana"]}
+    ]

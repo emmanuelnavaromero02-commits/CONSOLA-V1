@@ -145,6 +145,13 @@ def test_api_rate_limit_action_matches_registered_prefixes():
     assert api_rate_limit_action("/healthz") is None
 
 
+def test_explorer_endpoints_are_rate_limited_but_data_api_is_not():
+    assert api_rate_limit_action("/api/data/explore") == "/api/data/explore"
+    assert api_rate_limit_action("/api/data/explore/nl") == "/api/data/explore"
+    assert api_rate_limit_action("/api/data/ventas") is None
+    assert api_rate_limit_action("/api/data/ventas/query") is None
+
+
 def test_rate_limit_raises_429_when_backend_rejects(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     limiter = MagicMock()

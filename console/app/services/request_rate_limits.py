@@ -22,6 +22,7 @@ RATE_LIMITS = {
     "/api/mcp": (80, 60),
     "/studio/import": (10, RATE_LIMIT_WINDOW_SECONDS),
     "/api/explorer": (180, 60),
+    "/api/data/explore": (30, 60),
     "/apps/content": (60, 60),
     "pipeline_recover": (10, RATE_LIMIT_WINDOW_SECONDS),
     "/api/control-room/refresh": (6, 60),
@@ -33,6 +34,7 @@ API_RATE_LIMIT_PREFIXES = (
     "/api/mcp",
     "/studio/import",
     "/api/explorer",
+    "/api/data/explore",
 )
 
 

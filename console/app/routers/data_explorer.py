@@ -400,10 +400,11 @@ async def api_data_explore_nl(
             schema, body.question, llm_text, limit_cap=limit_cap
         )
         spec_body = spec_to_body(spec)
+        # Compile-only: the user reviews the spec in the builder and executes once.
         result = await explore_payload(
             {
                 "source": logical_source_mapping(body.source),
-                "execute": True,
+                "execute": False,
                 **spec_body,
             },
             user,

@@ -1030,20 +1030,30 @@ async def _run_loop(
         system_prompt_for_call = SYSTEM_PROMPT
 
     if page_context:
-        # Ephemeral: rendered into this call's prompt, never persisted.
+        # Ephemeral data block on the in-memory user turn only; never persisted.
         try:
             from app.services import copilot_page_context
 
             context_block = await copilot_page_context.page_context_prompt_block(
                 page_context, user,
             )
-            if context_block:
-                system_prompt_for_call += context_block
         except Exception:                          # noqa: BLE001
             import logging
             logging.getLogger(__name__).exception(
                 "page context rendering failed; continuing without it",
             )
+            context_block = ""
+        if context_block:
+            for index in range(len(history) - 1, -1, -1):
+                message = history[index]
+                if message.get("role") == "user" and isinstance(
+                    message.get("content"), str
+                ):
+                    history[index] = {
+                        **message,
+                        "content": context_block + "\n" + message["content"],
+                    }
+                    break
 
     try:
         reply_text, _viewer_urls, final_msgs = await llm_client.chat(

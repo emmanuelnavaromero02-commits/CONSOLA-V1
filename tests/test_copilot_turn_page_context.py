@@ -67,12 +67,20 @@ def _capture_chat(seen: dict):
     async def fake_chat(*, system, messages, **_kw):
         # First call is the turn itself; later calls are fact extraction.
         seen.setdefault("system", system)
+        seen.setdefault("messages", [dict(m) for m in messages])
         text = "ok"
         return (text, [], list(messages) + [{
             "role": "assistant",
             "content": [{"type": "text", "text": text}],
         }])
     return fake_chat
+
+
+def _last_user_content(seen: dict) -> str:
+    for message in reversed(seen["messages"]):
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            return message["content"]
+    raise AssertionError("no user message sent to the LLM")
 
 
 def test_page_context_is_rendered_into_prompt_and_sanitized(
@@ -98,13 +106,15 @@ def test_page_context_is_rendered_into_prompt_and_sanitized(
         },
     ))
 
-    system = seen["system"]
-    assert "<USER_PAGE_CONTEXT" in system
-    assert '<field name="route">/decisions</field>' in system
-    assert "api_key" not in system
-    assert "sk-" + "a" * 24 not in system
-    assert "x" * 797 + "..." in system
-    assert long_value not in system
+    content = _last_user_content(seen)
+    assert "<USER_PAGE_CONTEXT" in content
+    assert content.rstrip().endswith("¿qué veo?")
+    assert '<field name="route">/decisions</field>' in content
+    assert "api_key" not in content
+    assert "sk-" + "a" * 24 not in content
+    assert "x" * 797 + "..." in content
+    assert long_value not in content
+    assert "USER_PAGE_CONTEXT" not in seen["system"]
 
 
 def test_page_context_is_never_persisted(copilot_module, db, admin_user):
@@ -122,7 +132,8 @@ def test_page_context_is_never_persisted(copilot_module, db, admin_user):
         page_context={"route": "/decisions", "context_marker": "PAGECTXVALUE"},
     ))
 
-    assert "PAGECTXVALUE" in seen["system"]
+    assert "PAGECTXVALUE" in _last_user_content(seen)
+    assert "PAGECTXVALUE" not in seen["system"]
     for message in db.messages:
         assert "USER_PAGE_CONTEXT" not in str(message.get("content") or "")
         assert "PAGECTXVALUE" not in str(message.get("content") or "")
@@ -181,9 +192,10 @@ def test_control_room_page_context_adds_live_snapshot(
         page_context={"route": "/control-room", "title": "Control Room"},
     ))
 
-    system = seen["system"]
-    assert "live_control_room_snapshot" in system
-    assert "profiled_employees" in system
+    content = _last_user_content(seen)
+    assert "live_control_room_snapshot" in content
+    assert "profiled_employees" in content
+    assert "live_control_room_snapshot" not in seen["system"]
 
 
 def test_non_control_room_context_has_no_live_snapshot(
@@ -202,7 +214,79 @@ def test_non_control_room_context_has_no_live_snapshot(
         user=admin_user,
         page_context={"route": "/dashboard"},
     ))
-    assert "live_control_room_snapshot" not in seen["system"]
+    assert "live_control_room_snapshot" not in _last_user_content(seen)
+
+
+def test_copilot_use_only_user_gets_no_control_room_snapshot(
+    copilot_module, db, monkeypatch,
+):
+    user = {
+        "id": 9,
+        "email": "wsuser@example.com",
+        "role": "workspace_user",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+    seen: dict = {}
+    _patch_llm(copilot_module, _capture_chat(seen))
+
+    from app.services import copilot_page_context as cpc
+
+    called: list[str] = []
+
+    async def _spy(*_args, **_kwargs):
+        called.append("control_room_loader")
+        return {}
+
+    for name in (
+        "sap_successfactors_talent_kpis",
+        "sap_successfactors_talent_overview",
+        "ops_summary",
+        "sap_successfactors_talent_metadata_readiness",
+        "agents_ops",
+    ):
+        monkeypatch.setattr(cpc.control_room_service, name, _spy)
+
+    conv = _run(copilot_module.create_conversation(user=user))
+    _run(copilot_module.run_turn(
+        conversation_id=conv["id"],
+        user_message="¿cómo va el control room?",
+        user=user,
+        page_context={"route": "/control-room", "title": "Control Room"},
+    ))
+
+    content = _last_user_content(seen)
+    assert "<USER_PAGE_CONTEXT" in content
+    assert "live_control_room_snapshot" not in content
+    assert called == []
+
+
+def test_rendered_block_keeps_closing_tag_for_maximal_context(copilot_module):
+    from app.domains.copilot.context_payloads import (
+        PAGE_CONTEXT_MAX_LEN,
+        render_page_context,
+        sanitise_page_context,
+    )
+
+    ctx = sanitise_page_context({f"key_{i:02d}": "v" * 800 for i in range(24)})
+    rendered = render_page_context(ctx)
+    assert rendered.rstrip().endswith("</USER_PAGE_CONTEXT>")
+    assert len(rendered) <= PAGE_CONTEXT_MAX_LEN
+    assert rendered.count("<field") >= 10
+
+
+def test_live_snapshot_survives_a_maximal_context(copilot_module):
+    from app.domains.copilot.context_payloads import render_page_context
+
+    ctx = {f"key_{i:02d}": "v" * 800 for i in range(24)}
+    ctx["live_control_room_snapshot"] = '{"available": true, "marker": "SNAPVALUE"}'
+    rendered = render_page_context(ctx)
+    assert 'name="live_control_room_snapshot"' in rendered
+    assert "SNAPVALUE" in rendered
+    assert rendered.rstrip().endswith("</USER_PAGE_CONTEXT>")
 
 
 def _router_app(mod, effective_user):
