@@ -55,6 +55,19 @@ describe("BriefingCard action links", () => {
     expect(markup).not.toContain("data-action-dropped");
   });
 
+  it("turns copilot prompts into an in-app action", () => {
+    const markup = render("/copilot?prompt=hola");
+    expect(markup).not.toContain("data-next-link");
+    expect(markup).toContain("Revisar");
+    expect(markup).not.toContain("data-action-dropped");
+  });
+
+  it("rewrites legacy /workspace links to /copilot", () => {
+    const markup = render("/workspace");
+    expect(markup).toContain('href="/copilot"');
+    expect(markup).toContain('data-next-link="true"');
+  });
+
   it("opens absolute https links as external links", () => {
     const markup = render("https://docs.example.test/guia");
     expect(markup).toContain('href="https://docs.example.test/guia"');

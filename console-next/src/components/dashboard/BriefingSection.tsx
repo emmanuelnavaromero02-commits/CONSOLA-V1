@@ -123,7 +123,7 @@ export function BriefingSection() {
             </div>
           </div>
           <Link
-            href="/workspace"
+            href="/copilot"
             className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium transition-colors hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Ir al copiloto →

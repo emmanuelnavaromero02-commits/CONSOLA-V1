@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useMemo, useState, type Ref } from "react";
 import {
-  AppWindow,
   Bot,
   BrainCircuit,
   Coins,
@@ -60,8 +59,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "Núcleo",
     items: [
       { href: "/dashboard", label: "Panel", icon: LayoutDashboard, section: "Núcleo", keywords: "dashboard inicio kpis" },
-      { href: "/workspace", label: "Espacio de Trabajo", icon: AppWindow, section: "Núcleo", capability: "can_view_workspace", keywords: "workspace trabajo chat contexto" },
-      { href: "/copilot", label: "Copiloto", icon: Bot, section: "Núcleo", capability: "can_view_copilot", matchNested: false, keywords: "chat agente ia streaming" },
+      { href: "/copilot", label: "Copiloto", icon: Bot, section: "Núcleo", capability: "can_view_copilot", matchNested: false, keywords: "chat agente ia streaming workspace espacio de trabajo" },
       { href: "/copilot/tokens", label: "Tokens", icon: Coins, section: "Núcleo", capability: "can_view_tokens", keywords: "costos llm consumo metricas" },
     ],
   },

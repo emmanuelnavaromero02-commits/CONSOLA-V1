@@ -52,11 +52,11 @@ function DashboardContent() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link
-            href="/workspace"
+            href="/copilot"
             className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span aria-hidden className="mr-1.5">💬</span>
-            Ir al workspace
+            Ir al copiloto
           </Link>
           <LogoutButton />
         </div>
