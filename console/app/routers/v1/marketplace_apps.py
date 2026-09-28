@@ -6,6 +6,8 @@ import types
 import app.main as _console_main
 
 globals().update(_console_main.__dict__)
+from app.services.permissions import require_any_permission  # noqa: E402
+
 router = APIRouter()
 
 
@@ -50,7 +52,10 @@ async def serve_app(name: str, request: Request, user: dict = Depends(require_pe
     _validate_dataset_name(name)
     return RedirectResponse(url=f"/analytics/viewer?app={quote(name, safe='')}", status_code=303)
 
-@router.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
+@router.get(
+    "/marketplace",
+    dependencies=[Depends(require_any_permission("marketplace.read", "cartridges.read"))],
+)
 @_bind_to_main
 async def marketplace_page(request: Request):
     from app.routers.pages import _console_next_response
