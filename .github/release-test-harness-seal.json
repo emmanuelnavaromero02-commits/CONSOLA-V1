@@ -3367,7 +3367,7 @@
     },
     {
       "path": "console/tests/test_studio_dags_health.py",
-      "sha256": "09bd4e026b238241ab3b66d4338643739a253fd69663a8973a3dd324ff58a9c2"
+      "sha256": "686b5de0d1a60df5b54e1b2c17006fc0ca6047307c89f05e7ad9029d8c5fce24"
     },
     {
       "path": "console/tests/test_studio_entity_mutations.py",
@@ -3875,7 +3875,7 @@
     },
     {
       "path": "tests-e2e/specs/05-studio-deep.spec.ts",
-      "sha256": "47fb836e192f454f5477ca9fd6ff69e5ff3ab49643fcc4cf95d87f7e2c79d2ff"
+      "sha256": "14ff112538138dfe5eaa972f9d11759a095ea27a5547db45524411eae3741869"
     },
     {
       "path": "tests-e2e/specs/05-studio.spec.ts",
@@ -5667,7 +5667,7 @@
     },
     {
       "path": "tests/test_pipeline_sync_state.py",
-      "sha256": "535b0c9e0c8af4f340c495d5e78aeb79a11721c7e09f727a3c11d62d7aec3f4f"
+      "sha256": "9f2b32bb916eb0c9613d21f8f2197d99a684fe46ff5f3d0d0375c9b28c094538"
     },
     {
       "path": "tests/test_platform_audit_context_binding.py",
@@ -6391,7 +6391,7 @@
     },
     {
       "path": "tests/test_sync_progress.py",
-      "sha256": "ef340e244297313976b8667703f78dc3bdf1818111c79493b3d7992eb1de9936"
+      "sha256": "c22d7acdc6d39cb85ee7b9c54f38b10d7a45440a860821e1bcd86088b4d58a02"
     },
     {
       "path": "tests/test_t2_aws_backup_provisioning.py",
