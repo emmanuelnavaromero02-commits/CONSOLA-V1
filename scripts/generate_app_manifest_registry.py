@@ -11,7 +11,7 @@ sys.path.insert(0, str(REPO / "console"))
 
 from app.domains.apps.manifests import load_packaged_manifests  # noqa: E402
 
-TARGET = REPO / "infra/init/99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql"
+TARGET = REPO / "infra/init/99zzzzzz_analytic_app_manifest_registry_packaged_scope.sql"
 EXPECTED_APPS = 21
 
 HEADER = """\
@@ -41,6 +41,7 @@ FOOTER = """
 UPDATE public.analytic_app_manifests m
    SET revision = 'superseded'
  WHERE m.revision = 'active'
+   AND m.source = 'packaged_manifest'
    AND m.app_name NOT IN ({packaged_names});
 
 DELETE FROM public.analytic_app_manifest_datasets d
@@ -63,7 +64,7 @@ DECLARE
     app_rows BIGINT;
 BEGIN
     SELECT count(*) INTO app_rows FROM public.analytic_app_manifests
-     WHERE revision = 'active';
+     WHERE revision = 'active' AND source = 'packaged_manifest';
     IF app_rows <> {expected} THEN
         RAISE EXCEPTION 'app manifest registry expected % rows, found %',
             {expected}, app_rows;
@@ -111,6 +112,9 @@ def render() -> str:
     html_sha256 = EXCLUDED.html_sha256,
     revision = 'active',
     source = 'packaged_manifest',
+    tenant_id = NULL,
+    workspace_id = NULL,
+    created_by_user_id = NULL,
     generated_at = clock_timestamp();""")
 
     dataset_rows = []
