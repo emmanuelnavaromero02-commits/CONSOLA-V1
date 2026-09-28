@@ -1,31 +1,6 @@
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import CartridgesPage from "./page";
-
-type FreshnessEntry = { age_hours: number | null; status: "fresh" | "stale" | "very_stale" | "never" };
-
-const kpisMock = vi.hoisted(() =>
-  vi.fn((): { data?: { data_freshness: Record<string, FreshnessEntry> } } => ({ data: undefined })),
-);
-const listMock = vi.hoisted(() =>
-  vi.fn(() => ({
-    isLoading: false,
-    isError: false,
-    data: { cartridges: ["replicon"] },
-    refetch: vi.fn(),
-  })),
-);
-
-vi.mock("@/lib/hooks/useKpis", () => ({
-  useKpis: () => kpisMock(),
-}));
-
-vi.mock("@/lib/hooks/useCartridges", () => ({
-  useCartridgeList: () => listMock(),
-  useActivateCartridge: () => ({ isPending: false, variables: undefined, mutateAsync: vi.fn() }),
-}));
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({
   default: ({ href, children, ...props }: { href: string; children: ReactNode }) => (
@@ -33,62 +8,31 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
-}));
+import CartridgesRedirectPage from "./page";
+import CustomerCartridgesRedirectPage from "../customer/cartridges/page";
+import AdminInstallationsRedirectPage from "../admin/installations/page";
+import AdminLicensesRedirectPage from "../admin/licenses/page";
 
-function renderWithFreshness(entry: FreshnessEntry | undefined): string {
-  kpisMock.mockReturnValue({
-    data: entry ? { data_freshness: { replicon: entry } } : { data_freshness: {} },
-  });
-  return renderToStaticMarkup(<CartridgesPage />);
-}
+const CASES: Array<{ name: string; Page: ComponentType; target: string }> = [
+  { name: "/cartridges", Page: CartridgesRedirectPage, target: "/marketplace?tab=conectadas" },
+  { name: "/customer/cartridges", Page: CustomerCartridgesRedirectPage, target: "/marketplace?tab=conectadas" },
+  { name: "/admin/installations", Page: AdminInstallationsRedirectPage, target: "/marketplace?tab=licencias" },
+  { name: "/admin/licenses", Page: AdminLicensesRedirectPage, target: "/marketplace?tab=licencias" },
+];
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  listMock.mockReturnValue({
-    isLoading: false,
-    isError: false,
-    data: { cartridges: ["replicon"] },
-    refetch: vi.fn(),
-  });
-});
+describe("legacy data-source routes render redirect shells", () => {
+  for (const { name, Page, target } of CASES) {
+    it(`${name} points at ${target}`, () => {
+      const markup = renderToStaticMarkup(<Page />);
+      expect(markup).toContain(`href="${target}"`);
+      expect(markup).toContain("Redirigiendo");
+      expect(markup).toContain("<h1");
+    });
+  }
 
-describe("CartridgesPage freshness-to-status mapping", () => {
-  it("does NOT show a stale cartridge as Conectado", () => {
-    const markup = renderWithFreshness({ status: "stale", age_hours: 30 });
-
-    expect(markup).toContain("Datos antiguos");
-    expect(markup).not.toContain("Conectado");
-    expect(markup).not.toContain("Falló");
-  });
-
-  it("does NOT show a very_stale cartridge as Falló", () => {
-    const markup = renderWithFreshness({ status: "very_stale", age_hours: 120 });
-
-    expect(markup).toContain("Datos muy antiguos");
-    expect(markup).not.toContain("Falló");
-    expect(markup).not.toContain("Conectado");
-  });
-
-  it("still shows fresh data as Conectado", () => {
-    const markup = renderWithFreshness({ status: "fresh", age_hours: 1 });
-
-    expect(markup).toContain("Conectado");
-    expect(markup).not.toContain("Datos antiguos");
-  });
-
-  it("shows never-extracted cartridges as Sin configurar", () => {
-    const markup = renderWithFreshness({ status: "never", age_hours: null });
-
-    expect(markup).toContain("Sin configurar");
-    expect(markup).not.toContain("Conectado");
-    expect(markup).not.toContain("Falló");
-  });
-
-  it("shows Sin configurar when the KPI payload has no entry", () => {
-    const markup = renderWithFreshness(undefined);
-
-    expect(markup).toContain("Sin configurar");
+  it("keeps the fallback copy in Spanish with an explicit action", () => {
+    const markup = renderToStaticMarkup(<CartridgesRedirectPage />);
+    expect(markup).toContain("Fuentes de datos");
+    expect(markup).toContain("Abrir Fuentes de datos");
   });
 });

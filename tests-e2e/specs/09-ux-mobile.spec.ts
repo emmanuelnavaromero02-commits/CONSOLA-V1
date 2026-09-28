@@ -3,7 +3,7 @@ import { test, expect } from "../fixtures/auth";
 test.describe("Mobile viewport — primary pages render", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  for (const path of ["/login", "/dashboard", "/cartridges"]) {
+  for (const path of ["/login", "/dashboard", "/marketplace?tab=conectadas"]) {
     test(`${path} renders without horizontal scroll`, async ({ page }) => {
       await page.goto(path);
       await page.waitForTimeout(2_000);
@@ -29,7 +29,7 @@ test.describe("Mobile viewport — primary pages render", () => {
 
   test("cartridges grid stacks to a single column on mobile",
     async ({ page }) => {
-      await page.goto("/cartridges");
+      await page.goto("/marketplace?tab=conectadas");
       const tile = page
         .locator('article:has(a[href^="/cartridges/viewer"])')
         .first();
@@ -191,9 +191,9 @@ test.describe("Performance — page load budget", () => {
     ).toBeLessThan(5_000);
   });
 
-  test("/cartridges DOMContentLoaded < 4 s on mobile", async ({ page }) => {
+  test("conectadas tab DOMContentLoaded < 4 s on mobile", async ({ page }) => {
     const start = Date.now();
-    await page.goto("/cartridges", { waitUntil: "domcontentloaded" });
+    await page.goto("/marketplace?tab=conectadas", { waitUntil: "domcontentloaded" });
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(4_000);
   });
@@ -232,7 +232,7 @@ test.describe("Touch interactions", () => {
 
   test("cartridge tile remains a comfortable touch surface on mobile",
     async ({ page }) => {
-      await page.goto("/cartridges");
+      await page.goto("/marketplace?tab=conectadas");
       const tile = page
         .locator('article:has(a[href^="/cartridges/viewer"])')
         .first();

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
@@ -17,6 +18,12 @@ import {
 import { toast } from "sonner";
 
 import { getMeAccess } from "@/lib/admin-surfaces";
+import { useActivateCartridge, useCartridgeList } from "@/lib/hooks/useCartridges";
+import { useKpis } from "@/lib/hooks/useKpis";
+import {
+  StatusBadge as ConnectionStatusBadge,
+  type ConnectionStatus,
+} from "@/components/cartridges/StatusBadge";
 import {
   getInstallationAccess,
   listAdminInstallations,
@@ -35,11 +42,160 @@ import {
 } from "@/lib/marketplace";
 import { cn } from "@/lib/utils";
 
+export type MarketplaceTab = "conectadas" | "catalogo" | "licencias";
 type MarketplaceMode = "catalog" | "customer" | "admin";
 
-interface MarketplaceConsoleProps {
-  mode: MarketplaceMode;
-  title?: string;
+const MODE_BY_TAB: Record<MarketplaceTab, MarketplaceMode> = {
+  conectadas: "customer",
+  catalogo: "catalog",
+  licencias: "admin",
+};
+
+const TAB_LABELS: Record<MarketplaceTab, string> = {
+  conectadas: "Conectadas",
+  catalogo: "Catálogo disponible",
+  licencias: "Licencias",
+};
+
+export interface TabAccess {
+  canConnected: boolean;
+  canCatalog: boolean;
+  canAdmin: boolean;
+  hasConnected: boolean;
+}
+
+export function deriveTab(param: string | null | undefined, access: TabAccess): MarketplaceTab {
+  const value = String(param || "").trim().toLowerCase();
+  const requested: MarketplaceTab | null =
+    value === "conectadas" || value === "catalogo" || value === "licencias" ? value : null;
+  const allowed = (tab: MarketplaceTab): boolean =>
+    tab === "conectadas" ? access.canConnected : tab === "catalogo" ? access.canCatalog : access.canAdmin;
+  if (requested && allowed(requested)) return requested;
+  if (access.canConnected && (access.hasConnected || !access.canCatalog)) return "conectadas";
+  if (access.canCatalog) return "catalogo";
+  if (access.canConnected) return "conectadas";
+  if (access.canAdmin) return "licencias";
+  return "catalogo";
+}
+
+export const STEP_LABELS: Record<string, string> = {
+  pending_admin_approval: "Pendiente de aprobación",
+  approved_ready: "Aprobada y lista",
+  reactivated_ready: "Reactivada y lista",
+  paused_by_admin: "Pausada por administración",
+  revoked_by_admin: "Revocada por administración",
+  retry_requested: "Reintento solicitado",
+};
+
+export function stepLabel(step: string | null | undefined): string {
+  return STEP_LABELS[String(step || "").trim()] ?? "Sin información";
+}
+
+export interface FreshnessEntry {
+  age_hours: number | null;
+  status: "fresh" | "stale" | "very_stale" | "never";
+}
+
+export function connectionStatusFor(info: FreshnessEntry | undefined): ConnectionStatus {
+  if (!info) return "unconfigured";
+  if (info.status === "never") return "unconfigured";
+  if (info.status === "very_stale") return "very_stale";
+  if (info.status === "stale") return "stale";
+  return "connected";
+}
+
+const CARTRIDGE_META: Record<string, { name: string; description: string }> = {
+  replicon: {
+    name: "Replicon",
+    description: "Time tracking + project hours. Empleados, proyectos, time entries.",
+  },
+  "hubspot": {
+    name: "HubSpot CRM",
+    description: "CRM comercial. Deals, empresas, contactos, pipeline y forecast.",
+  },
+  banxico: {
+    name: "Banxico SIE",
+    description: "Series macro oficiales. Bronze, provenance y manifest.",
+  },
+  inegi: {
+    name: "INEGI",
+    description: "Indicadores oficiales. Silver/Gold gobernado para contexto macro.",
+  },
+  sap_hcm: {
+    name: "SAP HCM",
+    description: "Recursos humanos. Empleados, puestos, organización.",
+  },
+  sap_s4hana: {
+    name: "SAP S/4HANA",
+    description: "Financiero + logística. Cuentas, asientos, materiales.",
+  },
+  sap_successfactors: {
+    name: "SAP SuccessFactors",
+    description: "Talento + performance. Goals, reviews, learning.",
+  },
+  sap_b1: {
+    name: "SAP Business One",
+    description: "ERP PyME por compañía. Socios de negocio, ventas, compras, inventario y asientos.",
+  },
+};
+
+export interface ConnectedSource {
+  cartridgeId: string;
+  name: string;
+  description: string | null;
+  installation: CartridgeInstallation | null;
+  product: MarketplaceProduct | null;
+  connection: ConnectionStatus;
+  ageHours: number | null;
+}
+
+export function mergeConnectedSources(input: {
+  cartridgeIds: string[];
+  installations: CartridgeInstallation[];
+  products: MarketplaceProduct[];
+  freshness: Record<string, FreshnessEntry> | undefined;
+}): ConnectedSource[] {
+  const byId = new Map<string, ConnectedSource>();
+  const ensure = (cartridgeId: string): ConnectedSource => {
+    const existing = byId.get(cartridgeId);
+    if (existing) return existing;
+    const created: ConnectedSource = {
+      cartridgeId,
+      name: cartridgeId,
+      description: null,
+      installation: null,
+      product: null,
+      connection: "unconfigured",
+      ageHours: null,
+    };
+    byId.set(cartridgeId, created);
+    return created;
+  };
+  for (const cartridgeId of input.cartridgeIds) ensure(cartridgeId);
+  for (const installation of input.installations) {
+    if (!installation.cartridge_id) continue;
+    ensure(installation.cartridge_id).installation = installation;
+  }
+  const productById = new Map(
+    input.products.filter((product) => product.cartridge_id).map((product) => [product.cartridge_id, product]),
+  );
+  for (const row of byId.values()) {
+    row.product = productById.get(row.cartridgeId) ?? null;
+    row.name =
+      row.installation?.product_name ||
+      row.product?.name ||
+      CARTRIDGE_META[row.cartridgeId]?.name ||
+      row.cartridgeId;
+    row.description =
+      row.product?.commercial?.headline ||
+      row.product?.description ||
+      CARTRIDGE_META[row.cartridgeId]?.description ||
+      null;
+    const info = input.freshness?.[row.cartridgeId];
+    row.connection = connectionStatusFor(info);
+    row.ageHours = info?.age_hours ?? null;
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
 interface StatusCopy {
@@ -113,7 +269,7 @@ const STATUS: Record<string, StatusCopy> = {
 
 function statusCopy(status: MarketplaceStatus | null | undefined): StatusCopy {
   return STATUS[String(status || "available")] ?? {
-    label: String(status || "Disponible"),
+    label: "Sin información",
     className: "border-border bg-muted/30 text-muted-foreground",
     icon: Boxes,
   };
@@ -166,29 +322,29 @@ function Counter({ label, value, href }: { label: string; value: number; href?: 
   return <article className="rounded-lg border bg-card p-4">{body}</article>;
 }
 
-function MarketplaceTabs({ mode, canAdmin }: { mode: MarketplaceMode; canAdmin: boolean }) {
-  const items = [
-    { href: "/marketplace", label: "Catálogo", mode: "catalog" },
-    { href: "/customer/cartridges", label: "Instalados", mode: "customer" },
-    ...(canAdmin ? [{ href: "/admin/installations", label: "Licencias", mode: "admin" }] : []),
-  ] as const;
+function MarketplaceTabs({ tab, access }: { tab: MarketplaceTab; access: TabAccess }) {
+  const items: MarketplaceTab[] = [
+    ...(access.canConnected ? (["conectadas"] as const) : []),
+    ...(access.canCatalog ? (["catalogo"] as const) : []),
+    ...(access.canAdmin ? (["licencias"] as const) : []),
+  ];
   return (
     <nav aria-label="Secciones de fuentes de datos" className="overflow-x-auto border-b">
       <ul className="mx-auto flex max-w-6xl items-center gap-1 px-6">
         {items.map((item) => (
-          <li key={item.href}>
+          <li key={item}>
             <Link
-              href={item.href}
+              href={`/marketplace?tab=${item}`}
               prefetch={false}
-              aria-current={mode === item.mode ? "page" : undefined}
+              aria-current={tab === item ? "page" : undefined}
               className={cn(
                 "inline-flex min-h-[44px] items-center border-b-2 px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                mode === item.mode
+                tab === item
                   ? "border-primary text-foreground"
                   : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
               )}
             >
-              {item.label}
+              {TAB_LABELS[item]}
             </Link>
           </li>
         ))}
@@ -210,6 +366,32 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
         Reintentar
       </button>
     </div>
+  );
+}
+
+function SearchField({
+  value,
+  onChange,
+  placeholder,
+  label,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  label: string;
+}) {
+  return (
+    <label className="relative block w-full md:w-80">
+      <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <span className="sr-only">{label}</span>
+      <input
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+    </label>
   );
 }
 
@@ -304,36 +486,51 @@ function ProductCard({
   );
 }
 
-function InstallationRow({
-  installation,
-  busy,
+export function ConnectedSourceCard({
+  source,
+  canAdmin,
+  canConfigure,
+  busyRetry,
+  busyActivate,
   onRetry,
+  onActivate,
 }: {
-  installation: CartridgeInstallation;
-  busy: boolean;
+  source: ConnectedSource;
+  canAdmin: boolean;
+  canConfigure: boolean;
+  busyRetry: boolean;
+  busyActivate: boolean;
   onRetry: (installationId: string) => void;
+  onActivate: (cartridgeId: string) => void;
 }) {
-  const status = installation.access_status || installation.status || "available";
+  const installation = source.installation;
+  const lifecycle = installation
+    ? installation.access_status || installation.status || "available"
+    : source.product?.access_status ?? null;
+  const isActive = lifecycle === "active" || lifecycle === "ready";
   return (
-    <article className="flex flex-col gap-4 rounded-lg border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+    <article className="flex flex-col gap-4 rounded-lg border bg-card p-4 lg:flex-row lg:items-center lg:justify-between">
       <div className="min-w-0 space-y-1">
-        <h2 className="text-base font-semibold tracking-tight">
-          {installation.product_name || installation.cartridge_id}
-        </h2>
-        <p className="font-mono text-xs text-muted-foreground">{installation.cartridge_id}</p>
-        <p className="text-sm text-muted-foreground">
-          {installation.current_step || "sin paso"} · {shortDate(installation.updated_at)}
-        </p>
-        {installation.error_message ? (
+        <h2 className="text-base font-semibold tracking-tight">{source.name}</h2>
+        <p className="font-mono text-xs text-muted-foreground">{source.cartridgeId}</p>
+        {installation ? (
+          <p className="text-sm text-muted-foreground">
+            {stepLabel(installation.current_step)} · {shortDate(installation.updated_at)}
+          </p>
+        ) : source.description ? (
+          <p className="text-sm text-muted-foreground">{source.description}</p>
+        ) : null}
+        {installation?.error_message ? (
           <p className="text-sm text-destructive">{installation.error_message}</p>
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <StatusBadge status={status} />
-        {installation.can_retry ? (
+        <ConnectionStatusBadge status={source.connection} ageHours={source.ageHours} />
+        {lifecycle ? <StatusBadge status={lifecycle} /> : null}
+        {installation && installation.can_retry ? (
           <button
             type="button"
-            disabled={busy}
+            disabled={busyRetry}
             onClick={() => onRetry(installation.id)}
             className="inline-flex min-h-[44px] items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
           >
@@ -341,30 +538,55 @@ function InstallationRow({
             Reintentar
           </button>
         ) : null}
+        {canAdmin && !isActive ? (
+          <button
+            type="button"
+            disabled={busyActivate}
+            onClick={() => onActivate(source.cartridgeId)}
+            className="inline-flex min-h-[44px] items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
+          >
+            {busyActivate ? "Activando..." : "Activar"}
+          </button>
+        ) : null}
+        {canConfigure ? (
+          <Link
+            href={`/cartridges/viewer?id=${encodeURIComponent(source.cartridgeId)}`}
+            prefetch={false}
+            className="inline-flex min-h-[44px] items-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Configurar
+          </Link>
+        ) : null}
       </div>
     </article>
   );
 }
 
-function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "admin">; title?: string }) {
+function ConnectedView({
+  canAdmin,
+  canCatalog,
+  canConfigure,
+}: {
+  canAdmin: boolean;
+  canCatalog: boolean;
+  canConfigure: boolean;
+}) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const access = useQuery({ queryKey: ["me", "access"], queryFn: getMeAccess, staleTime: 60_000 });
-  const products = useQuery({ queryKey: ["marketplace", "products"], queryFn: listMarketplaceProducts });
-  const installations = useQuery({ queryKey: ["marketplace", "customer"], queryFn: listCustomerCartridges });
-  const canAdmin = access.data?.ui_capabilities?.can_admin_marketplace === true;
-
-  const requestMutation = useMutation({
-    mutationFn: requestMarketplaceProduct,
-    onMutate: (cartridgeId) => setBusyId(cartridgeId),
-    onSuccess: (_data, cartridgeId) => {
-      toast.success(`Solicitud enviada para ${cartridgeId}.`);
-      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo solicitar la fuente de datos."),
-    onSettled: () => setBusyId(null),
+  const installations = useQuery({
+    queryKey: ["marketplace", "customer"],
+    queryFn: listCustomerCartridges,
+    enabled: canCatalog,
   });
+  const products = useQuery({
+    queryKey: ["marketplace", "products"],
+    queryFn: listMarketplaceProducts,
+    enabled: canCatalog,
+  });
+  const cartridgeList = useCartridgeList({ enabled: canConfigure });
+  const kpis = useKpis();
+  const activate = useActivateCartridge();
 
   const retryMutation = useMutation({
     mutationFn: retryMarketplaceInstallation,
@@ -374,6 +596,135 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
       queryClient.invalidateQueries({ queryKey: ["marketplace"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo reintentar."),
+    onSettled: () => setBusyId(null),
+  });
+
+  const activateOne = async (cartridgeId: string) => {
+    setBusyId(cartridgeId);
+    try {
+      const result = await activate.mutateAsync(cartridgeId);
+      const estado = statusCopy(result.installation?.access_status || result.installation?.status || "requested").label;
+      toast.success(`${CARTRIDGE_META[cartridgeId]?.name ?? cartridgeId}: activación enviada (${estado}).`);
+      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo activar la fuente de datos.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const merged = useMemo(
+    () =>
+      mergeConnectedSources({
+        cartridgeIds: cartridgeList.data?.cartridges ?? [],
+        installations: installations.data?.installations ?? [],
+        products: products.data?.products ?? [],
+        freshness: kpis.data?.data_freshness,
+      }),
+    [cartridgeList.data?.cartridges, installations.data?.installations, products.data?.products, kpis.data?.data_freshness],
+  );
+
+  const filtered = useMemo(
+    () =>
+      merged.filter((source) =>
+        textSearch(
+          [
+            source.name,
+            source.cartridgeId,
+            source.description,
+            source.connection,
+            source.installation?.status,
+            source.installation?.access_status,
+            source.installation?.current_step,
+          ],
+          query,
+        ),
+      ),
+    [merged, query],
+  );
+
+  const connectedCount = merged.filter((source) => source.connection === "connected").length;
+  const pendingCount = merged.filter((source) => {
+    const lifecycle = source.installation?.access_status || source.installation?.status;
+    return ["requested", "pending_approval", "pending_connection", "waiting_credentials"].includes(String(lifecycle || ""));
+  }).length;
+  const loading = cartridgeList.isLoading || installations.isLoading;
+
+  return (
+    <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Fuentes de datos</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Fuentes de datos conectadas</h1>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            Estado real de conexión, frescura de datos y licencia de cada fuente de tu workspace.
+          </p>
+        </div>
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          label="Buscar"
+          placeholder="Buscar fuente de datos, estado o dominio"
+        />
+      </header>
+
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Métricas de fuentes conectadas">
+        <Counter label="Fuentes" value={merged.length} />
+        <Counter label="Conectadas" value={connectedCount} />
+        <Counter label="Instaladas" value={installations.data?.installations.length ?? 0} />
+        <Counter label="Pendientes" value={pendingCount} />
+      </section>
+
+      {cartridgeList.isError ? (
+        <ErrorPanel message="No se pudieron cargar las fuentes de datos." onRetry={() => cartridgeList.refetch()} />
+      ) : null}
+      {installations.isError ? (
+        <ErrorPanel message="No se pudieron cargar tus fuentes de datos." onRetry={() => installations.refetch()} />
+      ) : null}
+
+      <section className="space-y-3" aria-label="Fuentes de datos conectadas" aria-busy={loading}>
+        {loading ? (
+          Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="h-24 animate-pulse rounded-lg border bg-card" aria-hidden />
+          ))
+        ) : filtered.length ? (
+          filtered.map((source) => (
+            <ConnectedSourceCard
+              key={source.cartridgeId}
+              source={source}
+              canAdmin={canAdmin}
+              canConfigure={canConfigure}
+              busyRetry={busyId === source.installation?.id && retryMutation.isPending}
+              busyActivate={busyId === source.cartridgeId && activate.isPending}
+              onRetry={(id) => retryMutation.mutate(id)}
+              onActivate={activateOne}
+            />
+          ))
+        ) : (
+          <p className="rounded-lg border bg-card p-5 text-sm text-muted-foreground">
+            No hay fuentes de datos para este filtro.
+          </p>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function CatalogView({ canAdmin }: { canAdmin: boolean }) {
+  const queryClient = useQueryClient();
+  const [query, setQuery] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const products = useQuery({ queryKey: ["marketplace", "products"], queryFn: listMarketplaceProducts });
+  const installations = useQuery({ queryKey: ["marketplace", "customer"], queryFn: listCustomerCartridges });
+
+  const requestMutation = useMutation({
+    mutationFn: requestMarketplaceProduct,
+    onMutate: (cartridgeId) => setBusyId(cartridgeId),
+    onSuccess: (_data, cartridgeId) => {
+      toast.success(`Solicitud enviada para ${cartridgeId}.`);
+      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo solicitar la fuente de datos."),
     onSettled: () => setBusyId(null),
   });
 
@@ -388,103 +739,54 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
     [products.data?.products, query],
   );
 
-  const filteredInstallations = useMemo(
-    () => (installations.data?.installations ?? []).filter((row) => textSearch([
-      row.product_name,
-      row.cartridge_id,
-      row.status,
-      row.access_status,
-      row.current_step,
-    ], query)),
-    [installations.data?.installations, query],
-  );
-
   const activeCount = (products.data?.products ?? []).filter((p) => p.access_status === "active").length;
   const pendingCount = (products.data?.products ?? []).filter((p) => p.access_status === "pending_approval").length;
 
   return (
-    <>
-      <MarketplaceTabs mode={mode} canAdmin={canAdmin} />
-      <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
-        <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Fuentes de datos</p>
-            <h1 className="text-3xl font-semibold tracking-tight">
-              {title || (mode === "customer" ? "Fuentes de datos instaladas" : "Catálogo de fuentes de datos")}
-            </h1>
-            <p className="max-w-3xl text-sm text-muted-foreground">
-              {mode === "customer"
-                ? "Estado real de las fuentes de datos solicitadas o activas para tu workspace."
-                : "Catálogo conectado a permisos reales: solicitud, aprobación, conexión y visibilidad por workspace."}
-            </p>
-          </div>
-          <label className="relative block w-full md:w-80">
-            <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <span className="sr-only">Buscar</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Buscar fuente de datos, estado o dominio"
-              className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-        </header>
+    <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Fuentes de datos</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Catálogo de fuentes de datos</h1>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            Catálogo conectado a permisos reales: solicitud, aprobación, conexión y visibilidad por workspace.
+          </p>
+        </div>
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          label="Buscar"
+          placeholder="Buscar fuente de datos, estado o dominio"
+        />
+      </header>
 
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Métricas marketplace">
-          <Counter label="Productos" value={products.data?.products.length ?? 0} />
-          <Counter label="Instalados" value={installations.data?.installations.length ?? 0} />
-          <Counter label="Activos" value={activeCount} />
-          <Counter label="Pendientes" value={pendingCount} />
-        </section>
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Métricas marketplace">
+        <Counter label="Productos" value={products.data?.products.length ?? 0} />
+        <Counter label="Instalados" value={installations.data?.installations.length ?? 0} />
+        <Counter label="Activos" value={activeCount} />
+        <Counter label="Pendientes" value={pendingCount} />
+      </section>
 
-        {products.isError ? (
-          <ErrorPanel message="No se pudo cargar el catálogo." onRetry={() => products.refetch()} />
-        ) : null}
-        {installations.isError ? (
-          <ErrorPanel message="No se pudieron cargar tus fuentes de datos." onRetry={() => installations.refetch()} />
-        ) : null}
+      {products.isError ? (
+        <ErrorPanel message="No se pudo cargar el catálogo." onRetry={() => products.refetch()} />
+      ) : null}
 
-        {mode === "catalog" ? (
-          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Catálogo">
-            {products.isLoading
-              ? Array.from({ length: 4 }).map((_, index) => (
-                  <div key={index} className="h-72 animate-pulse rounded-lg border bg-card" aria-hidden />
-                ))
-              : filteredProducts.map((product) => (
-                  <ProductCard
-                    key={product.cartridge_id}
-                    product={product}
-                    canAdmin={canAdmin}
-                    busy={busyId === product.cartridge_id && requestMutation.isPending}
-                    onRequest={(id) => requestMutation.mutate(id)}
-                  />
-                ))}
-          </section>
-        ) : (
-          <section className="space-y-3" aria-label="Mis fuentes de datos">
-            {installations.isLoading ? (
-              Array.from({ length: 3 }).map((_, index) => (
-                <div key={index} className="h-24 animate-pulse rounded-lg border bg-card" aria-hidden />
-              ))
-            ) : filteredInstallations.length ? (
-              filteredInstallations.map((installation) => (
-                <InstallationRow
-                  key={installation.id}
-                  installation={installation}
-                  busy={busyId === installation.id && retryMutation.isPending}
-                  onRetry={(id) => retryMutation.mutate(id)}
-                />
-              ))
-            ) : (
-              <p className="rounded-lg border bg-card p-5 text-sm text-muted-foreground">
-                No hay fuentes de datos para este filtro.
-              </p>
-            )}
-          </section>
-        )}
-      </main>
-    </>
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Catálogo">
+        {products.isLoading
+          ? Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="h-72 animate-pulse rounded-lg border bg-card" aria-hidden />
+            ))
+          : filteredProducts.map((product) => (
+              <ProductCard
+                key={product.cartridge_id}
+                product={product}
+                canAdmin={canAdmin}
+                busy={busyId === product.cartridge_id && requestMutation.isPending}
+                onRequest={(id) => requestMutation.mutate(id)}
+              />
+            ))}
+      </section>
+    </main>
   );
 }
 
@@ -601,11 +903,11 @@ function AdminInstallationRow({
         <div className="min-w-0 space-y-1">
           <h2 className="text-base font-semibold tracking-tight">{row.product_name || row.cartridge_id}</h2>
           <p className="text-sm text-muted-foreground">
-            {row.tenant_name || row.tenant_id || "tenant"} · {row.workspace_name || row.workspace_id || "workspace"}
+            {row.tenant_name || row.tenant_id || "Sin información"} · {row.workspace_name || row.workspace_id || "Sin información"}
           </p>
           <p className="font-mono text-xs text-muted-foreground">{row.cartridge_id}</p>
           <p className="text-sm text-muted-foreground">
-            {row.current_step || "sin paso"} · {shortDate(row.updated_at)} · {row.created_by_email || "sin usuario"}
+            {stepLabel(row.current_step)} · {shortDate(row.updated_at)} · {row.created_by_email || "sin usuario"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -643,13 +945,11 @@ function AdminInstallationRow({
   );
 }
 
-function AdminMarketplace({ title }: { title?: string }) {
+function AdminView({ canAdmin, accessLoading }: { canAdmin: boolean; accessLoading: boolean }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [openAccessId, setOpenAccessId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
-  const access = useQuery({ queryKey: ["me", "access"], queryFn: getMeAccess, staleTime: 60_000 });
-  const canAdmin = access.data?.ui_capabilities?.can_admin_marketplace === true;
   const installations = useQuery({
     queryKey: ["marketplace", "admin", "installations"],
     queryFn: () => listAdminInstallations(),
@@ -685,74 +985,119 @@ function AdminMarketplace({ title }: { title?: string }) {
   const blocked = rows.filter((row) => ["paused", "revoked", "expired", "suspended"].includes(String(row.status))).length;
 
   return (
-    <>
-      <MarketplaceTabs mode="admin" canAdmin={canAdmin} />
-      <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
-        <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Fuentes de datos</p>
-            <h1 className="text-3xl font-semibold tracking-tight">{title || "Licencias y solicitudes"}</h1>
-            <p className="max-w-3xl text-sm text-muted-foreground">
-              Aprueba, pausa, revoca y controla el acceso por usuario. Los cambios impactan Workspace, Copilot y MCP desde backend.
-            </p>
-          </div>
-          <label className="relative block w-full md:w-96">
-            <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <span className="sr-only">Buscar instalaciones</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Buscar tenant, workspace, fuente de datos o estado"
-              className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Fuentes de datos</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Licencias y solicitudes</h1>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            Aprueba, pausa, revoca y controla el acceso por usuario. Los cambios impactan Workspace, Copilot y MCP desde backend.
+          </p>
+        </div>
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          label="Buscar instalaciones"
+          placeholder="Buscar tenant, workspace, fuente de datos o estado"
+        />
+      </header>
+
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Métricas de instalaciones">
+        <Counter label="Instalaciones" value={installations.data?.installations.length ?? 0} />
+        <Counter label="Pendientes" value={requested} />
+        <Counter label="Activas" value={ready} />
+        <Counter label="Bloqueadas" value={blocked} />
+      </section>
+
+      {!canAdmin && !accessLoading ? (
+        <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          No tienes permiso para administrar marketplace.
+        </div>
+      ) : null}
+      {installations.isError ? (
+        <ErrorPanel message="No se pudieron cargar las instalaciones." onRetry={() => installations.refetch()} />
+      ) : null}
+
+      <section className="space-y-3" aria-label="Instalaciones">
+        {installations.isLoading || accessLoading ? (
+          Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="h-32 animate-pulse rounded-lg border bg-card" aria-hidden />
+          ))
+        ) : rows.length ? (
+          rows.map((row) => (
+            <AdminInstallationRow
+              key={row.id}
+              row={row}
+              open={openAccessId === row.id}
+              busyAction={busyAction}
+              onToggleAccess={(id) => setOpenAccessId((current) => (current === id ? null : id))}
+              onAction={(id, action) => actionMutation.mutate({ id, action })}
             />
-          </label>
-        </header>
+          ))
+        ) : (
+          <p className="rounded-lg border bg-card p-5 text-sm text-muted-foreground">
+            Sin instalaciones para este filtro.
+          </p>
+        )}
+      </section>
+    </main>
+  );
+}
 
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Métricas de instalaciones">
-          <Counter label="Instalaciones" value={installations.data?.installations.length ?? 0} />
-          <Counter label="Pendientes" value={requested} />
-          <Counter label="Activas" value={ready} />
-          <Counter label="Bloqueadas" value={blocked} />
-        </section>
+function MarketplaceSkeleton() {
+  return (
+    <main className="mx-auto max-w-6xl space-y-6 px-6 py-8" aria-busy>
+      <div className="h-10 w-72 animate-pulse rounded-md border bg-card" aria-hidden />
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="h-24 animate-pulse rounded-lg border bg-card" aria-hidden />
+      ))}
+    </main>
+  );
+}
 
-        {!canAdmin && !access.isLoading ? (
-          <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-            No tienes permiso para administrar marketplace.
-          </div>
-        ) : null}
-        {installations.isError ? (
-          <ErrorPanel message="No se pudieron cargar las instalaciones." onRetry={() => installations.refetch()} />
-        ) : null}
+function MarketplaceShell() {
+  const params = useSearchParams();
+  const tabParam = params.get("tab");
+  const access = useQuery({ queryKey: ["me", "access"], queryFn: getMeAccess, staleTime: 60_000 });
+  const capabilities = access.data?.ui_capabilities;
+  const canAdmin = capabilities?.can_admin_marketplace === true;
+  const canCatalog = access.isError ? true : capabilities?.can_view_marketplace === true;
+  const canConfigure = access.isError ? true : capabilities?.can_view_cartridges === true;
+  const canConnected = canConfigure || canCatalog;
+  const installations = useQuery({
+    queryKey: ["marketplace", "customer"],
+    queryFn: listCustomerCartridges,
+    enabled: !access.isLoading && canCatalog,
+  });
+  const hasConnected = (installations.data?.installations.length ?? 0) > 0;
+  const tabAccess: TabAccess = { canConnected, canCatalog, canAdmin, hasConnected };
 
-        <section className="space-y-3" aria-label="Instalaciones">
-          {installations.isLoading || access.isLoading ? (
-            Array.from({ length: 4 }).map((_, index) => (
-              <div key={index} className="h-32 animate-pulse rounded-lg border bg-card" aria-hidden />
-            ))
-          ) : rows.length ? (
-            rows.map((row) => (
-              <AdminInstallationRow
-                key={row.id}
-                row={row}
-                open={openAccessId === row.id}
-                busyAction={busyAction}
-                onToggleAccess={(id) => setOpenAccessId((current) => (current === id ? null : id))}
-                onAction={(id, action) => actionMutation.mutate({ id, action })}
-              />
-            ))
-          ) : (
-            <p className="rounded-lg border bg-card p-5 text-sm text-muted-foreground">
-              Sin instalaciones para este filtro.
-            </p>
-          )}
-        </section>
-      </main>
+  const requestedIsValid = ["conectadas", "catalogo", "licencias"].includes(String(tabParam || "").trim().toLowerCase());
+  const waitingForDefault = !requestedIsValid && canCatalog && canConnected && installations.isLoading;
+  if (access.isLoading || waitingForDefault) {
+    return <MarketplaceSkeleton />;
+  }
+
+  const tab = deriveTab(tabParam, tabAccess);
+  const mode = MODE_BY_TAB[tab];
+  return (
+    <>
+      <MarketplaceTabs tab={tab} access={tabAccess} />
+      {mode === "admin" ? (
+        <AdminView canAdmin={canAdmin} accessLoading={access.isLoading} />
+      ) : mode === "catalog" ? (
+        <CatalogView canAdmin={canAdmin} />
+      ) : (
+        <ConnectedView canAdmin={canAdmin} canCatalog={canCatalog} canConfigure={canConfigure} />
+      )}
     </>
   );
 }
 
-export function MarketplaceConsole({ mode, title }: MarketplaceConsoleProps) {
-  if (mode === "admin") return <AdminMarketplace title={title} />;
-  return <CatalogAndCustomer mode={mode} title={title} />;
+export function MarketplaceConsole() {
+  return (
+    <Suspense fallback={<MarketplaceSkeleton />}>
+      <MarketplaceShell />
+    </Suspense>
+  );
 }

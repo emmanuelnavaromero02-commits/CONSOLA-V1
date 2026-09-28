@@ -30,7 +30,7 @@ def test_cartridges_api_helpers_exist():
 def test_hubspot_is_visible_in_next_cartridge_surfaces():
     surfaces = [
         NEXT_SRC / "lib/cartridges.ts",
-        NEXT_SRC / "app/(shell)/cartridges/page.tsx",
+        NEXT_SRC / "components/marketplace/MarketplaceConsole.tsx",
         NEXT_SRC / "components/data/DataTechnicalHub.tsx",
         NEXT_SRC / "app/(shell)/data/lineage/page.tsx",
         NEXT_SRC / "app/(shell)/copilot/knowledge/page.tsx",
@@ -101,8 +101,9 @@ def test_status_badge_renders_four_states():
         assert icon in src
 
 
-def test_cartridge_card_navigates_to_detail():
-    src = _read(NEXT_SRC / "components/cartridges/CartridgeCard.tsx")
+def test_connected_source_card_navigates_to_detail():
+    assert not (NEXT_SRC / "components/cartridges/CartridgeCard.tsx").exists()
+    src = _read(NEXT_SRC / "components/marketplace/MarketplaceConsole.tsx")
     assert "next/link" in src
     assert "/cartridges/viewer?id=" in src
 
@@ -157,13 +158,13 @@ def test_zod_schema_adapts_to_required_min_length_url_pattern():
         assert token not in src, f"unexpected legacy schema-adapter token: {token!r}"
 
 
-def test_cartridges_grid_page_exists():
+def test_cartridges_route_redirects_to_unified_data_sources():
     page = NEXT_SRC / "app/(shell)/cartridges/page.tsx"
     assert page.exists()
     src = _read(page)
-    assert "useCartridgeList" in src
-    assert "CartridgeCard" in src
-    assert "isLoading" in src and "isError" in src
+    assert 'const TARGET = "/marketplace?tab=conectadas"' in src
+    assert "window.location.replace(TARGET)" in src
+    assert "useCartridgeList" not in src
 
 
 def test_cartridge_detail_page_exists_and_uses_query_param():
@@ -187,8 +188,8 @@ def test_cartridge_detail_never_uses_generic_schema_fallback():
     assert "schema={schema}" in src
 
 
-def test_grid_derives_status_from_kpi_freshness():
-    src = _read(NEXT_SRC / "app/(shell)/cartridges/page.tsx")
+def test_connected_view_derives_status_from_kpi_freshness():
+    src = _read(NEXT_SRC / "components/marketplace/MarketplaceConsole.tsx")
     assert "useKpis" in src
     assert '"unconfigured"' in src
     assert 'if (info.status === "stale") return "stale"' in src
