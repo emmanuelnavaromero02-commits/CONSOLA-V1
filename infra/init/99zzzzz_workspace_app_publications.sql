@@ -3,7 +3,7 @@
 -- Security idioms copied from 99zzt/99zzy: schema-qualified names,
 -- search_path = pg_catalog, pg_temp, owner omega_app_grants_owner.
 
-CREATE OR REPLACE FUNCTION omega_rls_workspace_text_matches(row_tenant text, row_workspace text)
+CREATE OR REPLACE FUNCTION public.omega_rls_workspace_text_matches(row_tenant text, row_workspace text)
 RETURNS boolean
 LANGUAGE sql
 STABLE
@@ -65,7 +65,8 @@ CREATE POLICY analytic_app_manifests_owner_write
     WITH CHECK (source = 'workspace_publication'
                 AND public.omega_rls_workspace_text_matches(tenant_id, workspace_id));
 
-GRANT INSERT, UPDATE ON public.analytic_app_manifests TO omega_app_grants_owner;
+GRANT INSERT, UPDATE, DELETE ON public.analytic_app_manifests
+    TO omega_app_grants_owner;
 GRANT INSERT, DELETE ON public.analytic_app_manifest_datasets
     TO omega_app_grants_owner;
 
@@ -88,18 +89,22 @@ CREATE POLICY analytic_apps_app_grants_owner_read
 
 
 -- ── grants ledger: admit the workspace publication source ──────────────────
+-- One paired CHECK: each source only ever carries its own server actor.
 ALTER TABLE public.analytic_app_dataset_grants
     DROP CONSTRAINT IF EXISTS analytic_app_dataset_grants_source_check;
 ALTER TABLE public.analytic_app_dataset_grants
-    ADD CONSTRAINT analytic_app_dataset_grants_source_check
-    CHECK (grant_source IN ('packaged_manifest', 'workspace_publication'));
-
-ALTER TABLE public.analytic_app_dataset_grants
     DROP CONSTRAINT IF EXISTS analytic_app_dataset_grants_actor_check;
 ALTER TABLE public.analytic_app_dataset_grants
-    ADD CONSTRAINT analytic_app_dataset_grants_actor_check
-    CHECK (granted_by IN ('server:packaged_manifest',
-                          'server:workspace_publication'));
+    DROP CONSTRAINT IF EXISTS analytic_app_dataset_grants_source_actor_check;
+ALTER TABLE public.analytic_app_dataset_grants
+    ADD CONSTRAINT analytic_app_dataset_grants_source_actor_check
+    CHECK (
+        (grant_source = 'packaged_manifest'
+         AND granted_by = 'server:packaged_manifest')
+        OR
+        (grant_source = 'workspace_publication'
+         AND granted_by = 'server:workspace_publication')
+    );
 
 
 -- ── workspace publication registration ─────────────────────────────────────
@@ -138,8 +143,11 @@ BEGIN
     IF p_manifest_digest IS NULL OR p_manifest_digest !~ '^[0-9a-f]{64}$' THEN
         RAISE EXCEPTION 'manifest digest is invalid' USING ERRCODE = '22023';
     END IF;
-    IF p_datasets IS NULL THEN
-        RAISE EXCEPTION 'dataset list is required' USING ERRCODE = '22023';
+    IF p_datasets IS NULL
+       OR COALESCE(array_length(p_datasets, 1), 0) < 1
+       OR array_length(p_datasets, 1) > 50 THEN
+        RAISE EXCEPTION 'dataset list must contain between 1 and 50 datasets'
+            USING ERRCODE = '22023';
     END IF;
     FOREACH target IN ARRAY p_datasets LOOP
         IF target IS NULL OR target !~ '^[a-zA-Z_][a-zA-Z0-9_]*$' THEN
@@ -199,12 +207,18 @@ BEGIN
      WHERE app_name = p_app_name
        AND source = 'workspace_publication';
     IF NOT FOUND THEN
-        INSERT INTO public.analytic_app_manifests
-            (app_name, cartridge_id, manifest_digest, html_sha256, revision,
-             source, tenant_id, workspace_id, created_by_user_id)
-        VALUES (p_app_name, 'workspace', p_manifest_digest, p_html_sha256,
-                'active', 'workspace_publication', scoped_tenant::text,
-                scoped_workspace::text, app_owner::text);
+        BEGIN
+            INSERT INTO public.analytic_app_manifests
+                (app_name, cartridge_id, manifest_digest, html_sha256, revision,
+                 source, tenant_id, workspace_id, created_by_user_id)
+            VALUES (p_app_name, 'workspace', p_manifest_digest, p_html_sha256,
+                    'active', 'workspace_publication', scoped_tenant::text,
+                    scoped_workspace::text, app_owner::text);
+        EXCEPTION WHEN unique_violation THEN
+            -- An RLS-invisible manifest row (another scope) already holds the name.
+            RAISE EXCEPTION 'nombre reservado por otra publicación'
+                USING ERRCODE = '23505';
+        END;
     END IF;
 
     -- Superseded revisions keep only the dataset rows grant history references.
@@ -378,6 +392,98 @@ ALTER FUNCTION public.reconcile_workspace_app_dataset_grants(TEXT)
 REVOKE ALL ON FUNCTION public.reconcile_workspace_app_dataset_grants(TEXT)
     FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.reconcile_workspace_app_dataset_grants(TEXT)
+    TO omega_console;
+
+
+-- ── workspace publication retirement ───────────────────────────────────────
+-- Revoke-first, then remove the scoped manifest row so the name is reusable.
+-- Dataset rows still referenced by grant history survive; the manifest row is
+-- then deactivated instead of deleted.
+CREATE OR REPLACE FUNCTION public.retire_workspace_app_manifest(
+    p_app_name TEXT
+) RETURNS BIGINT
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $retire$
+DECLARE
+    scoped_tenant UUID;
+    scoped_workspace UUID;
+    revoked BIGINT := 0;
+    stale RECORD;
+    actor CONSTANT TEXT := 'server:workspace_publication';
+BEGIN
+    scoped_tenant := NULLIF(current_setting('app.tenant_id', TRUE), '')::UUID;
+    scoped_workspace := NULLIF(current_setting('app.workspace_id', TRUE), '')::UUID;
+    IF scoped_tenant IS NULL OR scoped_workspace IS NULL THEN
+        RAISE EXCEPTION 'app grant scope is unavailable' USING ERRCODE = '42501';
+    END IF;
+    IF p_app_name IS NULL OR p_app_name !~ '^[a-zA-Z_][a-zA-Z0-9_]*$' THEN
+        RAISE EXCEPTION 'app name is invalid' USING ERRCODE = '22023';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM public.analytic_app_manifests m
+         WHERE m.app_name = p_app_name
+           AND m.source = 'workspace_publication'
+           AND m.tenant_id = scoped_tenant::text
+           AND m.workspace_id = scoped_workspace::text
+    ) THEN
+        RETURN 0;
+    END IF;
+
+    FOR stale IN
+        SELECT g.id, g.dataset_name
+          FROM public.analytic_app_dataset_grants g
+         WHERE g.tenant_id = scoped_tenant
+           AND g.workspace_id = scoped_workspace
+           AND g.app_name = p_app_name
+           AND g.revoked_at IS NULL
+    LOOP
+        UPDATE public.analytic_app_dataset_grants
+           SET revoked_at = clock_timestamp(),
+               revoked_by = actor,
+               revoke_reason = 'publication_retired'
+         WHERE id = stale.id;
+        INSERT INTO public.analytic_app_dataset_grant_events
+            (grant_id, tenant_id, workspace_id, event, actor, detail)
+        VALUES (stale.id, scoped_tenant, scoped_workspace, 'revoked',
+                actor, 'publication_retired');
+        revoked := revoked + 1;
+    END LOOP;
+
+    DELETE FROM public.analytic_app_manifest_datasets d
+     WHERE d.app_name = p_app_name
+       AND NOT EXISTS (
+           SELECT 1 FROM public.analytic_app_dataset_grants g
+            WHERE g.app_name = d.app_name
+              AND g.manifest_digest = d.manifest_digest
+              AND g.dataset_name = d.dataset_name
+       );
+
+    IF EXISTS (
+        SELECT 1 FROM public.analytic_app_manifest_datasets d
+         WHERE d.app_name = p_app_name
+    ) THEN
+        UPDATE public.analytic_app_manifests
+           SET revision = 'superseded',
+               generated_at = clock_timestamp()
+         WHERE app_name = p_app_name
+           AND source = 'workspace_publication';
+    ELSE
+        DELETE FROM public.analytic_app_manifests
+         WHERE app_name = p_app_name
+           AND source = 'workspace_publication';
+    END IF;
+
+    RETURN revoked;
+END
+$retire$;
+
+ALTER FUNCTION public.retire_workspace_app_manifest(TEXT)
+    OWNER TO omega_app_grants_owner;
+REVOKE ALL ON FUNCTION public.retire_workspace_app_manifest(TEXT)
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.retire_workspace_app_manifest(TEXT)
     TO omega_console;
 
 

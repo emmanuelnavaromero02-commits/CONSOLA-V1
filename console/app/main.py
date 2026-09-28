@@ -71,6 +71,7 @@ from app.domains.apps.grants import (
     granted_datasets as _granted_datasets,
     has_grant as _has_app_grant,
     reconcile_workspace as _reconcile_app_grants_for_workspace,
+    retire_workspace_app as _retire_workspace_app,
 )
 from app.domains.apps.capability import (
     api_navigation_blocked as _api_navigation_blocked,
@@ -3294,7 +3295,7 @@ async def api_apps(
 )
 async def api_apps_delete(name: str, user: dict = Depends(require_permission("apps.write"))):
     """Delete a published analytic app by name."""
-    return await _delete_refinement_app_payload_impl(
+    result = await _delete_refinement_app_payload_impl(
         name=name,
         user=user,
         http_client_factory=httpx.AsyncClient,
@@ -3302,6 +3303,27 @@ async def api_apps_delete(name: str, user: dict = Depends(require_permission("ap
         mcp_payload=_mcp_payload,
         refinement_url=REFINEMENT_URL,
     )
+    await _retire_workspace_app_publication(name, user)
+    return result
+
+
+async def _retire_workspace_app_publication(name: str, user: dict | None) -> None:
+    """Best-effort retirement of a deleted app's scoped workspace manifest."""
+    try:
+        tenant_id, workspace_id = await _app_scope_for(user)
+        if not tenant_id or not workspace_id:
+            return
+        pool = await _get_db_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await _set_rls_scope(conn, tenant_id, workspace_id)
+                await _retire_workspace_app(conn, app_name=name)
+    except Exception:
+        logger.warning(
+            "[app-publication] workspace retirement failed for %s",
+            name,
+            exc_info=True,
+        )
 
 
 @app.get("/api/data/{dataset}", dependencies=[Depends(require_permission("datasets.read"))])

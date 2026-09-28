@@ -125,6 +125,14 @@ async def test_register_rejects_bad_inputs_before_touching_the_db(fake_pool):
         await app_publication.register_workspace_app(
             (TENANT, WORKSPACE), "ok_name", "", ["ventas"]
         )
+    with pytest.raises(app_publication.AppPublicationError, match="between 1 and 50"):
+        await app_publication.register_workspace_app(
+            (TENANT, WORKSPACE), "ok_name", HTML, []
+        )
+    with pytest.raises(app_publication.AppPublicationError, match="between 1 and 50"):
+        await app_publication.register_workspace_app(
+            (TENANT, WORKSPACE), "ok_name", HTML, [f"ds_{i}" for i in range(51)]
+        )
     assert conn.events == []
 
 

@@ -174,6 +174,66 @@ async def test_stale_publication_denies_scoped_data(monkeypatch):
     assert excinfo.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_delete_success_retires_the_workspace_publication(monkeypatch):
+    retired = []
+
+    class RetireConn(_Conn):
+        async def execute(self, sql, *args):
+            assert "set_config('app.tenant_id'" in sql
+            retired.append(("scope", args))
+
+    class RetirePool:
+        def acquire(self):
+            return _AsyncContext(RetireConn())
+
+    async def pool():
+        return RetirePool()
+
+    async def scope(*_args):
+        return TENANT, WORKSPACE
+
+    async def fake_retire(_conn, *, app_name):
+        retired.append(("retire", app_name))
+        return 1
+
+    monkeypatch.setattr(main, "_app_scope_for", scope)
+    monkeypatch.setattr(main, "_get_db_pool", pool)
+    monkeypatch.setattr(main, "_retire_workspace_app", fake_retire)
+    await main._retire_workspace_app_publication("ventas_semana", {"id": 7})
+    assert retired == [
+        ("scope", (TENANT, WORKSPACE)),
+        ("retire", "ventas_semana"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_retirement_skips_without_scope_and_never_raises(monkeypatch):
+    async def scopeless(*_args):
+        return "", ""
+
+    async def broken_pool():
+        raise AssertionError("no scope means no retirement query")
+
+    monkeypatch.setattr(main, "_app_scope_for", scopeless)
+    monkeypatch.setattr(main, "_get_db_pool", broken_pool)
+    await main._retire_workspace_app_publication("ventas_semana", {"id": 7})
+
+    async def scoped(*_args):
+        return TENANT, WORKSPACE
+
+    monkeypatch.setattr(main, "_app_scope_for", scoped)
+    # A retirement failure is logged, never surfaced to the delete caller.
+    await main._retire_workspace_app_publication("ventas_semana", {"id": 7})
+
+
+def test_delete_route_calls_the_retirement_hook():
+    import inspect
+
+    source = inspect.getsource(main.api_apps_delete)
+    assert "_retire_workspace_app_publication(name, user)" in source
+
+
 def test_wrapper_stale_variant_is_fail_closed():
     html = app_embed_wrapper_html("ventas_semana", ["ventas_diarias"], "n" * 24,
                                   capability=None, stale=True)

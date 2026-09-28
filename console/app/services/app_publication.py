@@ -15,6 +15,9 @@ from app.services.db_pool import get_db_pool
 logger = logging.getLogger(__name__)
 
 
+MAX_MANIFEST_DATASETS = 50
+
+
 class AppPublicationError(ValueError):
     """A workspace app publication could not be registered."""
 
@@ -46,6 +49,10 @@ async def register_workspace_app(
     clean_datasets = sorted(
         {str(item) for item in (datasets or []) if isinstance(item, str)}
     )
+    if not 1 <= len(clean_datasets) <= MAX_MANIFEST_DATASETS:
+        raise AppPublicationError(
+            f"dataset list must contain between 1 and {MAX_MANIFEST_DATASETS} datasets"
+        )
     if any(not DATASET_NAME_RE.fullmatch(item) for item in clean_datasets):
         raise AppPublicationError("dataset name is invalid")
     if not isinstance(html, str) or not html.strip():

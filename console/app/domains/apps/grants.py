@@ -98,6 +98,22 @@ async def reconcile_workspace_app(
     ]
 
 
+async def retire_workspace_app(
+    conn: Any,
+    *,
+    app_name: str,
+) -> int:
+    if not APP_NAME_RE.fullmatch(str(app_name or "")):
+        return 0
+    return int(
+        await conn.fetchval(
+            "SELECT public.retire_workspace_app_manifest($1)",
+            str(app_name),
+        )
+        or 0
+    )
+
+
 async def reconcile_workspace(
     conn: Any,
     *,
