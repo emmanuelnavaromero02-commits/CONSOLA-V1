@@ -2963,7 +2963,7 @@
     },
     {
       "path": "console/tests/test_data_platform_modules.py",
-      "sha256": "99ca85a4e6fd47cf73d93042e76f7f0c09b13047bd0a5a097fe7672ea140dd66"
+      "sha256": "6468330ea83604d2d3a8a741bd10b5069d7b340a3a0e056165148221636dd24e"
     },
     {
       "path": "console/tests/test_data_query_filters.py",
@@ -3108,6 +3108,10 @@
     {
       "path": "console/tests/test_jwt_blacklist.py",
       "sha256": "65d9e1e9661296ba111cf5d02a92aea079ed2959fbc16f480769192f77faea3c"
+    },
+    {
+      "path": "console/tests/test_knowledge_page_access.py",
+      "sha256": "8c463ca39d1cea512cef7631d97cb24c6b2431d6b7ae576d9ea7f1ceaee1ca5e"
     },
     {
       "path": "console/tests/test_lineage_payloads.py",
@@ -3439,7 +3443,7 @@
     },
     {
       "path": "console/tests/test_token_store_audit.py",
-      "sha256": "67a3f8fe4230911b760a5f4880596faff9eba18ddbdf12df7a2cdb43622cf777"
+      "sha256": "10b160d4ca11ef6750f2a3d22204982dedabdf84e7470e85a2402c95a13e9a12"
     },
     {
       "path": "console/tests/test_v1_smoke.py",
@@ -5271,7 +5275,7 @@
     },
     {
       "path": "tests/test_llm_client_config.py",
-      "sha256": "b5dfbac052605d1556395fad790d19567884dbd7c9232c46ef34bbed1cbee4c4"
+      "sha256": "00afcb204b242832aee0bf761844ec144fa6c353e6b91633c0587e4907c57e23"
     },
     {
       "path": "tests/test_local_bootstrap_reproducibility.py",
@@ -6495,11 +6499,15 @@
     },
     {
       "path": "tests/test_tenant_page_route_permissions.py",
-      "sha256": "6d353bb21441a530af6513422888e13048e26034f1239b182e739b97f90c79b9"
+      "sha256": "414e1905c0ab2943379a5cad61a1e13e0285591f5a9405c948c11730adf0c713"
     },
     {
       "path": "tests/test_terraform_backend_config.py",
       "sha256": "a90a2ac1e3bc10d853ad0a0c060b2149683f087bdacd2572283903f9eeb95068"
+    },
+    {
+      "path": "tests/test_token_usage_observability_migration.py",
+      "sha256": "c98e4426015ded7ab08e2dfd78d7e5fe00dba34c8b1ff21c7eef174181e7802c"
     },
     {
       "path": "tests/test_tool_manifest.py",
@@ -6652,6 +6660,10 @@
     {
       "path": "workspace/tests/test_strict_csp.py",
       "sha256": "7160a2d1318dc50db619ed6b9fbee091175eecadb5e482bb60fcec010b331f7c"
+    },
+    {
+      "path": "workspace/tests/test_token_store_observability.py",
+      "sha256": "b77020411dbbe5c285cf078d93be6ea35b9052695e625fbaec188b209f032796"
     },
     {
       "path": "workspace/tests/test_users_workspace_scope.py",
