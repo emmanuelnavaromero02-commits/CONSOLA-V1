@@ -5,17 +5,20 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { airflowDagUrl, studioErrorMessage } from "@/lib/studio/client";
+import { absoluteTime, formatDurationSeconds } from "@/lib/studio/format";
 import {
   useDagSource,
   useDagTemplates,
   useDeleteDag,
   useDeployDag,
   useRenameDag,
+  useRetryExtractAll,
   useRuntimeConfig,
   useStudioDags,
+  useStudioDagsHealth,
   useSystemInfo,
 } from "@/lib/studio/hooks";
-import type { StudioDag, StudioManifest } from "@/lib/studio/types";
+import type { StudioDag, StudioDagHealth, StudioManifest } from "@/lib/studio/types";
 import { dagIdError, deployGate, managedDagIds } from "@/lib/studio/validation";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +43,105 @@ function dagState(dag: StudioDag): { label: string; tone: string } {
   return { label: "Inactivo", tone: "border-border bg-muted text-muted-foreground" };
 }
 
+const EXTRACTION_DAG_RE = /^([a-z0-9_]+)_extract(_all)?$/;
+
+export function extractionDagTarget(
+  dagId: string,
+): { kind: "extract_all" | "extract"; cartridge: string } | null {
+  const match = EXTRACTION_DAG_RE.exec(dagId);
+  if (!match) return null;
+  return { kind: match[2] ? "extract_all" : "extract", cartridge: match[1] };
+}
+
+function dagSemaphore(health: StudioDagHealth | undefined): {
+  icon: string;
+  label: string;
+  tone: string;
+  detail?: string;
+} | null {
+  if (!health) return null;
+  const state = String(health.last_run?.state ?? "").toLowerCase();
+  if (!state) {
+    if (health.last_run_lookup === "ok") {
+      return {
+        icon: "⚪",
+        label: "Sin corridas registradas",
+        tone: "text-muted-foreground",
+      };
+    }
+    return {
+      icon: "⚪",
+      label: "Sin información",
+      tone: "text-muted-foreground",
+    };
+  }
+  if (state === "success") {
+    const start = health.last_run?.start_date;
+    const duration = formatDurationSeconds(health.last_run?.duration_seconds);
+    const parts = [start ? absoluteTime(start) : null, duration].filter(Boolean);
+    return {
+      icon: "🟢",
+      label: "Operando",
+      tone: "text-success",
+      detail: parts.length ? parts.join(" · ") : undefined,
+    };
+  }
+  if (state === "running" || state === "queued") {
+    return {
+      icon: "🟡",
+      label: state === "queued" ? "En cola" : "En curso",
+      tone: "text-warning",
+    };
+  }
+  if (state === "failed") {
+    return { icon: "🔴", label: "Con fallas", tone: "text-destructive" };
+  }
+  return { icon: "⚪", label: "Sin información", tone: "text-muted-foreground" };
+}
+
+function DagFailureDetail({
+  health,
+  cartridge,
+  onRetry,
+  retryPending,
+}: {
+  health: StudioDagHealth;
+  cartridge: string;
+  onRetry: (cartridge: string) => void;
+  retryPending: boolean;
+}) {
+  const target = extractionDagTarget(health.dag_id);
+  const normalizedCartridge = cartridge.replace(/-/g, "_");
+  const canRetry = target?.kind === "extract_all" && target.cartridge === normalizedCartridge;
+  return (
+    <div className="mt-1 space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs">
+      <p className="text-destructive">
+        Tarea que falló: <code className="break-all font-mono">{health.failed_task_id || "Sin información"}</code>
+      </p>
+      <p className="text-destructive">{health.error_es || "La tarea falló; revisa el detalle técnico"}</p>
+      {canRetry ? (
+        <button
+          type="button"
+          disabled={retryPending}
+          onClick={() => onRetry(cartridge)}
+          className="inline-flex min-h-[36px] items-center gap-1.5 rounded-md border border-destructive/40 bg-background px-2.5 font-medium text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {retryPending ? <Spinner className="h-3.5 w-3.5" /> : <RefreshCw aria-hidden className="h-3.5 w-3.5" />}
+          Reintentar extracción
+        </button>
+      ) : target?.kind === "extract" ? (
+        <a href="/studio?tab=entidades" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+          Reintentar por entidad
+        </a>
+      ) : (
+        <a href="/operations/workflows" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+          Ver automatizaciones
+        </a>
+      )}
+    </div>
+  );
+}
+
 function entityForDag(manifest: StudioManifest | undefined, dagId: string | null): string {
   const entities = manifest?.entities ?? [];
   const match = entities.find((entity) => dagId && entity?.dag_id === dagId);
@@ -48,12 +150,14 @@ function entityForDag(manifest: StudioManifest | undefined, dagId: string | null
 
 export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest?: StudioManifest }) {
   const dags = useStudioDags(cartridge);
+  const health = useStudioDagsHealth(cartridge);
   const templates = useDagTemplates();
   const system = useSystemInfo();
   const config = useRuntimeConfig();
   const deploy = useDeployDag();
   const rename = useRenameDag();
   const remove = useDeleteDag();
+  const retryExtraction = useRetryExtractAll();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -68,6 +172,17 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
   const existingId = selected && !isNew ? selected : null;
   const source = useDagSource(cartridge, existingId);
   const managed = useMemo(() => managedDagIds(manifest), [manifest]);
+  const healthByDag = useMemo(
+    () => new Map((health.data?.dags ?? []).map((item) => [item.dag_id, item])),
+    [health.data],
+  );
+
+  function onRetryExtraction(target: string) {
+    retryExtraction.mutate(target, {
+      onSuccess: () => toast.success("Extracción reenviada al orquestador."),
+      onError: (error) => toast.error(studioErrorMessage(error, "No se pudo reintentar la extracción.")),
+    });
+  }
   const gate = deployGate(system.data, system.isError);
   const entities = (manifest?.entities ?? [])
     .map((entity) => String(entity?.entity || entity?.name || ""))
@@ -215,6 +330,16 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
             </button>
           </div>
         </div>
+        {health.data?.scheduler_healthy === false ? (
+          <Notice tone="warning" testId="dags-scheduler-warning">
+            El programador de Airflow no está saludable; las corridas pueden retrasarse.
+          </Notice>
+        ) : null}
+        {health.isSuccess && health.data && !health.data.airflow_available ? (
+          <p data-testid="dags-health-unavailable" className="text-xs text-muted-foreground">
+            Estado del orquestador no disponible por ahora.
+          </p>
+        ) : null}
         {dags.isLoading ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Consultando Airflow…</p>
         ) : dags.isError ? (
@@ -235,6 +360,9 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
             {dags.data.dags.map((dag) => {
               const state = dagState(dag);
               const active = dag.dag_id === selected;
+              const dagHealth = healthByDag.get(dag.dag_id);
+              const semaphore = dagSemaphore(dagHealth);
+              const failed = String(dagHealth?.last_run?.state ?? "").toLowerCase() === "failed";
               return (
                 <li key={dag.dag_id}>
                   <button
@@ -249,6 +377,15 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
                     )}
                   >
                     <span className="break-all font-mono text-xs">{dag.dag_id}</span>
+                    {semaphore ? (
+                      <span data-testid="dag-semaphore" className={cn("flex flex-wrap items-center gap-1 text-xs", semaphore.tone)}>
+                        <span aria-hidden>{semaphore.icon}</span>
+                        <span className="font-medium">{semaphore.label}</span>
+                        {semaphore.detail ? (
+                          <span className="text-muted-foreground">· {semaphore.detail}</span>
+                        ) : null}
+                      </span>
+                    ) : null}
                     <span className="flex flex-wrap gap-1">
                       <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", state.tone)}>{state.label}</span>
                       {dag.registered_only ? (
@@ -261,6 +398,14 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
                       ) : null}
                     </span>
                   </button>
+                  {failed && dagHealth ? (
+                    <DagFailureDetail
+                      health={dagHealth}
+                      cartridge={cartridge}
+                      onRetry={onRetryExtraction}
+                      retryPending={retryExtraction.isPending}
+                    />
+                  ) : null}
                 </li>
               );
             })}
@@ -272,7 +417,9 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
         {!selected ? (
           <Notice>Selecciona una automatización para ver su código o crea una nueva.</Notice>
         ) : (
-          <>
+          <details data-testid="dag-technical-details" key={editorKey} open={isNew || undefined}>
+            <summary className="cursor-pointer text-sm font-semibold">Detalle técnico</summary>
+            <div className="space-y-3 pt-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs uppercase text-muted-foreground">{isNew ? "Nueva automatización" : "Automatización seleccionada"}</p>
@@ -293,7 +440,7 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
                   <ExternalLink aria-hidden className="h-4 w-4" /> Ver en Airflow
                 </a>
               ) : existingId && config.isSuccess ? (
-                <span className="text-xs text-muted-foreground">Airflow sin URL pública configurada.</span>
+                <span className="text-xs text-muted-foreground">Enlace a Airflow no configurado.</span>
               ) : null}
             </div>
 
@@ -436,7 +583,8 @@ export function DagsPanel({ cartridge, manifest }: { cartridge: string; manifest
                 </>
               ) : null}
             </div>
-          </>
+            </div>
+          </details>
         )}
       </section>
 

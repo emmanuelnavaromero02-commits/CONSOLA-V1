@@ -1,7 +1,27 @@
 import { api } from "@/lib/api";
 
-export type SyncRunStatus = "queued" | "running" | "success" | "partial" | "failed" | "skipped";
+export type SyncRunStatus =
+  | "queued"
+  | "running"
+  | "success"
+  | "partial"
+  | "failed"
+  | "blocked"
+  | "skipped"
+  | "skipped_explicit";
 export type SyncTarget = "all" | "foundation" | "talent";
+
+export interface SyncOrchestratorStatus {
+  airflow_available: boolean;
+  scheduler_healthy: boolean | null;
+  dag_paused: boolean | null;
+}
+
+export interface SyncAutomationNotice {
+  was_paused?: boolean | null;
+  unpaused?: boolean | null;
+  message_es?: string | null;
+}
 
 export interface SyncRunStep {
   id: string;
@@ -33,6 +53,8 @@ export interface SyncRunPayload {
   started_at?: string | null;
   finished_at?: string | null;
   error_message?: string | null;
+  automation?: SyncAutomationNotice | null;
+  orchestrator?: SyncOrchestratorStatus | null;
 }
 
 export interface StartSyncNowInput {
@@ -42,8 +64,17 @@ export interface StartSyncNowInput {
   target?: SyncTarget;
 }
 
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  "success",
+  "partial",
+  "failed",
+  "blocked",
+  "skipped",
+  "skipped_explicit",
+]);
+
 export function isSyncTerminal(status: string | undefined): boolean {
-  return status === "success" || status === "partial" || status === "failed";
+  return Boolean(status && TERMINAL_STATUSES.has(status));
 }
 
 export function hasSyncRunId(

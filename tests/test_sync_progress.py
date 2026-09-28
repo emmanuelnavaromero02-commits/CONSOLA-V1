@@ -790,3 +790,128 @@ def test_sync_run_error_message_uses_first_three_errors():
         ]
     ) == "one; two; three"
     assert sync_progress.sync_run_error_message([]) is None
+
+
+def test_sync_connection_step_update_honors_connection_check():
+    failed = sync_progress.sync_connection_step_update(
+        triggered=[{"entity": "EmpJob"}],
+        child_rows=[],
+        bronze_ready=3,
+        connection_check={"status": "failed", "message": "bad creds"},
+    )
+    verified = sync_progress.sync_connection_step_update(
+        triggered=[],
+        child_rows=[],
+        bronze_ready=0,
+        connection_check={"status": "verified"},
+    )
+    unverified = sync_progress.sync_connection_step_update(
+        triggered=[{"entity": "EmpJob"}],
+        child_rows=[],
+        bronze_ready=0,
+        connection_check={"status": "unverified"},
+    )
+    confirmed = sync_progress.sync_connection_step_update(
+        triggered=[{"entity": "EmpJob"}],
+        child_rows=[],
+        bronze_ready=2,
+        connection_check={"status": "unverified"},
+    )
+
+    source_failed = sync_progress.sync_connection_step_update(
+        triggered=[],
+        child_rows=[],
+        bronze_ready=0,
+        connection_check={
+            "status": "failed",
+            "failure_kind": "source",
+            "message": "HTTP 503",
+        },
+    )
+
+    assert failed["status"] == "failed"
+    assert failed["detail"] == sync_progress.CONNECTION_INVALID_DETAIL_ES
+    assert failed["error"] == "bad creds"
+    assert source_failed["status"] == "failed"
+    assert source_failed["detail"] == sync_progress.CONNECTION_PROBE_FAILED_DETAIL_ES
+    assert verified["status"] == "success"
+    assert verified["detail"] == sync_progress.CONNECTION_VERIFIED_DETAIL_ES
+    assert unverified["status"] == "partial"
+    assert unverified["detail"] == sync_progress.CONNECTION_UNVERIFIED_DETAIL_ES
+    assert confirmed["status"] == "success"
+    assert confirmed["detail"] == sync_progress.CONNECTION_CONFIRMED_BY_DATA_DETAIL_ES
+
+
+def test_public_sync_payload_exposes_automation_notice():
+    automation = {"was_paused": True, "unpaused": True, "message_es": "reactivado"}
+    with_notice = sync_progress.public_sync_payload(
+        {"run_id": "r1", "status": "running"},
+        {"steps": [], "automation": automation},
+        terminal_statuses={"success", "partial", "failed"},
+    )
+    without_notice = sync_progress.public_sync_payload(
+        {"run_id": "r1", "status": "running"},
+        {"steps": []},
+        terminal_statuses={"success", "partial", "failed"},
+    )
+
+    assert with_notice["automation"] == automation
+    assert without_notice["automation"] is None
+
+
+def test_sync_updated_extra_preserves_automation_and_connection_check():
+    updated = sync_progress.sync_updated_extra(
+        steps=[],
+        triggered=[],
+        errors=[],
+        control_room_ready=False,
+        control_room_checked_at=None,
+        control_room_snapshot={},
+        agentops_refresh={},
+        gold_refresh_summary={},
+        control_room_gold_refresh={},
+        aggregate_payload_ready=False,
+        aggregate_summary_pending=False,
+        child_run_count=0,
+        entity_child_run_count=0,
+        entity_summary={},
+        previous_extra={
+            "automation": {"unpaused": True},
+            "connection_check": {"status": "unverified"},
+        },
+        row_mode=None,
+    )
+
+    assert updated["automation"] == {"unpaused": True}
+    assert updated["connection_check"] == {"status": "unverified"}
+
+
+def test_sync_run_needs_final_reconcile_failed_without_dispatch_is_final():
+    row = {"status": "failed", "cartridge_id": "sap_successfactors"}
+    extra = {
+        "steps": [
+            {"id": "connection", "status": "failed"},
+            {"id": "bronze", "status": "failed"},
+        ],
+        "triggered_entities": [],
+    }
+
+    assert not sync_progress.sync_run_needs_final_reconcile(
+        row,
+        extra,
+        terminal_statuses={"success", "partial", "failed"},
+        initial_step_count=2,
+        aggregate_entity="__extract_all__",
+    )
+
+
+def test_sync_errors_retryable_accepts_airflow_trigger_failed_reason():
+    assert sync_progress.sync_errors_retryable(
+        [
+            {
+                "status_code": 400,
+                "error": "No se pudo iniciar la extracción en el orquestador: x",
+                "reason": "airflow_trigger_failed",
+            }
+        ]
+    )

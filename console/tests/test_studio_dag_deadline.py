@@ -45,7 +45,9 @@ async def test_dags_list_times_out_and_cancels_hung_airflow(monkeypatch):
         )
 
     assert exc.value.status_code == 504
-    assert exc.value.detail == "Airflow DAG list timed out"
+    assert exc.value.detail == (
+        "La consulta de automatizaciones a Airflow agotó el tiempo de espera."
+    )
     await asyncio.wait_for(cancelled.wait(), timeout=0.1)
 
 

@@ -19,7 +19,10 @@ import {
   type SyncRunPayload,
   type SyncRunStep,
 } from "@/lib/sync-now";
+import { syncCardTitle, syncReasonCopy, syncStatusCopy, syncStepStatusCopy } from "@/lib/sync-status-copy";
 import { TestConnectionResult } from "./TestConnectionResult";
+
+const SYNC_LIVENESS_DELAY_MS = 10_000;
 
 interface Props {
   cartridgeId: string;
@@ -165,7 +168,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-sm font-medium">
               <ShieldCheck size={18} aria-hidden />
-              Vault scoped
+              Acceso limitado a la Bóveda
             </div>
             <p className="max-w-2xl text-sm text-muted-foreground">
               Las credenciales se administran en Vault; esta pantalla solo prueba conexiones guardadas.
@@ -237,7 +240,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
   );
 }
 
-function SyncRunStatusCard({
+export function SyncRunStatusCard({
   cartridgeId,
   payload,
   loading,
@@ -247,25 +250,71 @@ function SyncRunStatusCard({
   loading: boolean;
 }) {
   const tone = payload.status === "success" ? "text-emerald-600" : payload.status === "failed" ? "text-destructive" : "text-amber-600";
+  const active = !isSyncTerminal(payload.status);
+  const anyStepCompleted = payload.steps.some((step) => step.status === "success");
+  const translatedErrorReasons = Array.from(
+    new Set(
+      payload.errors
+        .map((error) => syncReasonCopy((error as { reason?: unknown }).reason))
+        .filter((copy): copy is string => Boolean(copy)),
+    ),
+  );
+  const [livenessRunId, setLivenessRunId] = useState<string | null>(null);
+  const livenessVisible = Boolean(
+    active && !anyStepCompleted && payload.run_id && livenessRunId === payload.run_id,
+  );
+
+  useEffect(() => {
+    if (!active || anyStepCompleted || !payload.run_id) return undefined;
+    const runId = payload.run_id;
+    const timer = window.setTimeout(() => setLivenessRunId(runId), SYNC_LIVENESS_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [active, anyStepCompleted, payload.run_id]);
+
   return (
     <section className="space-y-4 rounded-lg border bg-card p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
-          <p className="text-sm font-semibold">Sincronización completa</p>
+          <p className="text-sm font-semibold">{syncCardTitle(payload.status)}</p>
           <p className="text-xs text-muted-foreground">
             {payload.triggered_entities.length} entidades disparadas · {payload.errors.length} errores iniciales
           </p>
         </div>
         <span className={`inline-flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs font-medium ${tone}`}>
           {loading || !isSyncTerminal(payload.status) ? <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" /> : payload.status === "failed" ? <XCircle aria-hidden className="h-3.5 w-3.5" /> : payload.status === "success" ? <CheckCircle2 aria-hidden className="h-3.5 w-3.5" /> : <AlertTriangle aria-hidden className="h-3.5 w-3.5" />}
-          {payload.status}
+          {syncStatusCopy(payload.status)}
         </span>
       </div>
+      {payload.automation?.unpaused ? (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
+          {payload.automation.message_es?.trim() || "La automatización estaba en pausa y se reactivó automáticamente."}
+        </p>
+      ) : null}
+      {livenessVisible ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+          <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+          <span>
+            {payload.orchestrator?.scheduler_healthy === false
+              ? "Verificando estado del orquestador…"
+              : "Extracción iniciada en el orquestador. Monitoreando avance…"}
+          </span>
+          <Link href="/monitor" className="font-medium text-primary hover:underline">
+            Ver estado del pipeline
+          </Link>
+        </div>
+      ) : null}
       <div className="grid gap-2 md:grid-cols-4">
         {payload.steps.map((step) => (
           <SyncStepCard key={step.id} step={step} />
         ))}
       </div>
+      {translatedErrorReasons.length ? (
+        <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+          {translatedErrorReasons.map((copy) => (
+            <p key={copy}>{copy}</p>
+          ))}
+        </div>
+      ) : null}
       {payload.error_message ? (
         <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
           {payload.error_message}
@@ -305,7 +354,7 @@ function SyncStepCard({ step }: { step: SyncRunStep }) {
   return (
     <div className={`min-h-28 rounded-md border p-3 ${color}`}>
       <p className="text-xs font-semibold uppercase tracking-wide">{step.label}</p>
-      <p className="mt-2 text-sm font-medium">{step.status}</p>
+      <p className="mt-2 text-sm font-medium">{syncStepStatusCopy(step.status)}</p>
       {step.detail ? <p className="mt-1 text-xs opacity-80">{step.detail}</p> : null}
       {step.error ? <p className="mt-1 text-xs opacity-80">{step.error}</p> : null}
     </div>

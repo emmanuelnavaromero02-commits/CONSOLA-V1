@@ -46,6 +46,8 @@ async function installStudioHarness(page: Page, overrides: Record<string, Handle
         ],
       });
     },
+    "/api/studio/dags/health": (route) =>
+      json(route, { cartridge: "acme", airflow_available: false, scheduler_healthy: null, dags: [], total: 0 }),
     "/api/studio/dags": (route) =>
       json(route, {
         cartridge: "acme",
@@ -102,6 +104,10 @@ async function openTab(page: Page, name: RegExp) {
   await page.getByRole("tab", { name }).click();
 }
 
+async function openTechnicalDetails(page: Page) {
+  await page.getByTestId("dag-technical-details").locator("summary").click();
+}
+
 test.describe("Studio deep — hermetic API contract", () => {
   test("probe status is shown honestly: registered is not operational", async ({ authedPage: page }) => {
     await installStudioHarness(page);
@@ -147,6 +153,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     await openStudio(page);
     await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
+    await openTechnicalDetails(page);
     await expect(page.getByTestId("dag-airflow-link")).toHaveAttribute(
       "href",
       "http://airflow.e2e.test:8082/dags/acme_custom/grid",
@@ -180,6 +187,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     await openStudio(page);
     await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
+    await openTechnicalDetails(page);
     await page.getByRole("button", { name: /Publicar automatización/ }).click();
     await page.getByTestId("deploy-dialog").getByRole("button", { name: "Publicar" }).click();
     await expect(page.getByText("Publicar automatización requiere ALLOW_RCE_TOOLS=true en el entorno local.")).toBeVisible();
@@ -195,6 +203,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     await expect(packaged).toContainText("Inactivo");
     await expect(packaged).toContainText("Solo manifiesto");
     await page.locator('[data-dag-id="acme_custom"]').click();
+    await openTechnicalDetails(page);
     const deploy = page.getByRole("button", { name: /Publicar automatización/ });
     await expect(deploy).toBeDisabled();
     await expect(page.getByTestId("deploy-disabled-reason")).toContainText("desarrollo");
@@ -221,6 +230,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     await openStudio(page);
     await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
+    await openTechnicalDetails(page);
     await page.getByRole("button", { name: /Eliminar/ }).click();
     const dialog = page.getByTestId("delete-dag-dialog");
     await expect(dialog).toBeVisible();
@@ -234,6 +244,7 @@ test.describe("Studio deep — hermetic API contract", () => {
     await openStudio(page);
     await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
+    await openTechnicalDetails(page);
     await page.getByRole("button", { name: /Renombrar/ }).click();
     const input = page.getByTestId("rename-input");
     await expect(input).toHaveValue("acme_custom");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { absoluteTime, formatCount, formatDay, plural } from "./format";
+import { absoluteTime, formatCount, formatDay, formatDurationSeconds, plural } from "./format";
 
 describe("format helpers", () => {
   it("groups thousands like es-MX", () => {
@@ -25,5 +25,15 @@ describe("format helpers", () => {
     expect(formatDay("2026-09-26")).toMatch(/^26 sept?\.? 2026$/);
     expect(formatDay("2026-09-26T23:30:00Z")).toMatch(/^26 sept?\.? 2026$/);
     expect(formatDay("ayer")).toBe("ayer");
+  });
+
+  it("formats run durations from real seconds only", () => {
+    expect(formatDurationSeconds(45)).toBe("45 s");
+    expect(formatDurationSeconds(330)).toBe("5 min 30 s");
+    expect(formatDurationSeconds(3600)).toBe("1 h");
+    expect(formatDurationSeconds(5400)).toBe("1 h 30 min");
+    expect(formatDurationSeconds(null)).toBeNull();
+    expect(formatDurationSeconds(-1)).toBeNull();
+    expect(formatDurationSeconds(Number.NaN)).toBeNull();
   });
 });

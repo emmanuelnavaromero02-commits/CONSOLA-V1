@@ -18,6 +18,7 @@ import {
   importCartridge,
   introspectSource,
   listDags,
+  listDagsHealth,
   listStudioCartridges,
   listStudioEntities,
   listTemplates,
@@ -25,6 +26,7 @@ import {
   refreshDataset,
   renameDag,
   renameEntity,
+  retryExtractAll,
   saveDataset,
   updateEntity,
   uploadEntitySpec,
@@ -46,6 +48,7 @@ export const studioKeys = {
   status: (id: string) => [ROOT, "cartridge", id, "status"] as const,
   graph: (id: string) => [ROOT, "graph", id] as const,
   dags: (id: string) => [ROOT, "dags", id] as const,
+  dagsHealth: (id: string) => [ROOT, "dags", id, "health"] as const,
   dagSource: (id: string, dagId: string) => [ROOT, "dags", id, "source", dagId] as const,
   templates: () => [ROOT, "templates"] as const,
   systemInfo: () => [ROOT, "system-info"] as const,
@@ -92,6 +95,28 @@ export function useStudioDags(id: string | null) {
     enabled: Boolean(id),
     staleTime: 15_000,
     retry: false,
+  });
+}
+
+export function useStudioDagsHealth(id: string | null) {
+  return useQuery({
+    queryKey: studioKeys.dagsHealth(id ?? ""),
+    queryFn: () => listDagsHealth(id as string),
+    enabled: Boolean(id),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+}
+
+export function useRetryExtractAll() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (cartridge: string) => retryExtractAll(cartridge),
+    onSuccess: (_result, cartridge) => {
+      client.invalidateQueries({ queryKey: studioKeys.dags(cartridge) });
+      client.invalidateQueries({ queryKey: studioKeys.dagsHealth(cartridge) });
+    },
   });
 }
 

@@ -107,7 +107,11 @@ async def trigger_sync_aggregate_extract_all(
                 {
                     "entity": sync_aggregate_entity,
                     "status_code": 502,
-                    "error": f"Airflow trigger failed: {result['error']}",
+                    "error": (
+                        "No se pudo iniciar la extracción en el orquestador: "
+                        f"{result['error']}"
+                    ),
+                    "reason": "airflow_trigger_failed",
                 }
             ],
             "count": 0,

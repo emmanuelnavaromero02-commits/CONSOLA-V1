@@ -32,6 +32,7 @@ import type {
   StudioChatHandlers,
   StudioChatInput,
   StudioChatResult,
+  StudioDagsHealthPayload,
   StudioDagsPayload,
   StudioEntitiesPayload,
   StudioLayer,
@@ -67,6 +68,8 @@ export const studioPaths = {
   cartridgeImport: () => "/studio/import",
   dagGraph: (cartridge: string) => withQuery("/api/studio/dag-graph", { cartridge }),
   dags: (cartridge: string) => withQuery("/api/studio/dags", { cartridge }),
+  dagsHealth: (cartridge: string) => withQuery("/api/studio/dags/health", { cartridge }),
+  pipelineExtractAll: (cartridge: string) => `/api/pipeline/${enc(cartridge)}/extract_all`,
   dagSource: (cartridge: string, dagId: string) =>
     withQuery(`/api/studio/dags/${enc(dagId)}/source`, { cartridge }),
   dag: (cartridge: string, dagId: string) => withQuery(`/api/studio/dags/${enc(dagId)}`, { cartridge }),
@@ -203,6 +206,23 @@ export async function listDags(cartridge: string): Promise<StudioDagsPayload> {
   const { data } = await api.get<Partial<StudioDagsPayload>>(studioPaths.dags(cartridge));
   const dags = Array.isArray(data?.dags) ? data.dags.filter((dag) => Boolean(dag?.dag_id)) : [];
   return { cartridge: data?.cartridge ?? cartridge, dags, total: data?.total ?? dags.length };
+}
+
+export async function listDagsHealth(cartridge: string): Promise<StudioDagsHealthPayload> {
+  const { data } = await api.get<Partial<StudioDagsHealthPayload>>(studioPaths.dagsHealth(cartridge));
+  const dags = Array.isArray(data?.dags) ? data.dags.filter((dag) => Boolean(dag?.dag_id)) : [];
+  return {
+    cartridge: data?.cartridge ?? cartridge,
+    airflow_available: Boolean(data?.airflow_available),
+    scheduler_healthy: typeof data?.scheduler_healthy === "boolean" ? data.scheduler_healthy : null,
+    dags,
+    total: data?.total ?? dags.length,
+  };
+}
+
+export async function retryExtractAll(cartridge: string): Promise<unknown> {
+  const { data } = await api.post<unknown>(studioPaths.pipelineExtractAll(cartridge), {});
+  return data;
 }
 
 export async function getDagSource(cartridge: string, dagId: string): Promise<DagSourcePayload> {

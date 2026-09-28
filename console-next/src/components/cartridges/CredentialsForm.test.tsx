@@ -49,6 +49,8 @@ describe("CredentialsForm", () => {
 
     expect(markup).toContain("Configurar en Vault");
     expect(markup).toContain("/operations/vault");
+    expect(markup).toContain("Acceso limitado a la Bóveda");
+    expect(markup).not.toContain("Vault scoped");
     expect(markup).toContain("Las credenciales se administran en Vault");
     expect(markup).not.toContain("Guardar credenciales");
     expect(markup).not.toContain('type="password"');

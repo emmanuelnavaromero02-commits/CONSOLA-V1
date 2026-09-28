@@ -98,6 +98,31 @@ export interface StudioDagsPayload {
   total: number;
 }
 
+export interface StudioDagLastRun {
+  state?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  duration_seconds?: number | null;
+}
+
+export interface StudioDagHealth {
+  dag_id: string;
+  is_paused?: boolean;
+  registered_only?: boolean;
+  last_run_lookup?: "ok" | "failed" | "skipped";
+  last_run?: StudioDagLastRun | null;
+  failed_task_id?: string | null;
+  error_es?: string | null;
+}
+
+export interface StudioDagsHealthPayload {
+  cartridge?: string | null;
+  airflow_available: boolean;
+  scheduler_healthy?: boolean | null;
+  dags: StudioDagHealth[];
+  total: number;
+}
+
 export interface DagSourcePayload {
   dag_id?: string;
   found: boolean;

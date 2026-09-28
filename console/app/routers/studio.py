@@ -10,16 +10,20 @@ import os
 import re
 import socket
 import ssl
+import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
 
 import httpx
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
 from app.domains.data_platform.lineage_payloads import dataset_source_match
+from app.domains.pipeline.airflow_error_copy import airflow_task_error_es
 from app.domains.security.internal_auth import (
     internal_outbound_headers as _internal_outbound_headers_impl,
     internal_outbound_key as _internal_outbound_key_impl,
@@ -1970,9 +1974,16 @@ async def dags_list(
             timeout=_AIRFLOW_DAGS_TIMEOUT_SECONDS,
         )
     except TimeoutError as exc:
-        raise HTTPException(504, "Airflow DAG list timed out") from exc
+        raise HTTPException(
+            504,
+            "La consulta de automatizaciones a Airflow agotó el tiempo de espera.",
+        ) from exc
     if isinstance(result, dict) and result.get("error"):
-        raise HTTPException(502, f"Airflow DAG list failed: {result['error']}")
+        raise HTTPException(
+            502,
+            "No se pudieron listar las automatizaciones en Airflow: "
+            f"{result['error']}",
+        )
     raw_dags = result.get("dags") if isinstance(result, dict) else result
     if not isinstance(raw_dags, list):
         raw_dags = []
@@ -2013,6 +2024,272 @@ async def dags_list(
 
     normalized.sort(key=lambda dag: dag["dag_id"])
     return {"cartridge": cartridge, "dags": normalized, "total": len(normalized)}
+
+
+class _StudioDagsHealthModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class StudioDagLastRun(_StudioDagsHealthModel):
+    state: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    duration_seconds: float | None = None
+
+
+class StudioDagHealth(_StudioDagsHealthModel):
+    dag_id: str
+    is_paused: bool = False
+    registered_only: bool = False
+    last_run_lookup: Literal["ok", "failed", "skipped"] = "skipped"
+    last_run: StudioDagLastRun | None = None
+    failed_task_id: str | None = None
+    error_es: str | None = None
+
+
+class StudioDagsHealthResponse(_StudioDagsHealthModel):
+    cartridge: str | None = None
+    airflow_available: bool = False
+    scheduler_healthy: bool | None = None
+    dags: list[StudioDagHealth] = Field(default_factory=list)
+    total: int = 0
+
+
+_DAGS_HEALTH_CACHE_TTL_SECONDS = 30.0
+_DAGS_HEALTH_ENRICH_LIMIT = 25
+_DAGS_HEALTH_CONCURRENCY = 4
+_DAGS_HEALTH_INVOKE_TIMEOUT_SECONDS = 2.0
+_DAGS_HEALTH_CACHE_MAX_ENTRIES = 32
+_dags_health_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_dags_health_pending: dict[str, "asyncio.Task[dict[str, Any]]"] = {}
+
+
+def reset_dags_health_cache() -> None:
+    _dags_health_cache.clear()
+    _dags_health_pending.clear()
+
+
+def _dags_health_cache_store(key: str, payload: dict[str, Any], now: float) -> None:
+    _dags_health_cache[key] = (now + _DAGS_HEALTH_CACHE_TTL_SECONDS, payload)
+    while len(_dags_health_cache) > _DAGS_HEALTH_CACHE_MAX_ENTRIES:
+        oldest = min(_dags_health_cache, key=lambda item: _dags_health_cache[item][0])
+        _dags_health_cache.pop(oldest, None)
+
+
+async def _airflow_health_invoke(tool: str, args: dict[str, Any], user: dict) -> Any:
+    try:
+        return await asyncio.wait_for(
+            mcp_registry.invoke("infra", tool, args, user=user),
+            timeout=_DAGS_HEALTH_INVOKE_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        return None
+
+
+def _airflow_duration_seconds(start: Any, end: Any) -> float | None:
+    parsed = []
+    for value in (start, end):
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            parsed.append(datetime.fromisoformat(value.replace("Z", "+00:00")))
+        except ValueError:
+            return None
+    try:
+        duration = (parsed[1] - parsed[0]).total_seconds()
+    except TypeError:
+        return None
+    return duration if duration >= 0 else None
+
+
+def _first_failed_task_id(tasks_result: Any) -> str | None:
+    tasks = tasks_result.get("tasks") if isinstance(tasks_result, dict) else None
+    if not isinstance(tasks, list):
+        return None
+    failed = [
+        task
+        for task in tasks
+        if isinstance(task, dict)
+        and str(task.get("state") or "").lower() == "failed"
+        and task.get("task_id")
+    ]
+    if not failed:
+        return None
+    failed.sort(key=lambda task: str(task.get("end_date") or ""))
+    return str(failed[0]["task_id"])
+
+
+async def _dag_health_item(dag: dict[str, Any], user: dict) -> StudioDagHealth:
+    item = StudioDagHealth(
+        dag_id=str(dag.get("dag_id")),
+        is_paused=bool(dag.get("is_paused")),
+        registered_only=bool(dag.get("registered_only")),
+    )
+    if item.registered_only:
+        return item
+    runs_result = await _airflow_health_invoke(
+        "airflow_list_dag_runs", {"dag_id": item.dag_id, "limit": 1}, user
+    )
+    runs = runs_result.get("runs") if isinstance(runs_result, dict) else None
+    if not isinstance(runs, list) or (
+        isinstance(runs_result, dict) and runs_result.get("error")
+    ):
+        item.last_run_lookup = "failed"
+        return item
+    item.last_run_lookup = "ok"
+    if not runs or not isinstance(runs[0], dict):
+        return item
+    run = runs[0]
+    state = str(run.get("state") or "").lower() or None
+    start_date = run.get("start_date") if isinstance(run.get("start_date"), str) else None
+    end_date = run.get("end_date") if isinstance(run.get("end_date"), str) else None
+    item.last_run = StudioDagLastRun(
+        state=state,
+        start_date=start_date,
+        end_date=end_date,
+        duration_seconds=_airflow_duration_seconds(start_date, end_date),
+    )
+    if state == "failed" and run.get("dag_run_id"):
+        tasks_result = await _airflow_health_invoke(
+            "airflow_list_task_instances",
+            {"dag_id": item.dag_id, "dag_run_id": str(run["dag_run_id"])},
+            user,
+        )
+        item.failed_task_id = _first_failed_task_id(tasks_result)
+        # No error text is fetched in v1 (no logs), so never guess a cause.
+        item.error_es = airflow_task_error_es()
+    return item
+
+
+def _studio_allowed_cartridges(user: dict | None) -> set[str] | None:
+    """None means unrestricted."""
+    if user is None or _is_studio_admin_user(user):
+        return None
+    ctx = build_security_context(user)
+    allowed = {
+        str(item).strip()
+        for item in (ctx.get("allowed_cartridges") or [])
+        if str(item).strip()
+    }
+    if "*" in allowed:
+        return None
+    return allowed
+
+
+def _dag_belongs_to_allowed_cartridge(dag_id: str, allowed: set[str]) -> bool:
+    normalized = {str(item).replace("-", "_") for item in allowed}
+    return any(dag_id == name or dag_id.startswith(f"{name}_") for name in normalized)
+
+
+def _dags_health_response_for_user(
+    payload: dict[str, Any], user: dict | None, cartridge: str | None
+) -> StudioDagsHealthResponse:
+    response = StudioDagsHealthResponse(**payload)
+    if cartridge:
+        return response
+    allowed = _studio_allowed_cartridges(user)
+    if allowed is None:
+        return response
+    visible = [
+        item
+        for item in response.dags
+        if _dag_belongs_to_allowed_cartridge(item.dag_id, allowed)
+    ]
+    return StudioDagsHealthResponse(
+        cartridge=response.cartridge,
+        airflow_available=response.airflow_available,
+        scheduler_healthy=response.scheduler_healthy,
+        dags=visible,
+        total=len(visible),
+    )
+
+
+async def _compute_dags_health(
+    cartridge: str | None, cache_key: str, user: dict
+) -> dict[str, Any]:
+    now = time.monotonic()
+    try:
+        listing = await dags_list(cartridge=cartridge, user=user)
+    except HTTPException as exc:
+        if exc.status_code not in {502, 504}:
+            raise
+        listing = None
+    except Exception:
+        listing = None
+    if listing is None:
+        payload = StudioDagsHealthResponse(cartridge=cartridge).model_dump()
+        _dags_health_cache_store(cache_key, payload, now)
+        return payload
+
+    dags = [dag for dag in listing.get("dags") or [] if isinstance(dag, dict)]
+    enriched = dags[:_DAGS_HEALTH_ENRICH_LIMIT]
+    scheduler_healthy: bool | None = None
+    first_live = next((dag for dag in enriched if not dag.get("registered_only")), None)
+    if first_live is not None:
+        described = await _airflow_health_invoke(
+            "airflow_describe_dag", {"dag_id": str(first_live.get("dag_id"))}, user
+        )
+        if isinstance(described, dict) and isinstance(
+            described.get("scheduler_healthy"), bool
+        ):
+            scheduler_healthy = described["scheduler_healthy"]
+
+    semaphore = asyncio.Semaphore(_DAGS_HEALTH_CONCURRENCY)
+
+    async def _bounded(dag: dict[str, Any]) -> StudioDagHealth:
+        async with semaphore:
+            return await _dag_health_item(dag, user)
+
+    items = list(await asyncio.gather(*(_bounded(dag) for dag in enriched)))
+    items.extend(
+        StudioDagHealth(
+            dag_id=str(dag.get("dag_id")),
+            is_paused=bool(dag.get("is_paused")),
+            registered_only=bool(dag.get("registered_only")),
+        )
+        for dag in dags[_DAGS_HEALTH_ENRICH_LIMIT:]
+    )
+    payload = StudioDagsHealthResponse(
+        cartridge=cartridge,
+        airflow_available=True,
+        scheduler_healthy=scheduler_healthy,
+        dags=items,
+        total=len(items),
+    ).model_dump()
+    _dags_health_cache_store(cache_key, payload, now)
+    return payload
+
+
+@router.get(
+    "/dags/health",
+    response_model=StudioDagsHealthResponse,
+    dependencies=[Depends(require_studio_read)],
+)
+async def dags_health(
+    cartridge: str | None = None,
+    user: dict = Depends(require_authenticated),
+) -> StudioDagsHealthResponse:
+    if cartridge:
+        _require_cartridge_visible(user, cartridge)
+        cartridge = _clean_identifier(cartridge, label="cartridge")
+        if not await cartridge_service.get_cartridge(cartridge):
+            raise HTTPException(404, f"Cartridge '{cartridge}' not found")
+    cache_key = cartridge or "*"
+    cached = _dags_health_cache.get(cache_key)
+    if cached and cached[0] > time.monotonic():
+        return _dags_health_response_for_user(cached[1], user, cartridge)
+    pending = _dags_health_pending.get(cache_key)
+    if pending is None or pending.done():
+        pending = asyncio.create_task(
+            _compute_dags_health(cartridge, cache_key, user)
+        )
+        _dags_health_pending[cache_key] = pending
+    try:
+        payload = await asyncio.shield(pending)
+    finally:
+        if _dags_health_pending.get(cache_key) is pending and pending.done():
+            _dags_health_pending.pop(cache_key, None)
+    return _dags_health_response_for_user(payload, user, cartridge)
 
 
 @router.get("/dags/{dag_id}/source", dependencies=[Depends(require_studio_read)])
