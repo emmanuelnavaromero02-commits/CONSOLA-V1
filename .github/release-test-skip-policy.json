@@ -237,7 +237,7 @@
           },
           {
             "path": "tests-e2e/specs/03-cartridges-deep.spec.ts",
-            "declarations_sha256": "80b2396f6d2e1e1fc63d346a721258df8ecf719ac84ce319825aaecc703b0fb2"
+            "declarations_sha256": "1fdbe20cf2f6a7adbcf3ebde09e83ebbc1dceda17c589ed86d96724ec95d0773"
           },
           {
             "path": "tests-e2e/specs/07-apis-deep.spec.ts",
@@ -256,7 +256,7 @@
             "declarations_sha256": "8ac8484abf8183074bd5d0b466e01fa3e55dfbfae9ae000fdd4d1ffa722389fb"
           }
         ],
-        "inventory_sha256": "e22c9f14eaa84c4d5de629cd6565cc0fa1f1687af04f87ef06341281cc0e9b51"
+        "inventory_sha256": "7eabc7cdd127c2eddd0aa449ba1cdea5c50ccd5d8b25c339ea50f2e7c1278a1b"
       }
     }
   ],

@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "af3c6b40ed24c7919fc40fb793df83156ddd4e929bff0ee593255098d5b886fc"
+      "sha256": "c64790db4b0a17f55682f31fe7faeed98733f3ffd4674e0204765f8517166192"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -3115,7 +3115,7 @@
     },
     {
       "path": "console/tests/test_marketplace_admin_permission.py",
-      "sha256": "eb910819d95a055b9c0f4b9011c1e1de769efac3d8a2ca85f9cc2c7046a3c95e"
+      "sha256": "3012fecd9ee7cc23d0643acfe7779dacee37a521c40f182f285a792da4af75e9"
     },
     {
       "path": "console/tests/test_mcp_dual_auth.py",
@@ -3863,11 +3863,11 @@
     },
     {
       "path": "tests-e2e/specs/03-cartridges-deep.spec.ts",
-      "sha256": "d33be69aed8c7d20aece61a88aebae1c2f82d69e502fc96af0d7cc699a8fe962"
+      "sha256": "04ff4bc44711415fcc087b71373ceb9dd5144e3a560a097112e5c924f2ca41e7"
     },
     {
       "path": "tests-e2e/specs/03-cartridges.spec.ts",
-      "sha256": "84b571475f85579913bc3b49673c018688616cc55334fd95b4198de712ba6984"
+      "sha256": "a0db1f3d8cf24060194164f48d0d16cee5c28b3cd3f3adf23eba755eb7369cab"
     },
     {
       "path": "tests-e2e/specs/04-copilot.spec.ts",
@@ -3899,7 +3899,7 @@
     },
     {
       "path": "tests-e2e/specs/09-ux-mobile.spec.ts",
-      "sha256": "acaac9c0cdd7a4d09f86bb894fae1ce9c4567f818f82911e9384280d856faf63"
+      "sha256": "afa41343565d981b82c78caba923e630fbf24a4c4d496a4a6f6fa015f265380c"
     },
     {
       "path": "tests-e2e/specs/10-mcp-cartridges.spec.ts",
@@ -5263,7 +5263,7 @@
     },
     {
       "path": "tests/test_marketplace_contract.py",
-      "sha256": "bb2c4f9c6dcb75d7129c1696c9a2f4bf4fb8c68603731c3624df66e99eea9f5d"
+      "sha256": "d5ad456c4f85cb8d3cc541824e134d195add6aed86cb2025d211548c90166ba6"
     },
     {
       "path": "tests/test_materialize_validates_sql.py",
@@ -5475,7 +5475,7 @@
     },
     {
       "path": "tests/test_no_auth_gaps.py",
-      "sha256": "7c68a97bacb62de12341612cdafe99aac48c94c93032e511abe04e2b953fbe34"
+      "sha256": "a0179cdc6fbae5815de480c3eb593da949d9ea51be5c61a6e350d2686e0bf209"
     },
     {
       "path": "tests/test_no_direct_pggold_access.py",
@@ -6483,11 +6483,11 @@
     },
     {
       "path": "tests/test_v1443_cartridges_next.py",
-      "sha256": "9816b7aca1cb150c9e350d369b047049cebafcd9ac400a7f2ae0e8ce86e3a665"
+      "sha256": "90cba697673ca7cc07ff4dd9a68f07a2d7f3391ce4c448fab62eb71327f79bdb"
     },
     {
       "path": "tests/test_v1443_llm_integration.py",
-      "sha256": "96c5e5f6036aeadada0bd5e433612ce4f184a65a30934bbe6cf24b296b521d08"
+      "sha256": "a9a7ea9e8b2472b1620b9ca52e26c136d7cea2840fe86973d9243951424dbbd8"
     },
     {
       "path": "tests/test_v1_ga_harness.py",
