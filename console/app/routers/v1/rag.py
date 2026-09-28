@@ -98,7 +98,8 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("d
     ],
 )
 @_bind_to_main
-async def api_rag_ingest(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_rag_ingest(request: Request, user: dict = Depends(require_permission("datasets.write"))):
+    body = await _read_json_body_capped(request, _RAG_INGEST_MAX_BODY_BYTES)
     return await _rag_ingest_payload_impl(
         body=body,
         user=user,

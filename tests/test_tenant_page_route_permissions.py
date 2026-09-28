@@ -34,11 +34,25 @@ def test_tenant_workspace_pages_do_not_require_platform_admin():
         '"/cartridges"': "cartridges.read",
         '"/cartridges/viewer"': "cartridges.read",
         '"/copilot/tokens"': "copilot.use",
+        '"/copilot/knowledge"': "datasets.write",
+        '"/copilot/knowledge/"': "datasets.write",
     }
     for route, permission in expectations.items():
         block = _route_block(src, route)
         assert f'require_permission("{permission}")' in block
         assert "require_admin" not in block
+
+
+def test_knowledge_page_role_gate_matches_rag_write_guard():
+    src = _read(PAGES_PY)
+    for route in ('"/copilot/knowledge"', '"/copilot/knowledge/"'):
+        block = _route_block(src, route)
+        assert "_require_knowledge_manager_role" in block
+        assert "mcp.registry.read" not in block
+    helper = src[src.index("def _require_knowledge_manager_role") :]
+    helper = helper[: helper.index("\n@router")]
+    assert "PLATFORM_ADMIN_ROLES" in helper
+    assert "ROLE_ADMIN" in helper and "ROLE_WORKSPACE_ADMIN" in helper
 
 
 def test_internal_pages_keep_platform_admin_gate():
@@ -65,6 +79,7 @@ def test_visible_routes_use_ui_capabilities_that_match_backend_guards():
     page_src = _read(PAGES_PY)
     expectations = (
         ("/studio", "can_view_studio"),
+        ("/copilot/knowledge", "can_view_knowledge"),
         ("/data/bronze", "can_view_bronze"),
         ("/operations/workflows", "can_view_workflows"),
         ("/operations/companies", "can_manage_companies"),
