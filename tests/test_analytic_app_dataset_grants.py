@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import pathlib
 import sys
@@ -510,7 +511,7 @@ async def test_the_registry_matches_the_packaged_manifests(conn):
     assert len(manifests) == EXPECTED_APPS
     rows = await conn.fetch(
         "SELECT app_name, cartridge_id, manifest_digest FROM public.analytic_app_manifests "
-        "WHERE revision = 'active' ORDER BY app_name"
+        "WHERE revision = 'active' AND source = 'packaged_manifest' ORDER BY app_name"
     )
     assert len(rows) == EXPECTED_APPS
     for row in rows:
@@ -524,7 +525,8 @@ async def test_active_manifests_carry_exactly_the_packaged_datasets(conn):
     rows = await conn.fetch(
         "SELECT d.app_name, d.dataset_name FROM public.analytic_app_manifest_datasets d "
         "JOIN public.analytic_app_manifests m ON m.app_name = d.app_name "
-        "AND m.manifest_digest = d.manifest_digest WHERE m.revision = 'active'"
+        "AND m.manifest_digest = d.manifest_digest WHERE m.revision = 'active' "
+        "AND m.source = 'packaged_manifest'"
     )
     active: dict[str, set[str]] = {}
     for row in rows:
@@ -559,3 +561,215 @@ async def test_packaged_digest_covers_the_html():
     )
     assert same == one["packaged_digest"]
     assert edited != one["packaged_digest"]
+
+
+CUSTOM_HTML = "<html></html>"
+CUSTOM_SHA = hashlib.sha256(CUSTOM_HTML.encode("utf-8")).hexdigest()
+
+
+def _ws_digest(datasets: list[str], html: str = CUSTOM_HTML, app: str = CUSTOM_APP) -> str:
+    return manifest_digest(
+        app_name=app, cartridge_id="workspace", datasets=sorted(datasets), html=html
+    )
+
+
+async def _register_ws(conn, datasets: list[str], *, app=CUSTOM_APP,
+                       sha=CUSTOM_SHA, digest: str | None = None):
+    digest = digest or _ws_digest(datasets, app=app)
+    return await conn.fetchval(
+        "SELECT public.register_workspace_app_manifest($1, $2, $3::text[], $4)",
+        app, sha, sorted(datasets), digest,
+    )
+
+
+async def _reconcile_ws(conn, app=CUSTOM_APP):
+    return await conn.fetch(
+        "SELECT * FROM public.reconcile_workspace_app_dataset_grants($1)", app,
+    )
+
+
+@pytest_asyncio.fixture
+async def ws_conn():
+    connection = await asyncpg.connect(DSN)
+    try:
+        await connection.execute("DELETE FROM public.analytic_app_dataset_grants")
+        await connection.execute(
+            "DELETE FROM public.analytic_app_manifest_datasets WHERE app_name = $1",
+            CUSTOM_APP,
+        )
+        await connection.execute(
+            "DELETE FROM public.analytic_app_manifests WHERE app_name = $1",
+            CUSTOM_APP,
+        )
+        await connection.execute("SET ROLE omega_console")
+        yield connection
+    finally:
+        await connection.close()
+
+
+async def test_workspace_registration_happy_path(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    digest = _ws_digest([APPROVED])
+    assert await _register_ws(ws_conn, [APPROVED]) == digest
+    row = await ws_conn.fetchrow(
+        "SELECT cartridge_id, source, revision, tenant_id, workspace_id, "
+        "created_by_user_id, html_sha256 FROM public.analytic_app_manifests "
+        "WHERE app_name = $1", CUSTOM_APP,
+    )
+    assert dict(row) == {
+        "cartridge_id": "workspace",
+        "source": "workspace_publication",
+        "revision": "active",
+        "tenant_id": TENANT_A,
+        "workspace_id": WS_A1,
+        "created_by_user_id": "1",
+        "html_sha256": CUSTOM_SHA,
+    }
+    children = await ws_conn.fetch(
+        "SELECT dataset_name FROM public.analytic_app_manifest_datasets "
+        "WHERE app_name = $1 AND manifest_digest = $2", CUSTOM_APP, digest,
+    )
+    assert [r["dataset_name"] for r in children] == [APPROVED]
+
+
+async def test_workspace_reconcile_grants_and_reads_back(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    digest = await _register_ws(ws_conn, [APPROVED, SENSITIVE])
+    actions = await _reconcile_ws(ws_conn)
+    assert sorted((r["dataset_name"], r["action"]) for r in actions) == [
+        (APPROVED, "granted"), (SENSITIVE, "granted"),
+    ]
+    rows = await ws_conn.fetch(
+        "SELECT cartridge_id, grant_source, granted_by FROM "
+        "public.analytic_app_dataset_grants WHERE app_name = $1 "
+        "AND revoked_at IS NULL", CUSTOM_APP,
+    )
+    assert len(rows) == 2
+    for row in rows:
+        assert row["cartridge_id"] == "workspace"
+        assert row["grant_source"] == "workspace_publication"
+        assert row["granted_by"] == "server:workspace_publication"
+    allowed = await granted_datasets(
+        ws_conn, tenant_id=TENANT_A, workspace_id=WS_A1,
+        app_name=CUSTOM_APP, manifest_digest=digest,
+    )
+    assert allowed == sorted([APPROVED, SENSITIVE])
+    assert await granted_datasets(
+        ws_conn, tenant_id=TENANT_A, workspace_id=WS_A1,
+        app_name=CUSTOM_APP, manifest_digest="f" * 64,
+    ) == []
+
+
+async def test_workspace_republication_revokes_first_with_events(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    await _register_ws(ws_conn, [APPROVED, SENSITIVE])
+    await _reconcile_ws(ws_conn)
+    new_digest = await _register_ws(ws_conn, [APPROVED])
+    actions = await _reconcile_ws(ws_conn)
+    assert sorted((r["dataset_name"], r["action"]) for r in actions) == [
+        (APPROVED, "granted"), (APPROVED, "revoked"), (SENSITIVE, "revoked"),
+    ]
+    assert await granted_datasets(
+        ws_conn, tenant_id=TENANT_A, workspace_id=WS_A1,
+        app_name=CUSTOM_APP, manifest_digest=new_digest,
+    ) == [APPROVED]
+    events = await ws_conn.fetch(
+        "SELECT e.event, count(*) AS n FROM public.analytic_app_dataset_grant_events e "
+        "JOIN public.analytic_app_dataset_grants g ON g.id = e.grant_id "
+        "WHERE g.app_name = $1 GROUP BY e.event", CUSTOM_APP,
+    )
+    assert {r["event"]: r["n"] for r in events} == {"granted": 3, "revoked": 2}
+
+
+async def test_workspace_registration_rejects_wrong_scope(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A2)
+    with pytest.raises(asyncpg.PostgresError, match="workspace app is not registered"):
+        await _register_ws(ws_conn, [APPROVED])
+    await _scoped(ws_conn, TENANT_B, WS_B2)
+    with pytest.raises(asyncpg.PostgresError, match="workspace app is not registered"):
+        await _register_ws(ws_conn, [APPROVED])
+
+
+async def test_workspace_registration_cannot_shadow_a_packaged_app(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    with pytest.raises(asyncpg.PostgresError, match="belongs to a packaged app"):
+        await _register_ws(
+            ws_conn, [APPROVED], app=APP,
+            digest=_ws_digest([APPROVED], app=APP),
+        )
+    with pytest.raises(asyncpg.PostgresError, match="belongs to a packaged app"):
+        await _reconcile_ws(ws_conn, app=APP)
+
+
+async def test_packaged_reconciler_still_rejects_the_workspace_app(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    await _register_ws(ws_conn, [APPROVED])
+    assert await _reconcile(ws_conn, app=CUSTOM_APP) == []
+
+
+async def test_workspace_registration_rejects_foreign_or_missing_datasets(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    for datasets in (["missing_dataset"], [APPROVED, "missing_dataset"]):
+        with pytest.raises(asyncpg.PostgresError, match="not available in this workspace"):
+            await _register_ws(ws_conn, datasets)
+
+
+async def test_workspace_registration_rejects_html_drift(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    drifted = hashlib.sha256(b"<html>tampered</html>").hexdigest()
+    with pytest.raises(asyncpg.PostgresError, match="does not match"):
+        await _register_ws(ws_conn, [APPROVED], sha=drifted,
+                           digest=_ws_digest([APPROVED], html="<html>tampered</html>"))
+
+
+async def test_workspace_rows_are_invisible_to_foreign_workspaces(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    digest = await _register_ws(ws_conn, [APPROVED])
+    await _reconcile_ws(ws_conn)
+    await _scoped(ws_conn, TENANT_B, WS_B2)
+    assert await ws_conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_manifests WHERE app_name = $1",
+        CUSTOM_APP,
+    ) == 0
+    assert await ws_conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants WHERE app_name = $1",
+        CUSTOM_APP,
+    ) == 0
+    assert await granted_datasets(
+        ws_conn, tenant_id=TENANT_B, workspace_id=WS_B2,
+        app_name=CUSTOM_APP, manifest_digest=digest,
+    ) == []
+
+
+async def test_workspace_definer_functions_follow_the_owner_idiom(conn):
+    rows = await conn.fetch("""
+        SELECT p.proname, pg_get_userbyid(p.proowner) AS owner,
+               r.rolsuper, r.rolbypassrls, p.proconfig
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+          JOIN pg_roles r ON r.oid = p.proowner
+         WHERE n.nspname = 'public'
+           AND p.proname IN ('register_workspace_app_manifest',
+                             'reconcile_workspace_app_dataset_grants')
+    """)
+    assert {row["proname"] for row in rows} == {
+        "register_workspace_app_manifest",
+        "reconcile_workspace_app_dataset_grants",
+    }
+    for row in rows:
+        assert row["owner"] == "omega_app_grants_owner", row["proname"]
+        assert row["rolsuper"] is False and row["rolbypassrls"] is False
+        config = list(row["proconfig"] or [])
+        assert "search_path=pg_catalog, pg_temp" in config, row["proname"]
+
+
+async def test_console_cannot_write_the_workspace_manifest_directly(ws_conn):
+    await _scoped(ws_conn, TENANT_A, WS_A1)
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        await ws_conn.execute(
+            "INSERT INTO public.analytic_app_manifests "
+            "(app_name, cartridge_id, manifest_digest, html_sha256, revision, "
+            "source, tenant_id, workspace_id, created_by_user_id) "
+            f"VALUES ('{CUSTOM_APP}', 'workspace', repeat('a',64), repeat('b',64), "
+            f"'active', 'workspace_publication', '{TENANT_A}', '{WS_A1}', '1')"
+        )
