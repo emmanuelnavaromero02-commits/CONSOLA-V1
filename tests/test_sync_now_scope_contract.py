@@ -50,3 +50,36 @@ def test_sync_now_serializes_active_run_reservation_with_advisory_lock():
     assert section.index("await _upsert_sync_run(") > section.index(
         "active_row = await _fetch_active_sync_run("
     )
+
+
+def test_sync_now_window_is_env_configurable_single_source():
+    source = _main()
+    assert '_env_int("SYNC_NOW_ACTIVE_WINDOW_SECONDS", 4 * 60 * 60)' in source
+    assert "active_window_seconds=_SYNC_NOW_ACTIVE_WINDOW_SECONDS" in source
+    sync_state = (ROOT / "console/app/domains/pipeline/sync_state.py").read_text(
+        encoding="utf-8"
+    )
+    assert "INTERVAL '4 hours'" not in sync_state
+    assert "make_interval(secs =>" in sync_state
+
+
+def test_sync_now_runs_connection_check_before_dispatch():
+    source = _main()
+    section = source.split("async def _continue_sync_now_after_reservation", 1)[1]
+    check = section.index("_sync_now_connection_check_or_response_impl(")
+    seed = section.index("_seed_sync_packaged_datasets_or_response(")
+    dispatch = section.index("_trigger_sync_extract_all_components(")
+    assert check < seed < dispatch
+    assert "connection_check=connection_check" in section
+
+
+def test_sync_run_get_endpoints_attach_orchestrator_block():
+    source = _main()
+    for marker in (
+        'sync-runs/active"',
+        'sync-runs/{run_id}"',
+    ):
+        section = source.split(marker, 1)[1].split("@app.", 1)[0]
+        assert (
+            'payload["orchestrator"] = await _sync_orchestrator_block' in section
+        ), marker

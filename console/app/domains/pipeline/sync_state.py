@@ -149,6 +149,9 @@ def sync_now_lock_key(
     )
 
 
+SYNC_NOW_DEFAULT_ACTIVE_WINDOW_SECONDS = 4 * 60 * 60
+
+
 def active_sync_run_lookup_parts(
     *,
     cartridge: str,
@@ -157,6 +160,7 @@ def active_sync_run_lookup_parts(
     has_mode: bool,
     has_extra: bool,
     has_started_at: bool,
+    active_window_seconds: int = SYNC_NOW_DEFAULT_ACTIVE_WINDOW_SECONDS,
 ) -> dict[str, Any]:
     clauses = [
         "cartridge_id=$1",
@@ -171,8 +175,10 @@ def active_sync_run_lookup_parts(
         args.append(target)
         clauses.append(f"COALESCE(extra->>'target', 'all')=${len(args)}")
     if has_started_at:
+        args.append(float(max(int(active_window_seconds), 0)))
         clauses.append(
-            "(started_at IS NULL OR started_at > NOW() - INTERVAL '4 hours')"
+            "(started_at IS NULL OR started_at > "
+            f"NOW() - make_interval(secs => ${len(args)}))"
         )
     order_sql = "started_at DESC NULLS LAST" if has_started_at else "run_id DESC"
     return {"clauses": clauses, "args": args, "order_sql": order_sql}
@@ -190,6 +196,7 @@ async def fetch_active_sync_run(
     pipeline_runs_scope_predicate: Any,
     scoped_db_for_user: Any,
     active_sync_run_lookup_parts_func: Any = active_sync_run_lookup_parts,
+    active_window_seconds: int = SYNC_NOW_DEFAULT_ACTIVE_WINDOW_SECONDS,
     logger_warning: Any | None = None,
 ) -> dict[str, Any] | None:
     pool = await get_db_pool()
@@ -205,6 +212,7 @@ async def fetch_active_sync_run(
         has_mode=has_mode,
         has_extra=has_extra,
         has_started_at=has_started_at,
+        active_window_seconds=active_window_seconds,
     )
     clauses = lookup["clauses"]
     args = lookup["args"]
@@ -433,6 +441,147 @@ def sync_dataset_seed_failure_extra(
     }
 
 
+def sync_connection_check_state(probe: dict[str, Any]) -> dict[str, Any]:
+    checked = bool(probe.get("checked"))
+    ok = bool(probe.get("ok"))
+    status = "verified" if checked and ok else "failed" if checked else "unverified"
+    state: dict[str, Any] = {"status": status}
+    message = str(probe.get("message") or "").strip()
+    if message:
+        state["message"] = message[:300]
+    if status == "failed":
+        state["reason"] = "connection_check_failed"
+    source_status = probe.get("status")
+    if isinstance(source_status, str) and source_status.strip():
+        state["source_status"] = source_status.strip()[:80]
+    latency_ms = probe.get("latency_ms")
+    if isinstance(latency_ms, int):
+        state["latency_ms"] = latency_ms
+    return state
+
+
+def sync_connection_failure_step_updates(message: str) -> dict[str, dict[str, Any]]:
+    return {
+        "connection": {
+            "label": "Conexión",
+            "status": "failed",
+            "detail": sync_progress.CONNECTION_INVALID_DETAIL_ES,
+            **({"error": message[:300]} if message else {}),
+            "completed": 0,
+            "total": 1,
+        },
+        "bronze": {
+            "label": "Bronze",
+            "status": "failed",
+            "detail": "Sin conexión validada no se inicia la extracción.",
+            "completed": 0,
+            "total": 1,
+        },
+        "silver_gold": {
+            "label": "Silver/Gold",
+            "status": "failed",
+            "detail": "No hay extracción base para materializar.",
+            "completed": 0,
+            "total": 1,
+        },
+        "control_room": {
+            "label": "Control Room",
+            "status": "failed",
+            "detail": "No hay Gold nuevo disponible.",
+            "completed": 0,
+            "total": 1,
+        },
+        "agents_intelligence": {
+            "label": "Agentes/IA",
+            "status": "failed",
+            "detail": "No hay datos base para ejecutar monitores.",
+            "completed": 0,
+            "total": 1,
+        },
+    }
+
+
+def sync_connection_failure_extra(
+    *,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    steps: list[dict[str, Any]],
+    message: str,
+    connection_check: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "target": target,
+        "conn_id": conn_id,
+        "request_id": request_id,
+        "steps": steps,
+        "triggered_entities": [],
+        "errors": [
+            {
+                "entity": "__connection__",
+                "status_code": 400,
+                "error": message,
+                "reason": "connection_check_failed",
+            }
+        ],
+        "control_room_ready": False,
+        "connection_check": connection_check,
+    }
+
+
+async def sync_now_connection_check_or_response(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    run_id: str,
+    steps: list[dict[str, Any]],
+    user: dict[str, Any] | None,
+    probe_connection: Any,
+    upsert_sync_run: Any,
+    fetch_sync_run_func: Any,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    probe = await probe_connection(cartridge=cartridge, conn_id=conn_id, user=user)
+    connection_check = sync_connection_check_state(
+        probe if isinstance(probe, dict) else {}
+    )
+    if connection_check.get("status") != "failed":
+        return connection_check, steps, None
+    message = str(connection_check.get("message") or "")
+    steps = merge_sync_steps(steps, sync_connection_failure_step_updates(message))
+    await upsert_sync_run(
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        status="failed",
+        user=user,
+        extra=sync_connection_failure_extra(
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            request_id=request_id,
+            steps=steps,
+            message=message,
+            connection_check=connection_check,
+        ),
+        error_message=(
+            f"{sync_progress.CONNECTION_INVALID_DETAIL_ES}: {message}"
+            if message
+            else sync_progress.CONNECTION_INVALID_DETAIL_ES
+        )[:500],
+    )
+    row = await fetch_sync_run_func(cartridge=cartridge, run_id=run_id, user=user)
+    if row:
+        return connection_check, steps, sync_public_payload(
+            row, sync_extra_from_row(row)
+        )
+    raise HTTPException(500, "sync connection check failed before Airflow trigger")
+
+
 def sync_extract_all_trigger_extra(
     *,
     mode: str,
@@ -444,7 +593,11 @@ def sync_extract_all_trigger_extra(
     errors: list[dict[str, Any]],
     result: dict[str, Any],
     dataset_seed: dict[str, Any] | None,
+    connection_check: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    automation = (
+        result.get("automation") if isinstance(result.get("automation"), dict) else None
+    )
     return {
         "mode": mode,
         "target": target,
@@ -457,6 +610,8 @@ def sync_extract_all_trigger_extra(
         "extract_all_result": result,
         "trigger_strategy": result.get("trigger_strategy") or "fanout",
         "dataset_seed": dataset_seed,
+        **({"automation": automation} if automation else {}),
+        **({"connection_check": connection_check} if connection_check else {}),
     }
 
 
@@ -475,24 +630,57 @@ def sync_extract_all_result_state(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _sync_connection_trigger_step(
+    *,
+    triggered_entities: list[Any],
+    errors: list[dict[str, Any]],
+    attempts: int,
+    connection_check: dict[str, Any] | None,
+) -> dict[str, Any]:
+    check_status = str(
+        (connection_check or {}).get("status") or ""
+    ).lower() if isinstance(connection_check, dict) else ""
+    if check_status == "verified":
+        return {
+            "label": "Conexión",
+            "status": "success",
+            "detail": sync_progress.CONNECTION_VERIFIED_DETAIL_ES,
+            "attempts": attempts,
+        }
+    if check_status == "unverified":
+        return {
+            "label": "Conexión",
+            "status": "partial",
+            "detail": sync_progress.CONNECTION_UNVERIFIED_DETAIL_ES,
+            "attempts": attempts,
+        }
+    return {
+        "label": "Conexión",
+        "status": "success" if triggered_entities or not errors else "partial",
+        "detail": "El pipeline aceptó la sincronización."
+        if triggered_entities
+        else "El pipeline respondió sin entidades disparadas.",
+        "attempts": attempts,
+    }
+
+
 def sync_extract_all_trigger_step_updates(
     *,
     triggered_entities: list[Any],
     errors: list[dict[str, Any]],
     attempts: int,
+    connection_check: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     bronze_status = (
         "running" if triggered_entities else "failed" if errors else "partial"
     )
     return {
-        "connection": {
-            "label": "Conexión",
-            "status": "success" if triggered_entities or not errors else "partial",
-            "detail": "El pipeline aceptó la sincronización."
-            if triggered_entities
-            else "El pipeline respondió sin entidades disparadas.",
-            "attempts": attempts,
-        },
+        "connection": _sync_connection_trigger_step(
+            triggered_entities=triggered_entities,
+            errors=errors,
+            attempts=attempts,
+            connection_check=connection_check,
+        ),
         "bronze": {
             "label": "Bronze",
             "status": bronze_status,
@@ -608,7 +796,11 @@ def sync_child_runtime_state(
             {
                 "entity": SYNC_NOW_ENTITY,
                 "status_code": 504,
-                "error": "Airflow sync run timed out before completing; start a new sync.",
+                "error": (
+                    "La sincronización agotó el tiempo de espera en el "
+                    "orquestador; inicia una nueva."
+                ),
+                "reason": "sync_stale_timeout",
             },
         ]
     return {
@@ -661,6 +853,7 @@ def sync_core_step_updates(
     child_runtime: dict[str, Any],
     materialization_state: dict[str, Any],
     errors: list[dict[str, Any]],
+    connection_check: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     bronze_ready = int(materialization_state["bronze_ready"])
     silver_ready = int(materialization_state["silver_ready"])
@@ -681,6 +874,7 @@ def sync_core_step_updates(
             triggered=triggered,
             child_rows=child_rows,
             bronze_ready=bronze_ready,
+            connection_check=connection_check,
         )
     }
     bronze_update = sync_progress.sync_bronze_step_update(
@@ -985,6 +1179,9 @@ async def build_sync_run_status(
         child_runtime=child_runtime,
         materialization_state=materialization_state,
         errors=errors,
+        connection_check=extra.get("connection_check")
+        if isinstance(extra.get("connection_check"), dict)
+        else None,
     )
 
     control_room_status = await run_control_room_status(

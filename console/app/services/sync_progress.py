@@ -333,6 +333,12 @@ def sync_run_needs_final_reconcile(
         if isinstance(step, dict)
     ):
         return True
+    triggered_entities = extra.get("triggered_entities")
+    if status == "failed" and not (
+        isinstance(triggered_entities, list) and triggered_entities
+    ):
+        # Nothing was dispatched, so there are no child outcomes to reconcile.
+        return False
     if str(row.get("cartridge_id") or "") == "sap_successfactors":
         triggered = extra.get("triggered_entities")
         has_aggregate_child = any(
@@ -356,6 +362,8 @@ def sync_errors_retryable(errors: list[dict[str, Any]]) -> bool:
         status_code = int(error.get("status_code") or 0)
         message = str(error.get("error") or "").lower()
         if status_code >= 500:
+            continue
+        if str(error.get("reason") or "").lower() == "airflow_trigger_failed":
             continue
         if any(
             token in message
@@ -489,12 +497,64 @@ def sync_pipeline_materialization_summary(
     }
 
 
+CONNECTION_INVALID_DETAIL_ES = (
+    "Credenciales no válidas o incompletas en la Bóveda de Accesos"
+)
+CONNECTION_UNVERIFIED_DETAIL_ES = (
+    "No se pudo verificar la conexión a tiempo; continuando"
+)
+CONNECTION_VERIFIED_DETAIL_ES = "Credenciales verificadas con el origen de datos."
+CONNECTION_CONFIRMED_BY_DATA_DETAIL_ES = (
+    "Conexión confirmada por la extracción de datos."
+)
+
+
 def sync_connection_step_update(
     *,
     triggered: list[Any],
     child_rows: list[dict[str, Any]],
     bronze_ready: int,
+    connection_check: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    check_status = str(
+        (connection_check or {}).get("status") or ""
+    ).lower() if isinstance(connection_check, dict) else ""
+    if check_status == "failed":
+        message = str((connection_check or {}).get("message") or "").strip()
+        return {
+            "label": "Conexión",
+            "status": "failed",
+            "detail": CONNECTION_INVALID_DETAIL_ES,
+            **({"error": message[:300]} if message else {}),
+            "completed": 0,
+            "total": 1,
+        }
+    if check_status == "verified":
+        return {
+            "label": "Conexión",
+            "status": "success",
+            "detail": CONNECTION_VERIFIED_DETAIL_ES,
+            "completed": 1,
+            "total": 1,
+            "percent": 100,
+        }
+    if check_status == "unverified":
+        if bronze_ready:
+            return {
+                "label": "Conexión",
+                "status": "success",
+                "detail": CONNECTION_CONFIRMED_BY_DATA_DETAIL_ES,
+                "completed": 1,
+                "total": 1,
+                "percent": 100,
+            }
+        return {
+            "label": "Conexión",
+            "status": "partial",
+            "detail": CONNECTION_UNVERIFIED_DETAIL_ES,
+            "completed": 0,
+            "total": 1,
+        }
     started = bool(triggered or child_rows or bronze_ready)
     return {
         "label": "Conexión",
@@ -856,6 +916,16 @@ def sync_updated_extra(
         "blockers": entity_summary.get("blockers") or [],
         "target": previous_extra.get("target") or "all",
         "mode": previous_extra.get("mode") or row_mode or "incremental",
+        **(
+            {"automation": previous_extra["automation"]}
+            if isinstance(previous_extra.get("automation"), dict)
+            else {}
+        ),
+        **(
+            {"connection_check": previous_extra["connection_check"]}
+            if isinstance(previous_extra.get("connection_check"), dict)
+            else {}
+        ),
     }
 
 
@@ -962,6 +1032,9 @@ def public_sync_payload(
         if row.get("finished_at")
         else None,
         "error_message": row.get("error_message"),
+        "automation": extra.get("automation")
+        if isinstance(extra.get("automation"), dict)
+        else None,
     }
 
 

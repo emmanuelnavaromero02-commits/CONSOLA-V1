@@ -105,7 +105,11 @@ async def test_aggregate_trigger_returns_functional_error_payload():
             {
                 "entity": "__extract_all__",
                 "status_code": 502,
-                "error": "Airflow trigger failed: airflow unavailable",
+                "error": (
+                    "No se pudo iniciar la extracción en el orquestador: "
+                    "airflow unavailable"
+                ),
+                "reason": "airflow_trigger_failed",
             }
         ],
         "count": 0,

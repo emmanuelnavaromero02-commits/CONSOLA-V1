@@ -456,6 +456,7 @@ from app.domains.pipeline.sync_state import (
     sync_errors_retryable as _sync_errors_retryable,
     sync_dataset_seed_failure_extra as _sync_dataset_seed_failure_extra,
     sync_dataset_seed_failure_step_updates as _sync_dataset_seed_failure_step_updates,
+    sync_now_connection_check_or_response as _sync_now_connection_check_or_response_impl,
     sync_extract_all_error_message as _sync_extract_all_error_message,
     sync_extract_all_result_state as _sync_extract_all_result_state,
     sync_extract_all_trigger_extra as _sync_extract_all_trigger_extra,
@@ -475,6 +476,10 @@ from app.domains.pipeline.sync_state import (
     sync_start_step_updates as _sync_start_step_updates,
     sync_status_from_steps as _sync_status_from_steps,
     sync_step_entity_summary as _sync_step_entity_summary,
+)
+from app.domains.pipeline.orchestrator_health import (
+    sync_extract_all_dag_id as _sync_extract_all_dag_id_impl,
+    sync_orchestrator_status as _sync_orchestrator_status_impl,
 )
 from app.domains.pipeline.concurrency import (
     gather_by_entity as _pipeline_gather_by_entity,
@@ -3921,7 +3926,11 @@ async def api_pipeline_extract_all(
 
 
 _SYNC_NOW_STALE_AFTER_SECONDS = _env_float("SYNC_NOW_STALE_AFTER_SECONDS", 90 * 60)
-_SYNC_NOW_ACTIVE_WINDOW_SECONDS = 4 * 60 * 60
+_SYNC_NOW_ACTIVE_WINDOW_SECONDS = max(
+    300,
+    _env_int("SYNC_NOW_ACTIVE_WINDOW_SECONDS", 4 * 60 * 60),
+)
+_SYNC_NOW_CONNECTION_CHECK_TIMEOUT_SECONDS = 10.0
 _SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS = max(
     300,
     _env_int("SAP_SUCCESSFACTORS_ACTIVE_EXTRACT_WINDOW_SECONDS", 4 * 60 * 60),
@@ -4031,6 +4040,7 @@ async def _fetch_active_sync_run(
         pipeline_runs_scope_predicate=_pipeline_runs_scope_predicate,
         scoped_db_for_user=scoped_db_for_user,
         active_sync_run_lookup_parts_func=_active_sync_run_lookup_parts,
+        active_window_seconds=_SYNC_NOW_ACTIVE_WINDOW_SECONDS,
         logger_warning=logger.warning,
     )
 
@@ -4809,6 +4819,41 @@ async def _trigger_sync_extract_all_components(
     return _sync_extract_attempt_components(extract_attempt)
 
 
+async def _run_sync_now_connection_probe(
+    *, cartridge: str, conn_id: str | None, user: dict | None
+) -> dict[str, Any]:
+    from app.routers.cartridges import probe_cartridge_connection
+
+    try:
+        return await asyncio.wait_for(
+            probe_cartridge_connection(
+                cartridge,
+                conn_id,
+                user,
+                timeout_seconds=_SYNC_NOW_CONNECTION_CHECK_TIMEOUT_SECONDS,
+            ),
+            timeout=_SYNC_NOW_CONNECTION_CHECK_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        return {
+            "checked": False,
+            "ok": False,
+            "message": "connection check timed out",
+            "latency_ms": int(_SYNC_NOW_CONNECTION_CHECK_TIMEOUT_SECONDS * 1000),
+            "status": None,
+            "missing": None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "checked": False,
+            "ok": False,
+            "message": str(exc)[:200] or "connection check error",
+            "latency_ms": 0,
+            "status": None,
+            "missing": None,
+        }
+
+
 async def _continue_sync_now_after_reservation(
     *,
     cartridge: str,
@@ -4820,6 +4865,24 @@ async def _continue_sync_now_after_reservation(
     steps: list[dict[str, Any]],
     user: dict,
 ) -> dict[str, Any]:
+    connection_check, steps, connection_response = (
+        await _sync_now_connection_check_or_response_impl(
+            cartridge=cartridge,
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            request_id=request_id,
+            run_id=run_id,
+            steps=steps,
+            user=user,
+            probe_connection=_run_sync_now_connection_probe,
+            upsert_sync_run=_upsert_sync_run,
+            fetch_sync_run_func=_fetch_sync_run,
+        )
+    )
+    if connection_response is not None:
+        return connection_response
+
     dataset_seed, steps, early_response = await _seed_sync_packaged_datasets_or_response(
         cartridge=cartridge,
         mode=mode,
@@ -4857,6 +4920,7 @@ async def _continue_sync_now_after_reservation(
         attempts=attempts,
         result=result,
         dataset_seed=dataset_seed,
+        connection_check=connection_check,
         user=user,
     )
     return await _sync_now_status_or_diagnostics(
@@ -5008,6 +5072,7 @@ async def _persist_sync_extract_trigger_result(
     result: dict[str, Any],
     dataset_seed: dict[str, Any] | None,
     user: dict,
+    connection_check: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     steps = _merge_sync_steps(
         steps,
@@ -5015,6 +5080,7 @@ async def _persist_sync_extract_trigger_result(
             triggered_entities=triggered_entities,
             errors=errors,
             attempts=attempts,
+            connection_check=connection_check,
         ),
     )
     status = _sync_status_from_steps(steps)
@@ -5034,6 +5100,7 @@ async def _persist_sync_extract_trigger_result(
             errors=errors,
             result=result,
             dataset_seed=dataset_seed,
+            connection_check=connection_check,
         ),
         error_message=_sync_extract_all_error_message(errors),
     )
@@ -5070,6 +5137,17 @@ async def _raise_missing_sync_run_diagnostics(
     raise HTTPException(500, "sync run was not recorded; scope diagnostics logged")
 
 
+async def _sync_orchestrator_block(
+    cartridge: str, user: dict | None
+) -> dict[str, Any]:
+    return await _sync_orchestrator_status_impl(
+        cartridge=cartridge,
+        dag_id=_sync_extract_all_dag_id_impl(cartridge, _SYNC_EXTRACT_ALL_DAGS),
+        invoke=mcp_registry.invoke,
+        user=user,
+    )
+
+
 @app.get(
     "/api/cartridges/{cartridge_id}/sync-runs/active",
     dependencies=[Depends(require_permission("pipelines.read"))],
@@ -5103,7 +5181,7 @@ async def api_cartridge_active_sync_run(
             conn_id=resolved_conn_id,
         )
     try:
-        return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+        payload = await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
     except Exception:
         logger.warning(
             "active sync run status build failed for cartridge=%s run_id=%s; returning persisted payload",
@@ -5111,7 +5189,9 @@ async def api_cartridge_active_sync_run(
             row.get("run_id"),
             exc_info=True,
         )
-        return _sync_public_payload(row, _sync_extra_from_row(row))
+        payload = _sync_public_payload(row, _sync_extra_from_row(row))
+    payload["orchestrator"] = await _sync_orchestrator_block(cartridge, user)
+    return payload
 
 
 @app.get(
@@ -5135,8 +5215,11 @@ async def api_cartridge_sync_run(
     if status in _SYNC_TERMINAL_STATUSES and not _sync_run_needs_final_reconcile(
         row, extra
     ):
-        return _sync_public_payload(row, extra)
-    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+        payload = _sync_public_payload(row, extra)
+    else:
+        payload = await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+    payload["orchestrator"] = await _sync_orchestrator_block(cartridge, user)
+    return payload
 
 
 async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:

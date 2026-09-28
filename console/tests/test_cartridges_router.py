@@ -178,3 +178,65 @@ async def test_non_bootstrap_credentials_still_respect_workspace_cartridge_scope
         )
 
     assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_probe_cartridge_connection_marks_not_ok_as_definitive_failure(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_router")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE", "console_to_cartridge_key")
+    response = SimpleNamespace(
+        is_success=False,
+        status_code=400,
+        headers={"content-type": "application/json"},
+        json=lambda: {"status": "missing_credentials", "missing": ["token"]},
+    )
+    monkeypatch.setattr(cartridges.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(response, **kwargs))
+
+    probe = await cartridges.probe_cartridge_connection(
+        "sap_successfactors", "tenant_sf", {"id": 1}, timeout_seconds=10.0
+    )
+
+    assert probe["checked"] is True
+    assert probe["ok"] is False
+    assert probe["status"] == "missing_credentials"
+    assert probe["missing"] == ["token"]
+    assert "missing_credentials" in probe["message"]
+    assert _FakeAsyncClient.last_instance.client_kwargs["timeout"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_probe_cartridge_connection_transport_error_is_indeterminate(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_router")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE", "console_to_cartridge_key")
+
+    class _BrokenClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, **kwargs):
+            raise RuntimeError("cartridge unreachable")
+
+    monkeypatch.setattr(cartridges.httpx, "AsyncClient", lambda **kwargs: _BrokenClient(**kwargs))
+
+    probe = await cartridges.probe_cartridge_connection("sap_successfactors", None, None)
+
+    assert probe["checked"] is False
+    assert probe["ok"] is False
+    assert "cartridge unreachable" in probe["message"]
+
+
+@pytest.mark.asyncio
+async def test_probe_cartridge_connection_unknown_cartridge_is_indeterminate(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_router")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE", "console_to_cartridge_key")
+
+    probe = await cartridges.probe_cartridge_connection("not_a_cartridge", None, None)
+
+    assert probe["checked"] is False
+    assert probe["ok"] is False

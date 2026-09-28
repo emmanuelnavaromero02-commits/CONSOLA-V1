@@ -1293,7 +1293,8 @@ async def test_build_sync_run_status_marks_stale_queued_children_failed(
     assert result["status"] == "failed"
     assert upserts[-1]["status"] == "failed"
     assert any(
-        "timed out" in str(error.get("error"))
+        error.get("reason") == "sync_stale_timeout"
+        and "agotó el tiempo de espera" in str(error.get("error"))
         for error in upserts[-1]["extra"]["errors"]
     )
 

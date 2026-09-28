@@ -288,6 +288,51 @@ async def run_entity(
     return r.json()
 
 
+async def probe_cartridge_connection(
+    cartridge: str,
+    conn_id: str | None,
+    user: dict | None,
+    *,
+    timeout_seconds: float = 10.0,
+) -> dict:
+    """Run the cartridge's /skills/test_connection probe and normalise the outcome."""
+    started = time.monotonic()
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout_seconds, headers=_cartridge_internal_headers_for_user(user)
+        ) as c:
+            params = {"conn_id": conn_id} if conn_id else None
+            r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"), params=params)
+        latency_ms = int((time.monotonic() - started) * 1000)
+        payload = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        ok = _test_connection_succeeded(r.is_success, payload)
+        status_label = str(payload.get("status") or "").strip()
+        missing = payload.get("missing")
+        missing_label = f"; missing={missing}" if missing else ""
+        message = payload.get("message") or payload.get("error") or (
+            f"Conectado ({latency_ms} ms)" if ok
+            else f"{status_label or 'not_ok'}{missing_label} (HTTP {r.status_code})"
+        )
+        return {
+            "checked": True,
+            "ok": ok,
+            "message": message,
+            "latency_ms": latency_ms,
+            "status": payload.get("status") if isinstance(payload.get("status"), str) else None,
+            "missing": payload.get("missing") if isinstance(payload.get("missing"), list) else None,
+        }
+    except Exception as exc:
+        latency_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "checked": False,
+            "ok": False,
+            "message": str(exc)[:200] or "connection error",
+            "latency_ms": latency_ms,
+            "status": None,
+            "missing": None,
+        }
+
+
 @router.post(
     "/{cartridge}/test_connection",
     dependencies=[Depends(require_csrf), Depends(require_permission("cartridges.write"))],
@@ -310,30 +355,10 @@ async def test_connection(
     _require_cartridge_visible(user, cartridge)
     selected_conn_id = _normalize_conn_id(conn_id)
 
-    started = time.monotonic()
-    ok = False
-    message = ""
-    payload: dict = {}
-    try:
-        async with httpx.AsyncClient(
-            timeout=10.0, headers=_cartridge_internal_headers_for_user(user)
-        ) as c:
-            params = {"conn_id": selected_conn_id} if selected_conn_id else None
-            r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"), params=params)
-        latency_ms = int((time.monotonic() - started) * 1000)
-        payload = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-        ok = _test_connection_succeeded(r.is_success, payload)
-        status_label = str(payload.get("status") or "").strip()
-        missing = payload.get("missing")
-        missing_label = f"; missing={missing}" if missing else ""
-        message = payload.get("message") or payload.get("error") or (
-            f"Conectado ({latency_ms} ms)" if ok
-            else f"{status_label or 'not_ok'}{missing_label} (HTTP {r.status_code})"
-        )
-    except Exception as exc:
-        latency_ms = int((time.monotonic() - started) * 1000)
-        ok = False
-        message = str(exc)[:200] or "connection error"
+    probe = await probe_cartridge_connection(cartridge, selected_conn_id, user)
+    ok = probe["ok"]
+    message = probe["message"]
+    latency_ms = probe["latency_ms"]
 
     await audit_service.record_event(
         user_id=user.get("id"),
@@ -350,10 +375,10 @@ async def test_connection(
     )
 
     result = {"ok": ok, "message": message, "latency_ms": latency_ms}
-    if isinstance(payload.get("status"), str):
-        result["status"] = payload["status"]
-    if isinstance(payload.get("missing"), list):
-        result["missing"] = payload["missing"]
+    if probe["status"] is not None:
+        result["status"] = probe["status"]
+    if probe["missing"] is not None:
+        result["missing"] = probe["missing"]
     return result
 
 

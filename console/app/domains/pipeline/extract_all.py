@@ -87,11 +87,21 @@ async def fanout_pipeline_extract_all(
     failed = [
         item for item in errors if item.get("status_code") not in {400, 403, 404}
     ]
+    automation = next(
+        (
+            item["result"]["automation"]
+            for item in triggered
+            if isinstance(item.get("result"), dict)
+            and isinstance(item["result"].get("automation"), dict)
+        ),
+        None,
+    )
     return {
         "cartridge": cartridge,
         "attempted": len(triggered) + len(errors),
         "triggered": triggered,
         "errors": errors,
+        **({"automation": automation} if automation else {}),
         "blocked": blocked,
         "failed": failed,
         "partial": [],

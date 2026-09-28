@@ -88,11 +88,29 @@ def test_active_sync_run_lookup_parts_include_optional_columns():
     )
 
     assert lookup["args"][0] == "sap_successfactors"
-    assert lookup["args"][2:] == ["incremental", "all"]
+    assert lookup["args"][2:] == ["incremental", "all", 4 * 60 * 60.0]
     assert "COALESCE(mode, $3)=$3" in lookup["clauses"]
     assert "COALESCE(extra->>'target', 'all')=$4" in lookup["clauses"]
-    assert any("started_at >" in clause for clause in lookup["clauses"])
+    assert any(
+        "started_at > NOW() - make_interval(secs => $5)" in clause
+        for clause in lookup["clauses"]
+    )
     assert lookup["order_sql"] == "started_at DESC NULLS LAST"
+
+
+def test_active_sync_run_lookup_parts_use_configured_window():
+    lookup = sync_state.active_sync_run_lookup_parts(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        has_mode=True,
+        has_extra=True,
+        has_started_at=True,
+        active_window_seconds=900,
+    )
+
+    assert lookup["args"][-1] == 900.0
+    assert not any("INTERVAL '4 hours'" in clause for clause in lookup["clauses"])
 
 
 def test_active_sync_run_lookup_parts_tolerate_legacy_schema():
@@ -501,7 +519,11 @@ def test_sync_child_runtime_state_marks_stale_running_children_failed():
         {
             "entity": "__sync_now__",
             "status_code": 504,
-            "error": "Airflow sync run timed out before completing; start a new sync.",
+            "error": (
+                "La sincronización agotó el tiempo de espera en el "
+                "orquestador; inicia una nueva."
+            ),
+            "reason": "sync_stale_timeout",
         }
     ]
 
@@ -601,9 +623,9 @@ async def test_fetch_active_sync_run_uses_scoped_lookup():
 
     async def scope_predicate(user, start_index, **kwargs):
         assert user == {"sub": "user-1"}
-        assert start_index == 5
+        assert start_index == 6
         assert kwargs == {"refresh_columns": True}
-        return "AND workspace_id=$5", ["workspace-1"]
+        return "AND workspace_id=$6", ["workspace-1"]
 
     conn = FakeConn()
 
@@ -617,6 +639,7 @@ async def test_fetch_active_sync_run_uses_scoped_lookup():
         table_has_column=table_has_column,
         pipeline_runs_scope_predicate=scope_predicate,
         scoped_db_for_user=lambda pool, user: FakeScope(conn),
+        active_window_seconds=7200,
     )
 
     assert row == {"run_id": "sync-now-1", "status": "running"}
@@ -624,13 +647,15 @@ async def test_fetch_active_sync_run_uses_scoped_lookup():
     assert "FROM pipeline_runs" in query
     assert "COALESCE(mode, $3)=$3" in query
     assert "COALESCE(extra->>'target', 'all')=$4" in query
-    assert "AND workspace_id=$5" in query
+    assert "make_interval(secs => $5)" in query
+    assert "AND workspace_id=$6" in query
     assert "ORDER BY started_at DESC NULLS LAST" in query
     assert args == (
         "sap_successfactors",
         list(sync_state.SYNC_TERMINAL_STATUSES),
         "incremental",
         "all",
+        7200.0,
         "workspace-1",
     )
 
@@ -861,3 +886,187 @@ def test_sync_state_public_payload_uses_project_terminal_statuses():
 
     assert payload["active"] is False
     assert payload["progress_percent"] == 100
+
+
+def test_sync_connection_check_state_classifies_probe_outcomes():
+    verified = sync_state.sync_connection_check_state(
+        {"checked": True, "ok": True, "message": "Conectado (12 ms)", "latency_ms": 12}
+    )
+    failed = sync_state.sync_connection_check_state(
+        {
+            "checked": True,
+            "ok": False,
+            "message": "missing_credentials (HTTP 400)",
+            "status": "missing_credentials",
+        }
+    )
+    unverified = sync_state.sync_connection_check_state(
+        {"checked": False, "ok": False, "message": "connection check timed out"}
+    )
+
+    assert verified["status"] == "verified"
+    assert verified["latency_ms"] == 12
+    assert "reason" not in verified
+    assert failed["status"] == "failed"
+    assert failed["reason"] == "connection_check_failed"
+    assert failed["source_status"] == "missing_credentials"
+    assert unverified["status"] == "unverified"
+    assert "reason" not in unverified
+
+
+def test_sync_connection_failure_step_updates_fail_every_step():
+    updates = sync_state.sync_connection_failure_step_updates("bad creds")
+
+    assert set(updates) == {
+        "connection",
+        "bronze",
+        "silver_gold",
+        "control_room",
+        "agents_intelligence",
+    }
+    assert all(update["status"] == "failed" for update in updates.values())
+    assert (
+        updates["connection"]["detail"]
+        == "Credenciales no válidas o incompletas en la Bóveda de Accesos"
+    )
+    assert updates["connection"]["error"] == "bad creds"
+
+
+@pytest.mark.anyio
+async def test_sync_now_connection_check_failure_births_failed_run():
+    upserts = []
+    stored_row = {}
+
+    async def probe_connection(*, cartridge, conn_id, user):
+        assert (cartridge, conn_id) == ("sap_successfactors", "tenant_sf")
+        return {
+            "checked": True,
+            "ok": False,
+            "message": "invalid_client (HTTP 401)",
+            "status": "error",
+            "latency_ms": 40,
+        }
+
+    async def upsert_sync_run(**kwargs):
+        upserts.append(kwargs)
+        stored_row.update(
+            {
+                "run_id": kwargs["run_id"],
+                "cartridge_id": kwargs["cartridge"],
+                "status": kwargs["status"],
+                "extra": kwargs["extra"],
+                "error_message": kwargs["error_message"],
+            }
+        )
+        return {}
+
+    async def fetch_sync_run_func(*, cartridge, run_id, user):
+        return dict(stored_row)
+
+    check, steps, response = await sync_state.sync_now_connection_check_or_response(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="tenant_sf",
+        request_id="req-1",
+        run_id="sync_now:sap_successfactors:abc",
+        steps=sync_state.initial_sync_steps(),
+        user={"sub": "user-1"},
+        probe_connection=probe_connection,
+        upsert_sync_run=upsert_sync_run,
+        fetch_sync_run_func=fetch_sync_run_func,
+    )
+
+    assert check["status"] == "failed"
+    assert len(upserts) == 1
+    assert upserts[0]["status"] == "failed"
+    assert "Credenciales no válidas" in upserts[0]["error_message"]
+    assert response is not None
+    assert response["status"] == "failed"
+    connection_step = next(
+        step for step in response["steps"] if step["id"] == "connection"
+    )
+    assert connection_step["status"] == "failed"
+    assert (
+        connection_step["detail"]
+        == "Credenciales no válidas o incompletas en la Bóveda de Accesos"
+    )
+    assert response["errors"][0]["reason"] == "connection_check_failed"
+
+
+@pytest.mark.anyio
+async def test_sync_now_connection_check_timeout_warns_and_continues():
+    async def probe_connection(*, cartridge, conn_id, user):
+        return {"checked": False, "ok": False, "message": "connection check timed out"}
+
+    async def must_not_upsert(**kwargs):
+        raise AssertionError("indeterminate check must not persist a failed run")
+
+    check, steps, response = await sync_state.sync_now_connection_check_or_response(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        request_id=None,
+        run_id="sync_now:sap_successfactors:abc",
+        steps=sync_state.initial_sync_steps(),
+        user=None,
+        probe_connection=probe_connection,
+        upsert_sync_run=must_not_upsert,
+        fetch_sync_run_func=must_not_upsert,
+    )
+
+    assert response is None
+    assert check["status"] == "unverified"
+
+
+def test_sync_extract_all_trigger_step_updates_respect_connection_check():
+    verified = sync_state.sync_extract_all_trigger_step_updates(
+        triggered_entities=[{"entity": "EmpJob"}],
+        errors=[],
+        attempts=1,
+        connection_check={"status": "verified"},
+    )
+    unverified = sync_state.sync_extract_all_trigger_step_updates(
+        triggered_entities=[{"entity": "EmpJob"}],
+        errors=[],
+        attempts=2,
+        connection_check={"status": "unverified"},
+    )
+
+    assert verified["connection"]["status"] == "success"
+    assert (
+        verified["connection"]["detail"]
+        == "Credenciales verificadas con el origen de datos."
+    )
+    assert unverified["connection"]["status"] == "partial"
+    assert (
+        unverified["connection"]["detail"]
+        == "No se pudo verificar la conexión a tiempo; continuando"
+    )
+    assert unverified["connection"]["attempts"] == 2
+
+
+def test_sync_extract_all_trigger_extra_keeps_automation_and_connection_check():
+    extra = sync_state.sync_extract_all_trigger_extra(
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        request_id=None,
+        steps=[],
+        triggered_entities=[],
+        errors=[],
+        result={
+            "trigger_strategy": "aggregate_dag",
+            "automation": {"was_paused": True, "unpaused": True, "message_es": "ok"},
+        },
+        dataset_seed=None,
+        connection_check={"status": "verified"},
+    )
+
+    assert extra["automation"] == {
+        "was_paused": True,
+        "unpaused": True,
+        "message_es": "ok",
+    }
+    assert extra["connection_check"] == {"status": "verified"}
