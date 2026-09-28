@@ -791,6 +791,171 @@ async def test_readyz_deadline_fails_closed_without_starting_a_second_check(
     assert refinement_main._readiness_success_cache is None
 
 
+class _FakeReadinessCursor:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql):
+        return self
+
+    def fetchone(self):
+        return (1,)
+
+
+class _FakeReadinessPostgres:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def cursor(self):
+        return _FakeReadinessCursor()
+
+
+class _FakeDuckDBConnection:
+    def __init__(self, rows):
+        self._rows = rows
+        self.closed = False
+
+    def execute(self, sql):
+        return self
+
+    def fetchall(self):
+        return self._rows
+
+    def close(self):
+        self.closed = True
+
+
+_LOADED_EXTENSION_ROWS = [
+    ("httpfs", True, True),
+    ("postgres_scanner", True, True),
+]
+
+
+class _ReadinessEngineStub:
+    def __init__(self, extension_rows=None):
+        self._duckdb_lock = threading.RLock()
+        self._connection = _FakeDuckDBConnection(
+            _LOADED_EXTENSION_ROWS if extension_rows is None else extension_rows
+        )
+        self.conn_calls = 0
+        self._publication_verifier = types.SimpleNamespace(ready=lambda: True)
+
+    def _conn(self):
+        self.conn_calls += 1
+        return self._connection
+
+
+def _arrange_readiness(refinement_main, monkeypatch, engine):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@host/db")
+    monkeypatch.setitem(
+        sys.modules, "psycopg2", _module(connect=lambda dsn: _FakeReadinessPostgres())
+    )
+    monkeypatch.setattr(refinement_main, "engine", engine)
+    monkeypatch.setattr(refinement_main, "_READINESS_DUCKDB_LOCK_TIMEOUT_SECONDS", 0.05)
+
+
+def _hold_lock_in_thread(lock):
+    locked = threading.Event()
+    release = threading.Event()
+
+    def hold():
+        with lock:
+            locked.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=hold, daemon=True)
+    holder.start()
+    assert locked.wait(2), "lock holder thread did not start"
+    return release, holder
+
+
+@pytest.mark.anyio
+async def test_readyz_stays_ready_while_engine_lock_is_held(
+    refinement_main,
+    monkeypatch,
+):
+    engine = _ReadinessEngineStub()
+    _arrange_readiness(refinement_main, monkeypatch, engine)
+    probe_connections = []
+
+    def probe_connect(*args, **kwargs):
+        connection = _FakeDuckDBConnection(list(_LOADED_EXTENSION_ROWS))
+        probe_connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(refinement_main, "connect_duckdb_runtime", probe_connect)
+
+    first = await refinement_main.readyz()
+    assert first.status_code == 200
+    assert engine.conn_calls == 1
+    assert not probe_connections
+
+    refinement_main._readiness_success_cache = None
+    release, holder = _hold_lock_in_thread(engine._duckdb_lock)
+    try:
+        started = time.monotonic()
+        second = await refinement_main.readyz()
+        elapsed = time.monotonic() - started
+        assert second.status_code == 200
+        assert elapsed < refinement_main._READINESS_TIMEOUT_SECONDS
+        assert engine.conn_calls == 1
+        assert len(probe_connections) == 1
+        assert probe_connections[0].closed
+        assert refinement_main._readiness_success_cache is not None
+    finally:
+        release.set()
+        holder.join(timeout=5)
+
+
+@pytest.mark.anyio
+async def test_readyz_fails_closed_when_lock_is_held_and_probe_fails(
+    refinement_main,
+    monkeypatch,
+):
+    engine = _ReadinessEngineStub()
+    _arrange_readiness(refinement_main, monkeypatch, engine)
+
+    def broken_probe(*args, **kwargs):
+        raise RuntimeError("DuckDB required extensions are unavailable")
+
+    monkeypatch.setattr(refinement_main, "connect_duckdb_runtime", broken_probe)
+
+    release, holder = _hold_lock_in_thread(engine._duckdb_lock)
+    try:
+        response = await refinement_main.readyz()
+        assert response.status_code == 503
+        assert engine.conn_calls == 0
+        assert refinement_main._readiness_success_cache is None
+    finally:
+        release.set()
+        holder.join(timeout=5)
+
+
+@pytest.mark.anyio
+async def test_readyz_fails_closed_when_extensions_are_missing(
+    refinement_main,
+    monkeypatch,
+):
+    engine = _ReadinessEngineStub(extension_rows=[])
+    _arrange_readiness(refinement_main, monkeypatch, engine)
+
+    def unexpected_probe(*args, **kwargs):
+        raise AssertionError("probe must not run while the engine lock is free")
+
+    monkeypatch.setattr(refinement_main, "connect_duckdb_runtime", unexpected_probe)
+
+    response = await refinement_main.readyz()
+    assert response.status_code == 503
+    assert engine.conn_calls == 1
+    assert refinement_main._readiness_success_cache is None
+
+
 @pytest.mark.anyio
 async def test_generate_transform_offloads_sync_schema_discovery_only(
     refinement_main,

@@ -3587,7 +3587,7 @@
     },
     {
       "path": "refinement/tests/test_hotfix_runtime.py",
-      "sha256": "9167c3e1ae2d6bd0bfcfb2827eb1e383f993aabb92dbf93c05f62ea3ef7adcad"
+      "sha256": "8f7789efa6c1308e68aad55d0cca2bff0295a7270a76b835f58263a01701e0c7"
     },
     {
       "path": "refinement/tests/test_inegi_manifest_materializer.py",
