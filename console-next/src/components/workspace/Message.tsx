@@ -16,15 +16,19 @@ interface AppCardPayload {
 }
 
 const APP_VIEWER_PREFIX = "/analytics/viewer?app=";
+const APP_FORGE_TOOL = "generar_app_analitica";
 
 export function appCardFromMessage(message: MessageType): AppCardPayload | null {
   for (const result of message.tool_results ?? []) {
     const raw = typeof result?.content === "string" ? result.content : "";
-    if (!raw.includes(APP_VIEWER_PREFIX)) continue;
+    if (!raw.includes(APP_FORGE_TOOL)) continue;
     try {
       const parsed: unknown = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") continue;
       const payload = parsed as Record<string, unknown>;
+      // Keyed off the tool name in the payload: only generar_app_analitica
+      // results become a card, never other tools that echo viewer URLs.
+      if (payload.tool !== APP_FORGE_TOOL) continue;
       const url =
         typeof payload.app_url === "string"
           ? payload.app_url

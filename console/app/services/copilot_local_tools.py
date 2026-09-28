@@ -118,6 +118,7 @@ async def invoke_local_tool(
     except app_forge.AppForgeError as exc:
         return {"error": str(exc)}
     return {
+        "tool": GENERATE_APP_TOOL,
         "published": True,
         "name": result["name"],
         "title": result["title"],

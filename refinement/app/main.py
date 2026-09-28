@@ -3199,6 +3199,21 @@ def _publish_app(args: dict, sec: dict) -> dict:
     tenant_id = str(sec.get("tenant_id") or "").strip()
     if not workspace_id:
         return {"error": "workspace scope required for private analytic apps"}
+    if not str(args.get("cartridge_id") or "").strip():
+        # Workspace publications may never squat a packaged app name, even one
+        # whose analytic_apps row has not been seeded yet.
+        packaged = (
+            _pg_exec(
+                "SELECT 1 FROM public.analytic_app_manifests "
+                "WHERE app_name = %s AND source = 'packaged_manifest' LIMIT 1",
+                (name,),
+                fetch=True,
+                security_context=sec,
+            )
+            or []
+        )
+        if packaged:
+            return {"error": f"app name '{name}' is reserved by a packaged app"}
     import re as _re
 
     datasets_used = sorted(
@@ -3255,11 +3270,15 @@ def _app_visible(sec: dict, row: dict) -> bool:
     is_owner = row.get("created_by_id") is not None and str(
         row.get("created_by_id")
     ) == str(sec.get("user_id"))
+    visibility = str(row.get("visibility") or "private")
     if not cartridge:
+        # RLS already scopes rows to the caller's workspace, so shared means
+        # workspace-visible, never cross-workspace.
+        if visibility in {"shared", "public"}:
+            return True
         return is_owner
     if not _prefix_allowed(sec, f"cartridges/{cartridge}/"):
         return False
-    visibility = str(row.get("visibility") or "private")
     if visibility in {"shared", "public"}:
         return True
     return is_owner

@@ -66,6 +66,7 @@ async def test_invoke_returns_card_shape_on_success(monkeypatch):
     result = await copilot_local_tools.invoke_local_tool(
         copilot_local_tools.GENERATE_APP_TOOL, dict(VALID_ARGS), user={"id": 1}
     )
+    assert result["tool"] == "generar_app_analitica"
     assert result["published"] is True
     assert result["app_url"] == "/analytics/viewer?app=ventas_semana"
     assert result["url"] == result["app_url"]

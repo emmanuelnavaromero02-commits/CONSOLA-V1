@@ -21,7 +21,10 @@ MAX_NAME_CHARS = 80
 MAX_DATASETS = 5
 MIN_HTML_CHARS = 200
 
-_EXTERNAL_SCRIPT_RE = re.compile(r"<script[^>]*\ssrc\s*=", re.IGNORECASE)
+# `/` is a valid attribute separator in HTML (<script/src=...>); CSP remains
+# the enforcement boundary, this validator is the honest first gate.
+_EXTERNAL_SCRIPT_RE = re.compile(r"<script[^>]*[\s/]src\s*=", re.IGNORECASE)
+_DYNAMIC_IMPORT_RE = re.compile(r"\bimport\s*\(")
 _FENCE_RE = re.compile(r"^\s*```(?:html)?\s*|\s*```\s*$", re.IGNORECASE)
 
 
@@ -41,6 +44,11 @@ def _validate_generated_html(html: str, datasets: list[str]) -> None:
     if _EXTERNAL_SCRIPT_RE.search(html):
         raise AppForgeError(
             "La app generada referencia scripts externos y fue rechazada; "
+            "no se publicó nada."
+        )
+    if _DYNAMIC_IMPORT_RE.search(html):
+        raise AppForgeError(
+            "La app generada usa import() dinámico y fue rechazada; "
             "no se publicó nada."
         )
     referenced = set(datasets_from_app_html(html))
@@ -158,6 +166,7 @@ async def generate_and_publish_app(
             "title": app_title,
             "html": html,
             "description": str(description or ""),
+            "visibility": "shared",
         },
         user=user,
     )

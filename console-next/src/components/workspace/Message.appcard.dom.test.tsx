@@ -29,6 +29,7 @@ function render(message: MessageType) {
 }
 
 const appResult = JSON.stringify({
+  tool: "generar_app_analitica",
   published: true,
   name: "ventas_semana",
   title: "Ventas de la semana",
@@ -61,11 +62,40 @@ describe("Message app-result card", () => {
       tool_results: [
         {
           tool_use_id: "t1",
-          content: JSON.stringify({ app_url: "/analytics/viewer?app=otra" }),
+          content: JSON.stringify({
+            tool: "generar_app_analitica",
+            app_url: "/analytics/viewer?app=otra",
+          }),
         },
       ],
     });
     expect(payload?.url).toBe("/analytics/viewer?app=otra");
+  });
+
+  it("is keyed off the tool name, not a viewer-URL substring", () => {
+    // A list_apps-style result that merely mentions a viewer URL never
+    // becomes a card.
+    render({
+      id: "m5",
+      role: "tool",
+      content: "",
+      tool_results: [
+        {
+          tool_use_id: "t1",
+          content: JSON.stringify({
+            apps: [{ name: "x", url: "/analytics/viewer?app=x" }],
+          }),
+        },
+        {
+          tool_use_id: "t2",
+          content: JSON.stringify({
+            name: "x",
+            url: "/analytics/viewer?app=x",
+          }),
+        },
+      ],
+    });
+    expect(container.querySelector('[data-testid="app-result-card"]')).toBeNull();
   });
 
   it("ignores results that do not point at the analytics viewer", () => {
@@ -76,7 +106,11 @@ describe("Message app-result card", () => {
       tool_results: [
         {
           tool_use_id: "t1",
-          content: JSON.stringify({ name: "x", url: "https://evil.example/app" }),
+          content: JSON.stringify({
+            tool: "generar_app_analitica",
+            name: "x",
+            url: "https://evil.example/app",
+          }),
         },
         { tool_use_id: "t2", content: "texto plano sin JSON" },
       ],
