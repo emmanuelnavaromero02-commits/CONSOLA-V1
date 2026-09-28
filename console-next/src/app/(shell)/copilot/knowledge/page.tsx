@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Database,
   FileText,
+  Files,
   Layers3,
   Loader2,
   RefreshCw,
@@ -22,6 +22,11 @@ import { cn } from "@/lib/utils";
 
 const CARTRIDGES = ["sap_successfactors", "replicon", "hubspot", "sap_hcm", "sap_s4hana"] as const;
 const SOURCE_KINDS = ["document", "schema"] as const;
+const KIND_LABELS: Record<string, string> = {
+  document: "Documento",
+  schema: "Estructura de datos",
+};
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 interface RagSource {
   id?: number | string | null;
@@ -67,6 +72,13 @@ interface IngestForm {
   content: string;
 }
 
+interface UploadPayload {
+  name: string;
+  description: string;
+  content: string;
+  mime_type: string;
+}
+
 interface ReindexForm {
   kind: "dataset" | "raw";
   name: string;
@@ -109,10 +121,12 @@ export default function KnowledgePage() {
   const queryClient = useQueryClient();
   const [kindFilter, setKindFilter] = useState("all");
   const [ingestForm, setIngestForm] = useState<IngestForm>(EMPTY_INGEST);
+  const [uploadDescription, setUploadDescription] = useState("");
   const [reindexForm, setReindexForm] = useState<ReindexForm>(EMPTY_REINDEX);
   const [queryForm, setQueryForm] = useState<QueryForm>(EMPTY_QUERY);
   const [queryOutput, setQueryOutput] = useState<QueryOutput | null>(null);
   const [pendingDelete, setPendingDelete] = useState<RagSource | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const sources = useQuery({
     queryKey: ["rag", "sources", kindFilter],
@@ -151,11 +165,38 @@ export default function KnowledgePage() {
         toast.error(data.error);
         return;
       }
-      toast.success("Fuente ingerida.");
+      toast.success("Documento cargado.");
       setIngestForm(EMPTY_INGEST);
       queryClient.invalidateQueries({ queryKey: ["rag", "sources"] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo ingerir la fuente."),
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo cargar el documento."),
+  });
+
+  const uploadFile = useMutation({
+    mutationFn: async (payload: UploadPayload) => {
+      const { data } = await api.post<{ source_id?: number; error?: string }>(
+        "/api/rag/ingest",
+        {
+          name: payload.name,
+          description: payload.description,
+          kind: "document",
+          content: payload.content,
+          mime_type: payload.mime_type,
+        },
+      );
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data.error) {
+        toast.error(data.error);
+        return;
+      }
+      toast.success("Documento cargado.");
+      setUploadDescription("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      queryClient.invalidateQueries({ queryKey: ["rag", "sources"] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo cargar el documento."),
   });
 
   const reindex = useMutation({
@@ -209,7 +250,7 @@ export default function KnowledgePage() {
       setQueryOutput(data);
       toast.success("Consulta completada.");
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo consultar RAG."),
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo completar la consulta."),
   });
 
   function submitIngest() {
@@ -222,6 +263,37 @@ export default function KnowledgePage() {
       return;
     }
     ingest.mutate(ingestForm);
+  }
+
+  async function handleFileSelected(file: File | null) {
+    if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      toast.error("El archivo supera el máximo de 10 MB.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    try {
+      if (isPdf) {
+        const content = await readFileAsBase64(file);
+        uploadFile.mutate({
+          name: file.name,
+          description: uploadDescription.trim(),
+          content,
+          mime_type: "application/pdf",
+        });
+      } else {
+        const content = await readFileAsText(file);
+        uploadFile.mutate({
+          name: file.name,
+          description: uploadDescription.trim(),
+          content,
+          mime_type: "text/plain",
+        });
+      }
+    } catch {
+      toast.error("No se pudo leer el archivo.");
+    }
   }
 
   function submitReindex() {
@@ -244,9 +316,9 @@ export default function KnowledgePage() {
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Base de conocimiento</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Documentos y Políticas de la Empresa</h1>
           <p className="text-sm text-muted-foreground">
-            Fuentes RAG, reindexado vectorial e inspección directa para Copiloto.
+            Sube políticas, manuales y documentos; el Copiloto los usa al responder.
           </p>
         </div>
         <button
@@ -259,9 +331,9 @@ export default function KnowledgePage() {
         </button>
       </header>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-3" aria-label="Resumen RAG">
-        <MetricCard icon={Database} label="Fuentes" value={metrics.sourceCount} />
-        <MetricCard icon={Layers3} label="Chunks" value={metrics.chunkCount} />
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3" aria-label="Resumen de documentos">
+        <MetricCard icon={Files} label="Documentos" value={metrics.sourceCount} />
+        <MetricCard icon={Layers3} label="Fragmentos indexados" value={metrics.chunkCount} />
         <MetricCard icon={FileText} label="Caracteres" value={formatNumber(metrics.sizeChars)} />
       </section>
 
@@ -270,8 +342,8 @@ export default function KnowledgePage() {
           <section className="rounded-lg border bg-card shadow-sm">
             <header className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-base font-semibold">Fuentes</h2>
-                <p className="text-xs text-muted-foreground">Inventario indexado por pgvector.</p>
+                <h2 className="text-base font-semibold">Documentos</h2>
+                <p className="text-xs text-muted-foreground">Documentos disponibles para el Copiloto.</p>
               </div>
               <select
                 value={kindFilter}
@@ -281,13 +353,13 @@ export default function KnowledgePage() {
               >
                 <option value="all">Todos</option>
                 {SOURCE_KINDS.map((kind) => (
-                  <option key={kind} value={kind}>{kind}</option>
+                  <option key={kind} value={kind}>{KIND_LABELS[kind] ?? kind}</option>
                 ))}
               </select>
             </header>
 
             {sources.isError ? (
-              <ErrorPanel message="No se pudieron cargar fuentes RAG." onRetry={() => sources.refetch()} />
+              <ErrorPanel message="No se pudieron cargar los documentos." onRetry={() => sources.refetch()} />
             ) : sources.isLoading ? (
               <SkeletonRows rows={5} />
             ) : (
@@ -298,8 +370,8 @@ export default function KnowledgePage() {
           <section className="rounded-lg border bg-card p-4 shadow-sm">
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-base font-semibold">Probador</h2>
-                <p className="text-xs text-muted-foreground">Consulta directa contra RAG.</p>
+                <h2 className="text-base font-semibold">Prueba una pregunta</h2>
+                <p className="text-xs text-muted-foreground">Verifica qué responde el Copiloto con estos documentos.</p>
               </div>
               <SegmentedControl
                 value={queryForm.mode}
@@ -354,7 +426,38 @@ export default function KnowledgePage() {
 
         <div className="space-y-4">
           <section className="rounded-lg border bg-card p-4 shadow-sm">
-            <h2 className="text-base font-semibold">Ingesta</h2>
+            <h2 className="text-base font-semibold">Subir documento</h2>
+            <p className="mt-1 text-xs text-muted-foreground">PDF o texto plano, hasta 10 MB.</p>
+            <div className="mt-3 space-y-3">
+              <Field label="Descripción">
+                <input
+                  value={uploadDescription}
+                  onChange={(event) => setUploadDescription(event.target.value)}
+                  className="min-h-[44px] rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </Field>
+              <Field label="Archivo">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf,text/plain"
+                  aria-label="Archivo del documento"
+                  disabled={uploadFile.isPending}
+                  onChange={(event) => handleFileSelected(event.target.files?.[0] ?? null)}
+                  className="min-h-[44px] w-full rounded-md border bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </Field>
+              {uploadFile.isPending ? (
+                <p className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+                  Cargando documento…
+                </p>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="rounded-lg border bg-card p-4 shadow-sm">
+            <h2 className="text-base font-semibold">Pegar texto</h2>
             <div className="mt-3 space-y-3">
               <Field label="Nombre">
                 <input
@@ -371,7 +474,7 @@ export default function KnowledgePage() {
                     className="min-h-[44px] rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {SOURCE_KINDS.map((kind) => (
-                      <option key={kind} value={kind}>{kind}</option>
+                      <option key={kind} value={kind}>{KIND_LABELS[kind] ?? kind}</option>
                     ))}
                   </select>
                 </Field>
@@ -397,7 +500,7 @@ export default function KnowledgePage() {
                 className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {ingest.isPending ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <UploadCloud aria-hidden className="h-4 w-4" />}
-                Ingerir
+                Guardar texto
               </button>
             </div>
           </section>
@@ -443,7 +546,7 @@ export default function KnowledgePage() {
                 className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border bg-background px-4 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {reindex.isPending ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RotateCcw aria-hidden className="h-4 w-4" />}
-                Reindexar
+                Reindexar documentos
               </button>
             </div>
           </section>
@@ -462,7 +565,7 @@ export default function KnowledgePage() {
         }}
         onCancel={() => setPendingDelete(null)}
         testId="delete-rag-source-dialog"
-        description={`Se borrará «${pendingDelete?.name || pendingDelete?.id || ""}» y sus chunks del índice vectorial. Esta acción no se puede deshacer.`}
+        description={`Se borrará «${pendingDelete?.name || pendingDelete?.id || ""}» y sus fragmentos del índice. Esta acción no se puede deshacer.`}
       />
     </main>
   );
@@ -479,6 +582,28 @@ function normalizeSources(payload: RagSourcesPayload | RagSource[]): RagSource[]
   if (Array.isArray(payload.result)) return payload.result;
   if (payload.result && Array.isArray(payload.result.sources)) return payload.result.sources;
   return [];
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const value = String(reader.result ?? "");
+      const separator = value.indexOf(",");
+      resolve(separator >= 0 ? value.slice(separator + 1) : value);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.readAsText(file);
+  });
 }
 
 function parseKinds(value: string): string[] | undefined {
@@ -536,7 +661,7 @@ function SourcesTable({ sources, onDelete }: { sources: RagSource[]; onDelete: (
   if (!sources.length) {
     return (
       <p className="m-4 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
-        Sin fuentes RAG.
+        Sin documentos cargados.
       </p>
     );
   }
@@ -546,9 +671,9 @@ function SourcesTable({ sources, onDelete }: { sources: RagSource[]; onDelete: (
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th className="px-4 py-2 font-medium">Fuente</th>
+            <th className="px-4 py-2 font-medium">Documento</th>
             <th className="px-4 py-2 font-medium">Tipo</th>
-            <th className="px-4 py-2 font-medium">Chunks</th>
+            <th className="px-4 py-2 font-medium">Fragmentos</th>
             <th className="px-4 py-2 font-medium">Tamaño</th>
             <th className="px-4 py-2 font-medium">Creada</th>
             <th className="px-4 py-2 text-right font-medium">Acciones</th>
@@ -563,7 +688,7 @@ function SourcesTable({ sources, onDelete }: { sources: RagSource[]; onDelete: (
               </td>
               <td className="px-4 py-3 align-top">
                 <span className="inline-flex rounded-full border bg-muted/30 px-2 py-0.5 text-xs font-medium">
-                  {source.kind || "document"}
+                  {KIND_LABELS[source.kind || "document"] ?? source.kind}
                 </span>
               </td>
               <td className="px-4 py-3 align-top text-muted-foreground">{formatNumber(Number(source.chunk_count ?? 0))}</td>
@@ -604,7 +729,9 @@ function QueryResults({ output }: { output: QueryOutput }) {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">{result.source_name || "Fuente"}</h3>
               <span className="text-xs text-muted-foreground">
-                {result.similarity != null ? `${Math.round(result.similarity * 100)}%` : result.source_kind || "RAG"}
+                {result.similarity != null
+                  ? `${Math.round(result.similarity * 100)}%`
+                  : KIND_LABELS[result.source_kind || ""] ?? result.source_kind ?? "Documento"}
               </span>
             </div>
             <p className="mt-2 line-clamp-4 text-sm text-muted-foreground">
@@ -650,7 +777,7 @@ function SegmentedControl({
             value === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent/10",
           )}
         >
-          {mode === "ask" ? "Ask" : "Search"}
+          {mode === "ask" ? "Responder" : "Buscar"}
         </button>
       ))}
     </div>

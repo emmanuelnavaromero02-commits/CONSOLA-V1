@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   { href: "/data/inventory", label: "Catálogo semántico", icon: Library },
-  { href: "/copilot/knowledge", label: "Base de conocimiento (RAG)", icon: BookOpen },
+  { href: "/copilot/knowledge", label: "Documentos y Políticas de la Empresa", icon: BookOpen },
   { href: "/analytics", label: "Apps analíticas", icon: LayoutGrid },
 ];
 
