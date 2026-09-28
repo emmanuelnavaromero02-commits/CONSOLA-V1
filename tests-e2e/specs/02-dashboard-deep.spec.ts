@@ -209,12 +209,17 @@ test.describe("Dashboard — internal navigation", () => {
     await page.waitForURL(/\/cartridges/, { timeout: 10_000 });
   });
 
-  test("navigate from dashboard to /workspace copilot", async ({ page }) => {
+  test("navigate from dashboard to the /copilot chat", async ({ page }) => {
     await page.goto("/dashboard");
-    const link = page.locator('a[href="/workspace"], a[href="/workspace/"]').first();
+    const link = page.locator('main a[href="/copilot"], main a[href="/copilot/"]').first();
     await expect(link).toBeVisible({ timeout: 10_000 });
     await link.click();
-    await page.waitForURL(/\/workspace/, { timeout: 10_000 });
+    await page.waitForURL(/\/copilot/, { timeout: 10_000 });
+  });
+
+  test("legacy /workspace URL lands on /copilot preserving the prompt", async ({ page }) => {
+    await page.goto("/workspace?prompt=hola");
+    await page.waitForURL(/\/copilot\?prompt=hola/, { timeout: 10_000 });
   });
 
   test("logo / home link returns to /dashboard from any page",

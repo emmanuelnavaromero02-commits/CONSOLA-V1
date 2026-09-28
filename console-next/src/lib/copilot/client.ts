@@ -59,13 +59,27 @@ export async function getConversation(
 }
 
 
+export type CopilotPageContext = Record<string, string | number | boolean>;
+
+function turnBody(
+  message: string,
+  pageContext?: CopilotPageContext,
+): { message: string; page_context?: CopilotPageContext } {
+  if (pageContext && Object.keys(pageContext).length > 0) {
+    return { message, page_context: pageContext };
+  }
+  return { message };
+}
+
+
 export async function sendMessage(
   conversationId: string,
   message: string,
+  pageContext?: CopilotPageContext,
 ): Promise<SendMessageResponse> {
   const { data } = await api.post<SendMessageResponse>(
     `/api/copilot/conversations/${encodeURIComponent(conversationId)}/messages`,
-    { message },
+    turnBody(message, pageContext),
   );
   return data;
 }
@@ -164,13 +178,15 @@ export async function streamMessage(
   conversationId: string,
   message: string,
   handlers: StreamMessageHandlers = {},
+  pageContext?: CopilotPageContext,
+  options: SseStreamOptions = {},
 ): Promise<SendMessageResponse> {
   let finalData: SendMessageResponse | null = null;
   let sawToken = false;
 
   await postSseStream(
     `/api/copilot/chat/${encodeURIComponent(conversationId)}/stream`,
-    { message },
+    turnBody(message, pageContext),
     (parsed, requestId) => {
       handlers.onEvent?.(parsed.event, parsed.data);
       const data = parsed.data as Record<string, unknown>;
@@ -200,6 +216,7 @@ export async function streamMessage(
         throw toApiError(publicErrorMessage(502, null, requestId), 502, { code }, requestId);
       }
     },
+    options,
   );
 
   if (!finalData) throw new Error("Copilot stream ended before completion.");

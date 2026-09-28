@@ -1,13 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
-from typing import Any, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+)
 
+from app.domains.data_platform.explorer_nl import (
+    ExplorerNlError,
+    NL_QUESTION_MAX_LEN,
+    build_spec_from_question,
+    logical_source_mapping,
+    spec_to_body,
+)
 from app.domains.data_platform.explorer_query import (
     BRONZE_LIMIT_CAP,
     DATASET_LIMIT_CAP,
@@ -38,6 +54,7 @@ from app.domains.data_platform.source_visibility import require_technical_source
 from app.domains.security.internal_auth import internal_outbound_headers
 from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
+from app.services import llm_client
 from app.services.csrf import require_csrf
 from app.services.mcp_payloads import mcp_payload
 from app.services.permissions import has_permission, require_permission
@@ -294,3 +311,110 @@ async def api_data_explore(
         return await explore_payload(body, user)
     except ExplorerQueryError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
+
+
+class ExplorerNlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: Annotated[str, Field(min_length=1, max_length=300)]
+    question: Annotated[str, Field(min_length=1, max_length=NL_QUESTION_MAX_LEN)]
+
+
+class ExplorerNlFilterOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    column: str
+    op: str
+    value: Cell = None
+    values: list[Cell] | None = None
+
+
+class ExplorerNlSortOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    column: str
+    direction: Literal["asc", "desc"]
+
+
+class ExplorerNlSpecOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    columns: list[str]
+    filters: list[ExplorerNlFilterOut]
+    sort: list[ExplorerNlSortOut]
+    limit: int | None
+    latest_only: bool
+
+
+class ExplorerNlResponse(ExplorerResponse):
+    spec: ExplorerNlSpecOut
+    question: str
+
+
+NL_LLM_TIMEOUT_SECONDS = 45.0
+NL_UNAVAILABLE_DETAIL = "Sin conexión al asistente"
+
+
+async def _nl_noop_invoke_tool(*_args: Any, **_kwargs: Any) -> dict:
+    return {"error": "tools_disabled_in_this_context"}
+
+
+async def _nl_llm_text(system: str, question: str, *, user: dict) -> str:
+    try:
+        reply, _viewer_urls, _msgs = await asyncio.wait_for(
+            llm_client.chat(
+                system=system,
+                messages=[{"role": "user", "content": question}],
+                tools=[],
+                invoke_tool=_nl_noop_invoke_tool,
+                tool_server_map={},
+                on_event=None,
+                user_context=user,
+            ),
+            timeout=NL_LLM_TIMEOUT_SECONDS,
+        )
+    except (llm_client.LLMConfigurationError, llm_client.LLMProviderError):
+        raise HTTPException(503, NL_UNAVAILABLE_DETAIL) from None
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "La consulta al asistente tardó demasiado.") from None
+    return reply or ""
+
+
+@router.post(
+    "/api/data/explore/nl",
+    dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))],
+    response_model=ExplorerNlResponse,
+)
+async def api_data_explore_nl(
+    body: ExplorerNlRequest, user: dict = Depends(require_permission("datasets.read"))
+) -> ExplorerNlResponse:
+    try:
+        source = parse_explorer_source(logical_source_mapping(body.source))
+        limit_cap = _authorize_source(source, user)
+        schema = await _load_schema(source, user)
+
+        async def llm_text(system: str, question: str) -> str:
+            return await _nl_llm_text(system, question, user=user)
+
+        spec = await build_spec_from_question(
+            schema, body.question, llm_text, limit_cap=limit_cap
+        )
+        spec_body = spec_to_body(spec)
+        # Compile-only: the user reviews the spec in the builder and executes once.
+        result = await explore_payload(
+            {
+                "source": logical_source_mapping(body.source),
+                "execute": False,
+                **spec_body,
+            },
+            user,
+        )
+    except ExplorerNlError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
+    except ExplorerQueryError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
+    return ExplorerNlResponse(
+        **result.model_dump(),
+        spec=ExplorerNlSpecOut(**spec_body),
+        question=body.question,
+    )

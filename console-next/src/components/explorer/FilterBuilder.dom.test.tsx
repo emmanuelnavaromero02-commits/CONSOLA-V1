@@ -118,6 +118,25 @@ describe("FilterBuilder", () => {
     expect(latest.filters).toEqual([]);
   });
 
+  it("drops pre-structured list values as soon as the user edits the text", async () => {
+    const initial: ExplorerSpec = {
+      ...EMPTY_SPEC,
+      filters: [{
+        id: "nl1",
+        column: "nombre",
+        op: "in",
+        value: "García, Juan",
+        valueTo: "",
+        values: ["García, Juan"],
+      }],
+    };
+    await render(<Harness initial={initial} />);
+
+    await type(byLabel("Valor del filtro 1"), "García, Juan, Ana");
+    expect(latest.filters[0].value).toBe("García, Juan, Ana");
+    expect(latest.filters[0].values).toBeUndefined();
+  });
+
   it("builds sorting only on sortable columns", async () => {
     await render(<Harness />);
     await click(button("Agregar orden"));

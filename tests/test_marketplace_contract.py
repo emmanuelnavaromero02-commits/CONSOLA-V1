@@ -232,6 +232,7 @@ def test_marketplace_permissions_distinguish_request_from_admin():
         "apps.read",
         "marketplace.read",
         "marketplace.request",
+        "copilot.use",
     }
     assert roles["viewer"] == {
         "monitor.read",
@@ -248,6 +249,7 @@ def test_marketplace_permissions_distinguish_request_from_admin():
         "workspace.access",
         "apps.read",
         "marketplace.read",
+        "copilot.use",
     }
     tenant_admin = roles["tenant_admin"]
     assert {"iam.users.write", "pipelines.run"} <= tenant_admin

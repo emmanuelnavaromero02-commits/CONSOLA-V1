@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { ActionCouncil } from "@/components/decisions/ActionCouncil";
@@ -10,12 +10,19 @@ import {
   resolveDecisionsTab,
   resolveFocusedProposal,
 } from "@/components/decisions/DecisionsTabs";
+import { usePageContextPublisher } from "@/lib/copilot/use-page-context";
 
 function DecisionsShell() {
   const params = useSearchParams();
   const router = useRouter();
   const tab = resolveDecisionsTab(params.get("tab"));
   const focus = resolveFocusedProposal(params.get("propuesta"));
+
+  usePageContextPublisher(useMemo(() => ({
+    surface: "decisions",
+    active_tab: tab,
+    ...(focus ? { focused_decision_id: focus } : {}),
+  }), [tab, focus]));
 
   return (
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">

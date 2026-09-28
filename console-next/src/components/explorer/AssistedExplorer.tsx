@@ -1,7 +1,7 @@
 "use client";
 
 import { Notice, Spinner } from "@/components/studio/ui";
-import { mergeParsedSpec, specProblems, type ExplorerColumn, type ExplorerSpec } from "@/lib/explorer/spec";
+import { mergeParsedSpec, specProblems, type ExplorerColumn, type ExplorerSource, type ExplorerSpec } from "@/lib/explorer/spec";
 
 import { FilterBuilder } from "./FilterBuilder";
 import { NaturalLanguageBar } from "./NaturalLanguageBar";
@@ -17,6 +17,7 @@ export function AssistedExplorer({
   error = null,
   disabled = false,
   today,
+  source,
 }: {
   columns: ExplorerColumn[];
   spec: ExplorerSpec;
@@ -28,6 +29,7 @@ export function AssistedExplorer({
   error?: string | null;
   disabled?: boolean;
   today?: Date;
+  source?: ExplorerSource;
 }) {
   if (loading) {
     return (
@@ -50,6 +52,7 @@ export function AssistedExplorer({
         onApply={(result) => onSpecChange(mergeParsedSpec(spec, result))}
         disabled={disabled}
         today={today}
+        source={source}
       />
       <FilterBuilder
         columns={columns}

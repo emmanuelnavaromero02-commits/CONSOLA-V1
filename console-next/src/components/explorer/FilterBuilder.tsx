@@ -114,12 +114,19 @@ export function FilterBuilder({
       filters: spec.filters.map((filter) => {
         if (filter.id !== id) return filter;
         const next = { ...filter, ...patch };
+        if (
+          (patch.value !== undefined || patch.op !== undefined)
+          && patch.values === undefined
+        ) {
+          delete next.values;
+        }
         if (patch.column !== undefined && patch.column !== filter.column) {
           const kind = byName.get(patch.column)?.kind ?? "text";
           const allowed = operatorsForKind(kind);
           if (!allowed.includes(next.op)) next.op = allowed[0];
           next.value = "";
           next.valueTo = "";
+          delete next.values;
         }
         return next;
       }),

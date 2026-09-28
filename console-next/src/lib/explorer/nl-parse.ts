@@ -13,6 +13,7 @@ export interface NlFilter {
   op: ExplorerOp;
   value: string;
   valueTo: string;
+  values?: string[];
 }
 
 export interface NlSort {

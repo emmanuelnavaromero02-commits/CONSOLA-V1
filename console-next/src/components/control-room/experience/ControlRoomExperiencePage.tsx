@@ -2,7 +2,9 @@
 
 import { AlertTriangle, RefreshCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+
+import { usePageContextPublisher } from "@/lib/copilot/use-page-context";
 
 import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
 import {
@@ -105,6 +107,21 @@ export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } =
     refetchOnly: live.refreshAll,
   });
   const retry = live.refreshAll;
+
+  const publishedContext = useMemo(() => {
+    if (!query.data) return null;
+    const sections = query.data.sections.filter((section) => section.facts.length > 0);
+    const factTitles = sections
+      .flatMap((section) => section.facts.map((fact) => fact.title))
+      .slice(0, 5);
+    return {
+      surface: "control-room",
+      route: "/control-room",
+      section_count: sections.length,
+      fact_titles: factTitles.join(" | "),
+    };
+  }, [query.data]);
+  usePageContextPublisher(publishedContext);
 
   return (
     <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8" aria-label="Experiencia empresarial">

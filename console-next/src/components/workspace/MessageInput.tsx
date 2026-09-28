@@ -10,6 +10,7 @@ interface Props {
   initialValue?: string;
   onSlash?:     () => void;
   ariaLabel?:   string;
+  copilotHotkeyTarget?: boolean;
 }
 
 const MAX_MESSAGE_CHARS = 8_000;
@@ -37,6 +38,7 @@ export function MessageInput({
   initialValue,
   onSlash,
   ariaLabel,
+  copilotHotkeyTarget,
 }: Props) {
   const [value, dispatchValue] = useReducer(valueReducer, initialValue, trimSeed);
 
@@ -78,6 +80,7 @@ export function MessageInput({
         disabled={disabled}
         placeholder={placeholder ?? "Pregunta algo o escribe / para comandos…"}
         aria-label={ariaLabel ?? "Mensaje para el copiloto"}
+        data-copilot-input={copilotHotkeyTarget ? "true" : undefined}
         maxLength={MAX_MESSAGE_CHARS}
         minRows={1}
         maxRows={8}

@@ -86,9 +86,15 @@ function classifyHref(value: string | null): ClassifiedHref | null {
     const path = safeInternalPath(trimmed, INTERNAL_ORIGIN, "");
     if (!path) return null;
     const canonical = new URL(path, INTERNAL_ORIGIN);
-    if (canonical.pathname === "/workspace") {
+    if (canonical.pathname === "/workspace" || canonical.pathname === "/copilot") {
       const prompt = canonical.searchParams.get("prompt");
-      if (prompt) return { kind: "prompt", href: path, prompt };
+      if (prompt) {
+        const href = `/copilot?${new URLSearchParams({ prompt }).toString()}`;
+        return { kind: "prompt", href, prompt };
+      }
+      if (canonical.pathname === "/workspace") {
+        return { kind: "internal", href: "/copilot" };
+      }
     }
     return { kind: "internal", href: path };
   }

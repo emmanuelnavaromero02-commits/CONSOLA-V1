@@ -37,7 +37,7 @@ PERMISSIONS = [
     _permission("studio.read", "Read studio", "Studio", "View Studio resources."),
     _permission("studio.write", "Write studio", "Studio", "Modify Studio resources."),
     _permission("monitor.read", "Read monitor", "Monitor", "View monitor pages and job state."),
-    _permission("workspace.access", "Access workspace", "Workspace", "Access workspace apps."),
+    _permission("workspace.access", "Access workspace", "Workspace", "Access workspace apps; /workspace now redirects to /copilot."),
     _permission("control_room.write", "Operate control room", "Workspace", "Create, dismiss and reopen OMEGA control-room items."),
     _permission("control_room.approve", "Approve control room actions", "Workspace", "Approve a separately initiated internal Control Room action."),
     _permission("control_room.execute", "Execute control room write-back", "Workspace", "Run explicitly approved Control Room write-back adapters."),

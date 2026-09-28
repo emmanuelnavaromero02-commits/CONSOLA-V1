@@ -124,6 +124,26 @@ describe("explorer spec helpers", () => {
     expect(JSON.stringify(request)).not.toMatch(/select|sql/i);
   });
 
+  it("keeps pre-structured in-values intact even when they contain commas", () => {
+    const request = buildExploreRequest(
+      { kind: "dataset", name: "ventas" },
+      spec({
+        filters: [{
+          id: "nl1",
+          column: "nombre",
+          op: "in",
+          value: "García, Juan, Ana",
+          valueTo: "",
+          values: ["García, Juan", "Ana"],
+        }],
+      }),
+      { execute: true },
+    );
+    expect(request.filters).toEqual([
+      { column: "nombre", op: "in", values: ["García, Juan", "Ana"] },
+    ]);
+  });
+
   it("never asks gold datasets for the latest bronze load", () => {
     const request = buildExploreRequest({ kind: "dataset", name: "ventas" }, spec({ latestOnly: true, limit: 50000 }), { execute: false });
     expect(request.latest_only).toBe(false);

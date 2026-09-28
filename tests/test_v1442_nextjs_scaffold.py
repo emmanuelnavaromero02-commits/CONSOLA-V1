@@ -125,22 +125,24 @@ def test_fastapi_pages_router_serves_console_next_export():
         assert route in src
 
 
-def test_fastapi_workspace_route_serves_workspace_shell_not_copilot_layout():
+def test_fastapi_workspace_route_redirects_to_copilot():
     src = _read(REPO / "console/app/routers/pages.py")
     start = src.index('"/workspace"')
-    end = src.index('@router.post(\n    "/workspace/chat"', start)
+    end = src.index("@router.get(", start + 1)
     workspace_route = src[start:end]
-    assert 'FileResponse(STATIC / "workspace.html")' in workspace_route
-    assert 'set_csrf_cookie' in workspace_route
-    assert '"workspace/index.html"' not in workspace_route
+    assert 'require_permission("workspace.access")' in workspace_route
+    assert "RedirectResponse" in workspace_route
+    assert "status_code=303" in workspace_route
+    assert '"workspace.html"' not in workspace_route
+    assert "prompt" in workspace_route
 
 
-def test_fastapi_workspace_proxy_forwards_csrf_header_to_workspace_service():
+def test_fastapi_workspace_chat_proxies_are_gone():
     src = _read(REPO / "console/app/routers/pages.py")
-    start = src.index("def _workspace_headers")
-    end = src.index("async def _workspace_proxy", start)
-    workspace_headers = src[start:end]
-    assert '"x-csrf-token"' in workspace_headers
+    assert '"/workspace/chat"' not in src
+    assert "_workspace_proxy" not in src
+    assert "_workspace_stream_proxy" not in src
+    assert "WORKSPACE_INTERNAL_URL" not in src
 
 
 def test_fastapi_console_next_csp_hashes_inline_next_scripts():
@@ -161,7 +163,6 @@ def test_copilot_initial_prompt_is_visible_and_sendable():
 def test_copilot_actions_are_on_dedicated_screen_not_chat_surface():
     chat = _read(SRC / "components/workspace/ChatLayout.tsx")
     copilot_page = _read(SRC / "app/(shell)/copilot/page.tsx")
-    workspace_page = _read(SRC / "app/(shell)/workspace/page.tsx")
     actions_page = SRC / "app/(shell)/copilot/actions/page.tsx"
     panel = _read(SRC / "components/workspace/CopilotActionsConsole.tsx")
     client = _read(SRC / "lib/copilot/client.ts")
@@ -171,7 +172,6 @@ def test_copilot_actions_are_on_dedicated_screen_not_chat_surface():
     assert "Acciones" in chat
     assert "<CopilotActionsConsole" not in chat
     assert 'actionsHref="/copilot/actions"' in copilot_page
-    assert "actionsHref" not in workspace_page
     assert "CopilotActionsConsole" in _read(actions_page)
     for endpoint in (
         "/api/copilot/goals",

@@ -1,10 +1,14 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
+import { Bot, Loader2, Sparkles } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 
 import { buttonClass, inputClass } from "@/components/studio/ui";
+import type { ApiError } from "@/lib/api";
+import { exploreNl } from "@/lib/explorer/client";
 import { parseNaturalLanguage, type NlColumn, type NlParseResult } from "@/lib/explorer/nl-parse";
+import { nlResultFromRemoteSpec } from "@/lib/explorer/nl-remote";
+import type { ExplorerSource } from "@/lib/explorer/spec";
 
 const EXAMPLE = "Mostrar empleados con salario mayor que 20000 y fecha de ingreso antes de 2022";
 
@@ -25,6 +29,7 @@ export function NaturalLanguageBar({
   onApply,
   disabled = false,
   today,
+  source,
 }: {
   columns: NlColumn[];
   latestAvailable: boolean;
@@ -33,14 +38,18 @@ export function NaturalLanguageBar({
   onApply: (result: NlParseResult) => void;
   disabled?: boolean;
   today?: Date;
+  source?: ExplorerSource;
 }) {
   const inputId = useId();
   const [text, setText] = useState("");
   const [result, setResult] = useState<NlParseResult | null>(null);
+  const [remotePending, setRemotePending] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!text.trim()) return;
+    setRemoteError(null);
     const parsed = parseNaturalLanguage(text, columns, { latestAvailable, today, allowLimit });
     if (parsed.limit !== null && parsed.limit > rowCap) {
       parsed.notes.push(`Se pidieron ${parsed.limit.toLocaleString("es-MX")} filas; el máximo para esta fuente es ${rowCap.toLocaleString("es-MX")}.`);
@@ -48,6 +57,31 @@ export function NaturalLanguageBar({
     }
     setResult(parsed);
     if (appliedParts(parsed).length) onApply(parsed);
+  }
+
+  async function askCopilot() {
+    const question = text.trim();
+    if (!question || !source || remotePending) return;
+    setRemotePending(true);
+    setRemoteError(null);
+    try {
+      const response = await exploreNl(source, question);
+      const converted = nlResultFromRemoteSpec(response.spec);
+      setResult(converted);
+      if (appliedParts(converted).length) onApply(converted);
+    } catch (error) {
+      const status = error instanceof Error ? (error as ApiError).status : undefined;
+      if (status === undefined || status >= 500) {
+        // Network failures and 5xx: honest copy, never a raw error message.
+        setRemoteError("Sin conexión al asistente");
+      } else if (error instanceof Error && error.message) {
+        setRemoteError(error.message);
+      } else {
+        setRemoteError("Sin conexión al asistente");
+      }
+    } finally {
+      setRemotePending(false);
+    }
   }
 
   const applied = result ? appliedParts(result) : [];
@@ -67,10 +101,30 @@ export function NaturalLanguageBar({
         <button type="submit" className={buttonClass} disabled={disabled || !text.trim()}>
           <Sparkles aria-hidden className="h-4 w-4" /> Interpretar
         </button>
+        {source ? (
+          <button
+            type="button"
+            onClick={() => void askCopilot()}
+            className={buttonClass}
+            disabled={disabled || remotePending || !text.trim()}
+            data-testid="nl-ask-copilot"
+          >
+            {remotePending
+              ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+              : <Bot aria-hidden className="h-4 w-4" />}
+            Preguntar al copiloto
+          </button>
+        ) : null}
       </div>
       <p className="text-[11px] text-muted-foreground">
         Interpretación por reglas en español, sin IA: revisa los filtros resultantes antes de consultar.
+        {source ? " «Preguntar al copiloto» usa IA y carga filtros editables en el constructor." : ""}
       </p>
+      {remoteError ? (
+        <p role="alert" className="text-xs text-destructive" data-testid="nl-remote-error">
+          {remoteError}
+        </p>
+      ) : null}
       {result ? (
         <div role="status" className="space-y-1 rounded-md border bg-muted/20 p-3 text-xs" data-testid="nl-feedback">
           <p className="font-medium">
