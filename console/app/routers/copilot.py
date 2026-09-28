@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import require_authenticated
+from app.domains.copilot.payloads import TurnRequest
 from app.services import (
     audit_service,
     copilot_context_service,
@@ -121,11 +122,11 @@ async def get_conversation(
 )
 async def send_message(
     conversation_id: str,
-    body: dict,
+    body: TurnRequest,
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
-    message = ((body or {}).get("message") or "").strip()
+    message = body.message.strip()
     if not message:
         raise HTTPException(400, "empty message")
     ip, ua = _forensic(request)
@@ -135,6 +136,7 @@ async def send_message(
         user=user,
         ip=ip,
         user_agent=ua,
+        page_context=body.page_context,
     )
     await audit_service.record_event(
         user_id=user["id"],
@@ -182,11 +184,11 @@ async def chat_stream_probe(
 )
 async def stream_message(
     conversation_id: str,
-    body: dict,
+    body: TurnRequest,
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
-    message = ((body or {}).get("message") or "").strip()
+    message = body.message.strip()
     if not message:
         raise HTTPException(400, "empty message")
     ip, ua = _forensic(request)
@@ -196,6 +198,7 @@ async def stream_message(
         user=user,
         ip=ip,
         user_agent=ua,
+        page_context=body.page_context,
     )
 
     async def event_source():

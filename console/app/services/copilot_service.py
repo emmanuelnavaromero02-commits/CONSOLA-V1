@@ -861,6 +861,7 @@ async def _run_loop(
     user_agent: str | None,
     approved_keys: set[str] | None = None,
     on_event: Callable[[dict], Any] | None = None,
+    page_context: dict | None = None,
 ) -> dict:
     import uuid as _uuid
 
@@ -1027,6 +1028,22 @@ async def _run_loop(
             )
     else:
         system_prompt_for_call = SYSTEM_PROMPT
+
+    if page_context:
+        # Ephemeral: rendered into this call's prompt, never persisted.
+        try:
+            from app.services import copilot_page_context
+
+            context_block = await copilot_page_context.page_context_prompt_block(
+                page_context, user,
+            )
+            if context_block:
+                system_prompt_for_call += context_block
+        except Exception:                          # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception(
+                "page context rendering failed; continuing without it",
+            )
 
     try:
         reply_text, _viewer_urls, final_msgs = await llm_client.chat(
@@ -1240,6 +1257,7 @@ async def run_turn(
     user: dict,
     ip: str | None = None,
     user_agent: str | None = None,
+    page_context: dict | None = None,
 ) -> dict:
     conversation_id = await _persist_user_turn(
         conversation_id=conversation_id,
@@ -1250,6 +1268,7 @@ async def run_turn(
         conversation_id=conversation_id,
         user=user, ip=ip, user_agent=user_agent,
         approved_keys=None,
+        page_context=page_context,
     )
 
 
@@ -1289,6 +1308,7 @@ async def open_turn_stream(
     user: dict,
     ip: str | None = None,
     user_agent: str | None = None,
+    page_context: dict | None = None,
 ) -> AsyncIterator[dict]:
     conversation_id = await _persist_user_turn(
         conversation_id=conversation_id,
@@ -1300,6 +1320,7 @@ async def open_turn_stream(
         user=user,
         ip=ip,
         user_agent=user_agent,
+        page_context=page_context,
     )
 
 
@@ -1309,6 +1330,7 @@ async def _turn_event_generator(
     user: dict,
     ip: str | None,
     user_agent: str | None,
+    page_context: dict | None = None,
 ) -> AsyncIterator[dict]:
     queue: asyncio.Queue[dict] = asyncio.Queue()
 
@@ -1324,6 +1346,7 @@ async def _turn_event_generator(
                 user_agent=user_agent,
                 approved_keys=None,
                 on_event=on_event,
+                page_context=page_context,
             )
             await queue.put({"type": "done", "result": result})
         except HTTPException as exc:

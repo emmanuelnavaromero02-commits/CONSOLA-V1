@@ -23,6 +23,9 @@ from app.domains.copilot.router_helpers import (
     user_id as _user_id_impl,
     workspace_id as _workspace_id_impl,
 )
+from app.services.copilot_page_context import (
+    control_room_live_context_for_prompt as _control_room_live_context_for_prompt,
+)
 from app.services import (
     audit_service,
     briefing_v2,
@@ -558,55 +561,6 @@ async def briefing_v2_endpoint(
 
 
 _QUESTION_MAX_LEN = 2000
-
-
-async def _control_room_live_context_for_prompt(
-    page_context: dict[str, Any],
-    user: dict[str, Any],
-) -> str | None:
-    if not _looks_like_control_room_page(page_context):
-        return None
-    if not permissions.has_permission(user, "datasets.read"):
-        return None
-    has_operations_read = permissions.has_permission(user, "operations.read")
-
-    snapshot: dict[str, Any] = {"available": True}
-
-    async def _safe(name: str, loader) -> None:
-        try:
-            raw = await loader()
-            projected = copilot_context_service.project_control_room_diagnostic(
-                name, raw
-            )
-            snapshot[name] = projected or {"available": False}
-        except HTTPException:
-            snapshot[name] = {"available": False}
-        except Exception:
-            logger.debug("control room live context %s failed", name, exc_info=True)
-            snapshot[name] = {"available": False}
-
-    await _safe(
-        "sap_successfactors_talent_kpis",
-        lambda: control_room_service.sap_successfactors_talent_kpis(user),
-    )
-    await _safe(
-        "sap_successfactors_talent_overview",
-        lambda: control_room_service.sap_successfactors_talent_overview(user),
-    )
-    if has_operations_read:
-        await _safe("ops_summary", lambda: control_room_service.ops_summary(user))
-        await _safe(
-            "sap_successfactors_talent_metadata_readiness",
-            lambda: control_room_service.sap_successfactors_talent_metadata_readiness(
-                user
-            ),
-        )
-        await _safe(
-            "agents_ops",
-            lambda: control_room_service.agents_ops(user, limit=8),
-        )
-
-    return _json_prompt_snapshot(snapshot)
 
 
 @router.post(
