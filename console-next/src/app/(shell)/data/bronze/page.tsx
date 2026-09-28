@@ -24,6 +24,7 @@ import {
   specProblems,
   type ExplorerSpec,
 } from "@/lib/explorer/spec";
+import { usePageContextPublisher } from "@/lib/copilot/use-page-context";
 import { useSources } from "@/lib/monitor/hooks";
 
 type RunKind = "builder" | "technical";
@@ -76,6 +77,12 @@ export default function BronzeQueryPage() {
   const problems = source ? specProblems(spec, columns) : [];
   const result = lastRun === "builder" ? builderResult(explore) : lastRun === "technical" ? technicalResult(technical) : null;
   const status = running ? "Ejecutando" : result?.error ? "Con error" : result ? "Lista" : "Sin ejecutar";
+
+  usePageContextPublisher({
+    surface: "bronze",
+    ...(selectedKey ? { source: selectedKey } : {}),
+    ...(result && !result.error ? { row_count: result.rows.length } : {}),
+  });
 
   function chooseSource(key: string) {
     setSelectedKey(key);
@@ -180,6 +187,7 @@ export default function BronzeQueryPage() {
                 loading={schema.isLoading}
                 error={schema.isError ? errorMessage(schema.error) : null}
                 disabled={running}
+                source={source ?? undefined}
               />
               <button
                 type="button"

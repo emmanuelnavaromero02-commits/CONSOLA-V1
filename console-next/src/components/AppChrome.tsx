@@ -8,6 +8,7 @@ import { ChevronDown, Moon, Sun, UserCircle } from "lucide-react";
 
 import { AppSidebar } from "@/components/AppSidebar";
 import { LogoutButton } from "@/components/auth/LogoutButton";
+import { CopilotDock } from "@/components/copilot/CopilotDock";
 import { api } from "@/lib/api";
 import { getMeAccess, type MeAccessResponse } from "@/lib/admin-surfaces";
 import { cn } from "@/lib/utils";
@@ -407,6 +408,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
         </header>
         {children}
       </div>
+      <CopilotDock />
     </>
   );
 }

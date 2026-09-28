@@ -1,7 +1,7 @@
 import { api } from "@/lib/api";
 
-import type { ColumnKind } from "./operators";
-import type { ExploreRequest, ExplorerColumn, ExplorerSource } from "./spec";
+import type { ColumnKind, ExplorerOp } from "./operators";
+import { sourceKey, type ExploreRequest, type ExplorerColumn, type ExplorerSource } from "./spec";
 
 export type ExploreCell = string | number | boolean | null;
 
@@ -68,4 +68,70 @@ export async function describeSource(source: ExplorerSource): Promise<ExploreRes
 export function exploreRowsAsRecords(response: Pick<ExploreResponse, "columns" | "rows"> | null | undefined): Array<Record<string, unknown>> {
   if (!response) return [];
   return response.rows.map((row) => Object.fromEntries(response.columns.map((column, index) => [column, row[index] ?? null])));
+}
+
+
+export interface ExploreNlSpecFilter {
+  column: string;
+  op: ExplorerOp;
+  value: ExploreCell;
+  values: ExploreCell[] | null;
+}
+
+export interface ExploreNlSpec {
+  columns: string[];
+  filters: ExploreNlSpecFilter[];
+  sort: Array<{ column: string; direction: "asc" | "desc" }>;
+  limit: number | null;
+  latest_only: boolean;
+}
+
+export interface ExploreNlResponse extends ExploreResponse {
+  spec: ExploreNlSpec;
+  question: string;
+}
+
+function normalizeNlSpec(value: unknown): ExploreNlSpec {
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const filters = Array.isArray(record.filters)
+    ? record.filters.flatMap((item): ExploreNlSpecFilter[] => {
+        if (!item || typeof item !== "object") return [];
+        const filter = item as Record<string, unknown>;
+        if (typeof filter.column !== "string" || typeof filter.op !== "string") return [];
+        return [{
+          column: filter.column,
+          op: filter.op as ExplorerOp,
+          value: (filter.value ?? null) as ExploreCell,
+          values: Array.isArray(filter.values) ? (filter.values as ExploreCell[]) : null,
+        }];
+      })
+    : [];
+  const sort = Array.isArray(record.sort)
+    ? record.sort.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const entry = item as Record<string, unknown>;
+        if (typeof entry.column !== "string") return [];
+        return [{ column: entry.column, direction: entry.direction === "desc" ? "desc" as const : "asc" as const }];
+      })
+    : [];
+  return {
+    columns: Array.isArray(record.columns) ? record.columns.map(String) : [],
+    filters,
+    sort,
+    limit: typeof record.limit === "number" ? record.limit : null,
+    latest_only: record.latest_only === true,
+  };
+}
+
+export async function exploreNl(source: ExplorerSource, question: string): Promise<ExploreNlResponse> {
+  const { data } = await api.post<unknown>("/api/data/explore/nl", {
+    source: sourceKey(source),
+    question,
+  });
+  const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  return {
+    ...normalizeExploreResponse(data),
+    spec: normalizeNlSpec(record.spec),
+    question: typeof record.question === "string" ? record.question : question,
+  };
 }

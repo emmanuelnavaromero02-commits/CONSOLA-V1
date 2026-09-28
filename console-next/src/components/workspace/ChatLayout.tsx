@@ -455,6 +455,7 @@ export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {})
           onSend={(t) => void handleSend(t)}
           disabled={sending}
           initialValue={initialPrompt}
+          copilotHotkeyTarget
           onSlash={() => {
             setPaletteQuery("");
             setPaletteOpen(true);
