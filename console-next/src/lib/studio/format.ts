@@ -20,3 +20,15 @@ export function formatDay(value: string): string {
   const time = Date.parse(ISO_DAY.test(value) ? `${value}T00:00:00Z` : value);
   return Number.isNaN(time) ? value : DAY.format(new Date(time));
 }
+
+export function formatDurationSeconds(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  const total = Math.round(value);
+  if (total < 60) return `${total} s`;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes < 60) return seconds ? `${minutes} min ${seconds} s` : `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} h ${rest} min` : `${hours} h`;
+}

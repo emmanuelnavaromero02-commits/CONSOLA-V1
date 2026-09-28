@@ -68,11 +68,18 @@ test.describe("Studio (Next.js, /studio)", () => {
     await expect(page.getByTestId("dag-graph-detail")).toBeVisible();
   });
 
-  test("DAGs tab lists Airflow DAGs or explains why Airflow is unavailable", async ({ authedPage: page }) => {
+  test("DAGs tab shows the pipeline semaphore and folds the technical detail", async ({ authedPage: page }) => {
     await openStudio(page);
     const dags = page.waitForResponse(isPath("/api/studio/dags"), { timeout: 20_000 });
+    const health = page.waitForResponse(isPath("/api/studio/dags/health"), { timeout: 20_000 });
     await openTab(page, /^Automatizaciones$/);
     const response = await dags;
+    const healthResponse = await health;
+    expect(healthResponse.status(), "the semaphore endpoint must answer even without a public Airflow URL").toBe(200);
+    const healthPayload = (await healthResponse.json()) as {
+      airflow_available?: boolean;
+      dags?: Array<{ dag_id: string; last_run?: { state?: string | null } | null }>;
+    };
     if (!response.ok()) {
       await expect(page.getByTestId("dags-error")).toBeVisible();
       return;
@@ -82,8 +89,14 @@ test.describe("Studio (Next.js, /studio)", () => {
       await expect(page.getByTestId("dags-empty")).toBeVisible();
       return;
     }
+    if (healthPayload.airflow_available && healthPayload.dags?.some((dag) => dag.last_run?.state)) {
+      await expect(page.getByTestId("dag-semaphore").first()).toBeVisible();
+    }
     const first = page.locator(`[data-dag-id="${payload.dags[0].dag_id}"]`);
     await first.click();
+    const details = page.getByTestId("dag-technical-details");
+    await expect(details).toBeVisible();
+    await details.locator("summary").click();
     await expect(page.getByTestId("dag-editor")).toContainText(payload.dags[0].dag_id);
     const config = (await page.evaluate(async () => {
       const r = await fetch("/api/config", { credentials: "same-origin" });
@@ -93,7 +106,7 @@ test.describe("Studio (Next.js, /studio)", () => {
     const link = page.getByTestId("dag-airflow-link");
     if (!/^https?:\/\//.test(base)) {
       await expect(link).toHaveCount(0);
-      await expect(page.getByText("Airflow sin URL pública configurada.")).toBeVisible();
+      await expect(page.getByText("Enlace a Airflow no configurado.")).toBeVisible();
       return;
     }
     await expect(link).toHaveAttribute("target", "_blank");
