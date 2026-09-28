@@ -26,12 +26,16 @@ describe("sync-status-copy", () => {
     expect(syncCardTitle("success")).toBe("Sincronización completa");
     expect(syncCardTitle("partial")).toBe("Completada con advertencias");
     expect(syncCardTitle("failed")).toBe("La sincronización falló");
+    expect(syncCardTitle("blocked")).toBe("Sincronización bloqueada");
+    expect(syncCardTitle("skipped")).toBe("Sincronización omitida");
+    expect(syncCardTitle("skipped_explicit")).toBe("Sincronización omitida");
     expect(syncCardTitle("running")).toBe("Sincronización en curso");
     expect(syncCardTitle(undefined)).toBe("Estado de la sincronización");
   });
 
   it("maps stable sync reason codes and falls back to the preflight map", () => {
     expect(syncReasonCopy("connection_check_failed")).toContain("Bóveda de Accesos");
+    expect(syncReasonCopy("connection_probe_failed")).toBe("No se pudo validar la conexión con el origen.");
     expect(syncReasonCopy("sync_stale_timeout")).toContain("agotó el tiempo de espera");
     expect(syncReasonCopy("airflow_trigger_failed")).toContain("orquestador");
     expect(syncReasonCopy("dag_paused_by_operator")).toContain("operador");

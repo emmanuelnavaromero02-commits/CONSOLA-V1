@@ -818,9 +818,22 @@ def test_sync_connection_step_update_honors_connection_check():
         connection_check={"status": "unverified"},
     )
 
+    source_failed = sync_progress.sync_connection_step_update(
+        triggered=[],
+        child_rows=[],
+        bronze_ready=0,
+        connection_check={
+            "status": "failed",
+            "failure_kind": "source",
+            "message": "HTTP 503",
+        },
+    )
+
     assert failed["status"] == "failed"
     assert failed["detail"] == sync_progress.CONNECTION_INVALID_DETAIL_ES
     assert failed["error"] == "bad creds"
+    assert source_failed["status"] == "failed"
+    assert source_failed["detail"] == sync_progress.CONNECTION_PROBE_FAILED_DETAIL_ES
     assert verified["status"] == "success"
     assert verified["detail"] == sync_progress.CONNECTION_VERIFIED_DETAIL_ES
     assert unverified["status"] == "partial"

@@ -62,9 +62,16 @@ function dagSemaphore(health: StudioDagHealth | undefined): {
   if (!health) return null;
   const state = String(health.last_run?.state ?? "").toLowerCase();
   if (!state) {
+    if (health.last_run_lookup === "ok") {
+      return {
+        icon: "⚪",
+        label: "Sin corridas registradas",
+        tone: "text-muted-foreground",
+      };
+    }
     return {
       icon: "⚪",
-      label: "Sin corridas registradas",
+      label: "Sin información",
       tone: "text-muted-foreground",
     };
   }
@@ -104,7 +111,8 @@ function DagFailureDetail({
   retryPending: boolean;
 }) {
   const target = extractionDagTarget(health.dag_id);
-  const canRetry = target?.kind === "extract_all" && target.cartridge === cartridge;
+  const normalizedCartridge = cartridge.replace(/-/g, "_");
+  const canRetry = target?.kind === "extract_all" && target.cartridge === normalizedCartridge;
   return (
     <div className="mt-1 space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs">
       <p className="text-destructive">
@@ -115,7 +123,7 @@ function DagFailureDetail({
         <button
           type="button"
           disabled={retryPending}
-          onClick={() => onRetry(target.cartridge)}
+          onClick={() => onRetry(cartridge)}
           className="inline-flex min-h-[36px] items-center gap-1.5 rounded-md border border-destructive/40 bg-background px-2.5 font-medium text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {retryPending ? <Spinner className="h-3.5 w-3.5" /> : <RefreshCw aria-hidden className="h-3.5 w-3.5" />}

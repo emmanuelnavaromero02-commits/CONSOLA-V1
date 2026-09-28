@@ -78,6 +78,34 @@ describe("SyncRunStatusCard", () => {
     expect(container.textContent).toContain("Completada con advertencias");
   });
 
+  it("shows honest copy for blocked runs and stops treating them as live", async () => {
+    await render(payload({ status: "blocked" }));
+
+    expect(container.textContent).toContain("Sincronización bloqueada");
+    expect(container.textContent).toContain("Bloqueada");
+    await act(async () => {
+      vi.advanceTimersByTime(11_000);
+    });
+    expect(container.textContent).not.toContain("Monitoreando avance");
+  });
+
+  it("translates known error reason codes into business Spanish", async () => {
+    await render(
+      payload({
+        status: "failed",
+        errors: [
+          { entity: "__connection__", reason: "connection_probe_failed" },
+          { entity: "__extract_all__", reason: "airflow_trigger_failed" },
+          { entity: "EmpJob", reason: "mystery_reason" },
+        ],
+      }),
+    );
+
+    expect(container.textContent).toContain("No se pudo validar la conexión con el origen.");
+    expect(container.textContent).toContain("No se pudo iniciar la extracción en el orquestador.");
+    expect(container.textContent).not.toContain("mystery_reason");
+  });
+
   it("translates step statuses instead of leaking raw values", async () => {
     await render(
       payload({

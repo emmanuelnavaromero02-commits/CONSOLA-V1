@@ -904,18 +904,43 @@ def test_sync_connection_check_state_classifies_probe_outcomes():
         {"checked": False, "ok": False, "message": "connection check timed out"}
     )
 
+    source_down = sync_state.sync_connection_check_state(
+        {
+            "checked": True,
+            "ok": False,
+            "message": "error (HTTP 503)",
+            "status": "unhealthy",
+        }
+    )
+
     assert verified["status"] == "verified"
     assert verified["latency_ms"] == 12
     assert "reason" not in verified
     assert failed["status"] == "failed"
+    assert failed["failure_kind"] == "credentials"
     assert failed["reason"] == "connection_check_failed"
     assert failed["source_status"] == "missing_credentials"
+    assert source_down["status"] == "failed"
+    assert source_down["failure_kind"] == "source"
+    assert source_down["reason"] == "connection_probe_failed"
     assert unverified["status"] == "unverified"
     assert "reason" not in unverified
 
 
+def test_sync_probe_failure_kind_separates_credentials_from_source_problems():
+    assert sync_state.sync_probe_failure_kind("missing_credentials", "") == "credentials"
+    assert sync_state.sync_probe_failure_kind("error", "HTTP 401 Unauthorized") == "credentials"
+    assert sync_state.sync_probe_failure_kind(None, "invalid_client (HTTP 401)") == "credentials"
+    assert sync_state.sync_probe_failure_kind("unhealthy", "circuit breaker open") == "source"
+    assert sync_state.sync_probe_failure_kind("error", "HTTP 503 from source") == "source"
+    assert sync_state.sync_probe_failure_kind(None, "not_ok (HTTP 500)") == "source"
+
+
 def test_sync_connection_failure_step_updates_fail_every_step():
     updates = sync_state.sync_connection_failure_step_updates("bad creds")
+    source_updates = sync_state.sync_connection_failure_step_updates(
+        "HTTP 503", failure_kind="source"
+    )
 
     assert set(updates) == {
         "connection",
@@ -930,6 +955,11 @@ def test_sync_connection_failure_step_updates_fail_every_step():
         == "Credenciales no válidas o incompletas en la Bóveda de Accesos"
     )
     assert updates["connection"]["error"] == "bad creds"
+    assert (
+        source_updates["connection"]["detail"]
+        == "No se pudo validar la conexión con el origen"
+    )
+    assert source_updates["connection"]["error"] == "HTTP 503"
 
 
 @pytest.mark.anyio
@@ -992,6 +1022,61 @@ async def test_sync_now_connection_check_failure_births_failed_run():
         == "Credenciales no válidas o incompletas en la Bóveda de Accesos"
     )
     assert response["errors"][0]["reason"] == "connection_check_failed"
+
+
+@pytest.mark.anyio
+async def test_sync_now_connection_check_source_failure_uses_neutral_headline():
+    upserts = []
+    stored_row = {}
+
+    async def probe_connection(*, cartridge, conn_id, user):
+        return {
+            "checked": True,
+            "ok": False,
+            "message": "unhealthy (HTTP 503)",
+            "status": "unhealthy",
+        }
+
+    async def upsert_sync_run(**kwargs):
+        upserts.append(kwargs)
+        stored_row.update(
+            {
+                "run_id": kwargs["run_id"],
+                "cartridge_id": kwargs["cartridge"],
+                "status": kwargs["status"],
+                "extra": kwargs["extra"],
+                "error_message": kwargs["error_message"],
+            }
+        )
+        return {}
+
+    async def fetch_sync_run_func(*, cartridge, run_id, user):
+        return dict(stored_row)
+
+    check, _steps, response = await sync_state.sync_now_connection_check_or_response(
+        cartridge="replicon",
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        request_id=None,
+        run_id="sync_now:replicon:abc",
+        steps=sync_state.initial_sync_steps(),
+        user=None,
+        probe_connection=probe_connection,
+        upsert_sync_run=upsert_sync_run,
+        fetch_sync_run_func=fetch_sync_run_func,
+    )
+
+    assert check["failure_kind"] == "source"
+    assert upserts[0]["error_message"].startswith(
+        "No se pudo validar la conexión con el origen"
+    )
+    assert "Credenciales" not in upserts[0]["error_message"]
+    connection_step = next(
+        step for step in response["steps"] if step["id"] == "connection"
+    )
+    assert connection_step["detail"] == "No se pudo validar la conexión con el origen"
+    assert response["errors"][0]["reason"] == "connection_probe_failed"
 
 
 @pytest.mark.anyio

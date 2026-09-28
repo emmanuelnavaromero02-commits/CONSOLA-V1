@@ -19,7 +19,7 @@ import {
   type SyncRunPayload,
   type SyncRunStep,
 } from "@/lib/sync-now";
-import { syncCardTitle, syncStatusCopy, syncStepStatusCopy } from "@/lib/sync-status-copy";
+import { syncCardTitle, syncReasonCopy, syncStatusCopy, syncStepStatusCopy } from "@/lib/sync-status-copy";
 import { TestConnectionResult } from "./TestConnectionResult";
 
 const SYNC_LIVENESS_DELAY_MS = 10_000;
@@ -252,6 +252,13 @@ export function SyncRunStatusCard({
   const tone = payload.status === "success" ? "text-emerald-600" : payload.status === "failed" ? "text-destructive" : "text-amber-600";
   const active = !isSyncTerminal(payload.status);
   const anyStepCompleted = payload.steps.some((step) => step.status === "success");
+  const translatedErrorReasons = Array.from(
+    new Set(
+      payload.errors
+        .map((error) => syncReasonCopy((error as { reason?: unknown }).reason))
+        .filter((copy): copy is string => Boolean(copy)),
+    ),
+  );
   const [livenessRunId, setLivenessRunId] = useState<string | null>(null);
   const livenessVisible = Boolean(
     active && !anyStepCompleted && payload.run_id && livenessRunId === payload.run_id,
@@ -301,6 +308,13 @@ export function SyncRunStatusCard({
           <SyncStepCard key={step.id} step={step} />
         ))}
       </div>
+      {translatedErrorReasons.length ? (
+        <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+          {translatedErrorReasons.map((copy) => (
+            <p key={copy}>{copy}</p>
+          ))}
+        </div>
+      ) : null}
       {payload.error_message ? (
         <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
           {payload.error_message}

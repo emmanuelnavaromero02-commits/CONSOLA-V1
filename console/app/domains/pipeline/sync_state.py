@@ -441,6 +441,38 @@ def sync_dataset_seed_failure_extra(
     }
 
 
+_CREDENTIAL_PROBE_STATUS_TOKENS = ("credential", "auth", "unauthorized", "forbidden")
+_CREDENTIAL_PROBE_MESSAGE_TOKENS = (
+    "401",
+    "403",
+    "unauthoriz",
+    "forbidden",
+    "invalid_client",
+    "invalid client",
+    "credencial",
+    "credential",
+    "access denied",
+)
+
+
+def sync_probe_failure_kind(
+    status: object | None, message: object | None
+) -> str:
+    status_text = str(status or "").strip().lower()
+    if any(token in status_text for token in _CREDENTIAL_PROBE_STATUS_TOKENS):
+        return "credentials"
+    message_text = str(message or "").lower()
+    if any(token in message_text for token in _CREDENTIAL_PROBE_MESSAGE_TOKENS):
+        return "credentials"
+    return "source"
+
+
+def sync_connection_failure_headline(failure_kind: str | None) -> str:
+    if failure_kind == "source":
+        return sync_progress.CONNECTION_PROBE_FAILED_DETAIL_ES
+    return sync_progress.CONNECTION_INVALID_DETAIL_ES
+
+
 def sync_connection_check_state(probe: dict[str, Any]) -> dict[str, Any]:
     checked = bool(probe.get("checked"))
     ok = bool(probe.get("ok"))
@@ -450,7 +482,13 @@ def sync_connection_check_state(probe: dict[str, Any]) -> dict[str, Any]:
     if message:
         state["message"] = message[:300]
     if status == "failed":
-        state["reason"] = "connection_check_failed"
+        failure_kind = sync_probe_failure_kind(probe.get("status"), message)
+        state["failure_kind"] = failure_kind
+        state["reason"] = (
+            "connection_check_failed"
+            if failure_kind == "credentials"
+            else "connection_probe_failed"
+        )
     source_status = probe.get("status")
     if isinstance(source_status, str) and source_status.strip():
         state["source_status"] = source_status.strip()[:80]
@@ -460,12 +498,14 @@ def sync_connection_check_state(probe: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def sync_connection_failure_step_updates(message: str) -> dict[str, dict[str, Any]]:
+def sync_connection_failure_step_updates(
+    message: str, *, failure_kind: str = "credentials"
+) -> dict[str, dict[str, Any]]:
     return {
         "connection": {
             "label": "Conexión",
             "status": "failed",
-            "detail": sync_progress.CONNECTION_INVALID_DETAIL_ES,
+            "detail": sync_connection_failure_headline(failure_kind),
             **({"error": message[:300]} if message else {}),
             "completed": 0,
             "total": 1,
@@ -523,7 +563,9 @@ def sync_connection_failure_extra(
                 "entity": "__connection__",
                 "status_code": 400,
                 "error": message,
-                "reason": "connection_check_failed",
+                "reason": str(
+                    connection_check.get("reason") or "connection_check_failed"
+                ),
             }
         ],
         "control_room_ready": False,
@@ -552,7 +594,12 @@ async def sync_now_connection_check_or_response(
     if connection_check.get("status") != "failed":
         return connection_check, steps, None
     message = str(connection_check.get("message") or "")
-    steps = merge_sync_steps(steps, sync_connection_failure_step_updates(message))
+    failure_kind = str(connection_check.get("failure_kind") or "credentials")
+    headline = sync_connection_failure_headline(failure_kind)
+    steps = merge_sync_steps(
+        steps,
+        sync_connection_failure_step_updates(message, failure_kind=failure_kind),
+    )
     await upsert_sync_run(
         run_id=run_id,
         cartridge=cartridge,
@@ -568,11 +615,7 @@ async def sync_now_connection_check_or_response(
             message=message,
             connection_check=connection_check,
         ),
-        error_message=(
-            f"{sync_progress.CONNECTION_INVALID_DETAIL_ES}: {message}"
-            if message
-            else sync_progress.CONNECTION_INVALID_DETAIL_ES
-        )[:500],
+        error_message=(f"{headline}: {message}" if message else headline)[:500],
     )
     row = await fetch_sync_run_func(cartridge=cartridge, run_id=run_id, user=user)
     if row:

@@ -83,6 +83,7 @@ async def test_dags_health_reports_last_run_and_scheduler(studio, monkeypatch):
     first = result.dags[0]
     assert first.dag_id == "acme_cleanup"
     assert first.is_paused is True
+    assert first.last_run_lookup == "ok"
     assert first.last_run.state == "success"
     assert first.last_run.duration_seconds == 330.0
     assert first.failed_task_id is None
@@ -131,9 +132,11 @@ async def test_dags_health_failed_run_names_task_and_spanish_error(studio, monke
 
     dag = result.dags[0]
     assert result.scheduler_healthy is False
+    assert dag.last_run_lookup == "ok"
     assert dag.last_run.state == "failed"
     assert dag.failed_task_id == "extract_timeout_probe"
-    assert dag.error_es == "Tiempo de espera agotado al conectar con el origen"
+    # No log/error text is available in v1: never infer a cause from the task name.
+    assert dag.error_es == "La tarea falló; revisa el detalle técnico"
     assert ("airflow_list_task_instances", {
         "dag_id": "acme_extract_all",
         "dag_run_id": "manual__1",
@@ -214,4 +217,128 @@ async def test_dags_health_registered_only_dags_skip_airflow_lookups(studio, mon
     assert result.total == 1
     assert result.dags[0].registered_only is True
     assert result.dags[0].last_run is None
+    assert result.dags[0].last_run_lookup == "skipped"
     assert all(call[0] == "airflow_list_dags" for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_dags_health_run_lookup_failure_is_not_reported_as_no_runs(
+    studio, monkeypatch
+):
+    responses = {
+        "airflow_list_dags": {"dags": [{"dag_id": "acme_extract_all"}]},
+        "airflow_describe_dag": {"found": True, "scheduler_healthy": True},
+        "airflow_list_dag_runs": RuntimeError("airflow flaked"),
+    }
+    monkeypatch.setattr(studio.mcp_registry, "invoke", _invoke_factory(responses, []))
+
+    result = await studio.dags_health(cartridge="acme", user=USER)
+
+    assert result.dags[0].last_run is None
+    assert result.dags[0].last_run_lookup == "failed"
+
+
+@pytest.mark.asyncio
+async def test_dags_health_marks_dags_past_enrichment_cap_as_skipped(
+    studio, monkeypatch
+):
+    responses = {
+        "airflow_list_dags": {
+            "dags": [{"dag_id": "acme_extract_all"}, {"dag_id": "acme_cleanup"}]
+        },
+        "airflow_describe_dag": {"found": True, "scheduler_healthy": True},
+        "airflow_list_dag_runs": {"found": True, "runs": []},
+    }
+    monkeypatch.setattr(studio.mcp_registry, "invoke", _invoke_factory(responses, []))
+    monkeypatch.setattr(studio, "_DAGS_HEALTH_ENRICH_LIMIT", 1)
+
+    result = await studio.dags_health(cartridge="acme", user=USER)
+
+    lookups = {item.dag_id: item.last_run_lookup for item in result.dags}
+    assert lookups == {"acme_cleanup": "ok", "acme_extract_all": "skipped"}
+
+
+@pytest.mark.asyncio
+async def test_dags_health_rejects_unknown_cartridge(studio, monkeypatch):
+    async def get_cartridge(cartridge_id):
+        return None
+
+    async def never_invoke(*_args, **_kwargs):
+        raise AssertionError("unknown cartridge must fail before Airflow calls")
+
+    monkeypatch.setattr(studio.cartridge_service, "get_cartridge", get_cartridge)
+    monkeypatch.setattr(studio.mcp_registry, "invoke", never_invoke)
+
+    with pytest.raises(HTTPException) as exc:
+        await studio.dags_health(cartridge="acme", user=USER)
+
+    assert exc.value.status_code == 404
+    assert "acme" not in studio._dags_health_cache
+
+
+def test_dags_health_cache_is_capped(studio):
+    for index in range(studio._DAGS_HEALTH_CACHE_MAX_ENTRIES + 8):
+        studio._dags_health_cache_store(f"cartridge_{index}", {"total": index}, float(index))
+
+    assert len(studio._dags_health_cache) == studio._DAGS_HEALTH_CACHE_MAX_ENTRIES
+    assert "cartridge_0" not in studio._dags_health_cache
+    assert (
+        f"cartridge_{studio._DAGS_HEALTH_CACHE_MAX_ENTRIES + 7}"
+        in studio._dags_health_cache
+    )
+
+
+@pytest.mark.asyncio
+async def test_dags_health_concurrent_pollers_share_one_sweep(studio, monkeypatch):
+    release = asyncio.Event()
+    list_calls = []
+
+    async def invoke(server, tool, args, *, user):
+        if tool == "airflow_list_dags":
+            list_calls.append(args)
+            await release.wait()
+            return {"dags": [{"dag_id": "acme_extract_all"}]}
+        if tool == "airflow_describe_dag":
+            return {"found": True, "scheduler_healthy": True}
+        return {"found": True, "runs": []}
+
+    monkeypatch.setattr(studio.mcp_registry, "invoke", invoke)
+
+    first = asyncio.create_task(studio.dags_health(cartridge="acme", user=USER))
+    second = asyncio.create_task(studio.dags_health(cartridge="acme", user=USER))
+    await asyncio.sleep(0.05)
+    release.set()
+    results = await asyncio.gather(first, second)
+
+    assert len(list_calls) == 1
+    assert results[0] == results[1]
+
+
+@pytest.mark.asyncio
+async def test_dags_health_without_cartridge_filters_to_allowed_cartridges(
+    studio, monkeypatch
+):
+    responses = {
+        "airflow_list_dags": {
+            "dags": [
+                {"dag_id": "acme_extract_all"},
+                {"dag_id": "other_extract_all"},
+                {"dag_id": "platform_maintenance"},
+            ]
+        },
+        "airflow_describe_dag": {"found": True, "scheduler_healthy": True},
+        "airflow_list_dag_runs": {"found": True, "runs": []},
+    }
+    monkeypatch.setattr(studio.mcp_registry, "invoke", _invoke_factory(responses, []))
+
+    restricted = await studio.dags_health(cartridge=None, user=USER)
+    admin_user = {**USER, "role": "admin", "allowed_cartridges": ["acme"]}
+    admin = await studio.dags_health(cartridge=None, user=admin_user)
+
+    assert [item.dag_id for item in restricted.dags] == ["acme_extract_all"]
+    assert restricted.total == 1
+    assert {item.dag_id for item in admin.dags} == {
+        "acme_extract_all",
+        "other_extract_all",
+        "platform_maintenance",
+    }

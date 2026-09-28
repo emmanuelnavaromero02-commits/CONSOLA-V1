@@ -500,6 +500,7 @@ def sync_pipeline_materialization_summary(
 CONNECTION_INVALID_DETAIL_ES = (
     "Credenciales no válidas o incompletas en la Bóveda de Accesos"
 )
+CONNECTION_PROBE_FAILED_DETAIL_ES = "No se pudo validar la conexión con el origen"
 CONNECTION_UNVERIFIED_DETAIL_ES = (
     "No se pudo verificar la conexión a tiempo; continuando"
 )
@@ -521,10 +522,13 @@ def sync_connection_step_update(
     ).lower() if isinstance(connection_check, dict) else ""
     if check_status == "failed":
         message = str((connection_check or {}).get("message") or "").strip()
+        failure_kind = str((connection_check or {}).get("failure_kind") or "")
         return {
             "label": "Conexión",
             "status": "failed",
-            "detail": CONNECTION_INVALID_DETAIL_ES,
+            "detail": CONNECTION_PROBE_FAILED_DETAIL_ES
+            if failure_kind == "source"
+            else CONNECTION_INVALID_DETAIL_ES,
             **({"error": message[:300]} if message else {}),
             "completed": 0,
             "total": 1,

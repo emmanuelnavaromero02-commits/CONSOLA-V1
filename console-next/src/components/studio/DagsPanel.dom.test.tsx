@@ -144,6 +144,20 @@ describe("DagsPanel semaphore", () => {
     expect(rowFor("acme_extract_all").textContent).toContain("Con fallas");
   });
 
+  it("distinguishes truly-empty run history from failed or skipped lookups", async () => {
+    const health = healthPayload();
+    health.dags[0] = { dag_id: "acme_cleanup", last_run_lookup: "ok", last_run: null };
+    health.dags[1] = { dag_id: "acme_extract", last_run_lookup: "failed", last_run: null };
+    health.dags[3] = { dag_id: "acme_refresh_gold", last_run_lookup: "skipped", last_run: null };
+    state.hooks.useStudioDagsHealth = query(health);
+    await render();
+
+    expect(rowFor("acme_cleanup").textContent).toContain("Sin corridas registradas");
+    expect(rowFor("acme_extract").textContent).toContain("Sin información");
+    expect(rowFor("acme_extract").textContent).not.toContain("Sin corridas registradas");
+    expect(rowFor("acme_refresh_gold").textContent).toContain("Sin información");
+  });
+
   it("keeps the paused badge next to the semaphore", async () => {
     await render();
 
@@ -167,6 +181,44 @@ describe("DagsPanel semaphore", () => {
       button!.click();
     });
     expect(retry.mutate.mock.calls[0][0]).toBe("acme");
+  });
+
+  it("normalizes hyphenated cartridge ids when matching the extract_all DAG", async () => {
+    const retry = mutation();
+    state.hooks.useRetryExtractAll = retry;
+    state.hooks.useStudioDags = query({
+      cartridge: "beta-crm",
+      total: 1,
+      dags: [{ dag_id: "beta_crm_extract_all", is_paused: false, is_active: true }],
+    });
+    state.hooks.useStudioDagsHealth = query({
+      cartridge: "beta-crm",
+      airflow_available: true,
+      scheduler_healthy: true,
+      total: 1,
+      dags: [
+        {
+          dag_id: "beta_crm_extract_all",
+          last_run_lookup: "ok",
+          last_run: { state: "failed" },
+          failed_task_id: "extract",
+          error_es: null,
+        },
+      ],
+    });
+    await act(async () => {
+      root.render(<DagsPanel cartridge="beta-crm" />);
+    });
+
+    const row = rowFor("beta_crm_extract_all");
+    const button = [...row.querySelectorAll("button")].find((node) =>
+      node.textContent?.includes("Reintentar extracción"),
+    );
+    expect(button).toBeTruthy();
+    await act(async () => {
+      button!.click();
+    });
+    expect(retry.mutate.mock.calls[0][0]).toBe("beta-crm");
   });
 
   it("links entity extraction failures to the entities panel", async () => {

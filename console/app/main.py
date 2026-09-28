@@ -3792,7 +3792,16 @@ async def _trigger_pipeline_extract_dag_or_raise(
             slot=slot,
             error=result["error"],
         )
-        raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
+        raise HTTPException(
+            502,
+            {
+                "message": (
+                    "No se pudo iniciar la extracción en el orquestador: "
+                    f"{result['error']}"
+                ),
+                "reason": "airflow_trigger_failed",
+            },
+        )
     return result
 
 
@@ -4819,13 +4828,35 @@ async def _trigger_sync_extract_all_components(
     return _sync_extract_attempt_components(extract_attempt)
 
 
+async def _record_sync_now_probe_audit(
+    *, cartridge: str, conn_id: str | None, user: dict | None, probe: dict[str, Any]
+) -> None:
+    try:
+        await _audit.record_event(
+            user_id=(user or {}).get("id"),
+            email=(user or {}).get("email"),
+            action="pipeline.sync_now.connection_probe",
+            resource_type="cartridge",
+            resource_id=cartridge,
+            status="success" if probe.get("ok") else "failure",
+            metadata={
+                "checked": bool(probe.get("checked")),
+                "latency_ms": probe.get("latency_ms"),
+                "outcome_message": str(probe.get("message") or "")[:160],
+                **({"conn_id": conn_id} if conn_id else {}),
+            },
+        )
+    except Exception:
+        logger.warning("sync-now connection probe audit failed", exc_info=True)
+
+
 async def _run_sync_now_connection_probe(
     *, cartridge: str, conn_id: str | None, user: dict | None
 ) -> dict[str, Any]:
     from app.routers.cartridges import probe_cartridge_connection
 
     try:
-        return await asyncio.wait_for(
+        probe = await asyncio.wait_for(
             probe_cartridge_connection(
                 cartridge,
                 conn_id,
@@ -4835,7 +4866,7 @@ async def _run_sync_now_connection_probe(
             timeout=_SYNC_NOW_CONNECTION_CHECK_TIMEOUT_SECONDS,
         )
     except TimeoutError:
-        return {
+        probe = {
             "checked": False,
             "ok": False,
             "message": "connection check timed out",
@@ -4844,7 +4875,7 @@ async def _run_sync_now_connection_probe(
             "missing": None,
         }
     except Exception as exc:  # noqa: BLE001
-        return {
+        probe = {
             "checked": False,
             "ok": False,
             "message": str(exc)[:200] or "connection check error",
@@ -4852,6 +4883,10 @@ async def _run_sync_now_connection_probe(
             "status": None,
             "missing": None,
         }
+    await _record_sync_now_probe_audit(
+        cartridge=cartridge, conn_id=conn_id, user=user, probe=probe
+    )
+    return probe
 
 
 async def _continue_sync_now_after_reservation(

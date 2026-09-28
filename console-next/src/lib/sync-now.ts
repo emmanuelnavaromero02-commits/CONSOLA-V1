@@ -64,8 +64,17 @@ export interface StartSyncNowInput {
   target?: SyncTarget;
 }
 
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  "success",
+  "partial",
+  "failed",
+  "blocked",
+  "skipped",
+  "skipped_explicit",
+]);
+
 export function isSyncTerminal(status: string | undefined): boolean {
-  return status === "success" || status === "partial" || status === "failed";
+  return Boolean(status && TERMINAL_STATUSES.has(status));
 }
 
 export function hasSyncRunId(

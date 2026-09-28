@@ -109,6 +109,7 @@ export interface StudioDagHealth {
   dag_id: string;
   is_paused?: boolean;
   registered_only?: boolean;
+  last_run_lookup?: "ok" | "failed" | "skipped";
   last_run?: StudioDagLastRun | null;
   failed_task_id?: string | null;
   error_es?: string | null;

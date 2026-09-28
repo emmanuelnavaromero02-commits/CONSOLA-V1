@@ -5,6 +5,7 @@ import {
   createSyncNowRequestId,
   getActiveCartridgeSyncRun,
   hasSyncRunId,
+  isSyncTerminal,
   startCartridgeSyncNow,
 } from "./sync-now";
 
@@ -129,5 +130,19 @@ describe("sync-now client", () => {
         control_room_ready: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe("isSyncTerminal", () => {
+  it("treats every backend-terminal status as terminal", () => {
+    for (const status of ["success", "partial", "failed", "blocked", "skipped", "skipped_explicit"]) {
+      expect(isSyncTerminal(status)).toBe(true);
+    }
+  });
+
+  it("keeps polling for live statuses only", () => {
+    expect(isSyncTerminal("running")).toBe(false);
+    expect(isSyncTerminal("queued")).toBe(false);
+    expect(isSyncTerminal(undefined)).toBe(false);
   });
 });

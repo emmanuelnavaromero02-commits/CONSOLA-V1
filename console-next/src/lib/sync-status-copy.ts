@@ -24,6 +24,7 @@ const STEP_STATUS_COPY: Record<string, string> = {
 
 const SYNC_REASON_COPY: Record<string, string> = {
   connection_check_failed: "Credenciales no válidas o incompletas en la Bóveda de Accesos.",
+  connection_probe_failed: "No se pudo validar la conexión con el origen.",
   airflow_trigger_failed: "No se pudo iniciar la extracción en el orquestador.",
   sync_stale_timeout: "La sincronización agotó el tiempo de espera en el orquestador; inicia una nueva.",
 };
@@ -46,6 +47,11 @@ export function syncCardTitle(status: string | null | undefined): string {
       return "Completada con advertencias";
     case "failed":
       return "La sincronización falló";
+    case "blocked":
+      return "Sincronización bloqueada";
+    case "skipped":
+    case "skipped_explicit":
+      return "Sincronización omitida";
     case "queued":
     case "running":
       return "Sincronización en curso";
