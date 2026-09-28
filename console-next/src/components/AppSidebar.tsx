@@ -101,6 +101,7 @@ const NAV_SECTIONS: NavSection[] = [
         keywords: "marketplace fuentes de datos licencias instalaciones monitor tecnico conectores integraciones",
       },
       { href: "/analytics", label: "Apps analíticas", icon: Sparkles, section: "Integraciones", capability: "can_view_apps", keywords: "aplicaciones dashboards analiticas graficas explorar" },
+      { href: "/apps-gallery", label: "Galería de aplicaciones", icon: AppWindow, section: "Integraciones", capability: "can_view_apps", keywords: "galeria aplicaciones workspace copiloto publicadas" },
     ],
   },
   {

@@ -38,6 +38,7 @@ export interface AnalyticsApp {
   data_status?: string | null;
   datasets_used?: string[];
   unavailable_datasets?: string[];
+  origin?: "workspace" | "cartridge" | string | null;
 }
 
 export interface AppsResponse {
