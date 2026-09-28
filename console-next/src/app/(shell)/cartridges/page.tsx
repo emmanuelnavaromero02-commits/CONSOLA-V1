@@ -1,128 +1,28 @@
 "use client";
 
-import { useKpis } from "@/lib/hooks/useKpis";
-import { useActivateCartridge, useCartridgeList } from "@/lib/hooks/useCartridges";
-import { CartridgeCard } from "@/components/cartridges/CartridgeCard";
-import type { ConnectionStatus } from "@/components/cartridges/StatusBadge";
-import { toast } from "sonner";
+import Link from "next/link";
+import { useEffect } from "react";
 
-const META: Record<
-  string,
-  { name: string; description: string }
-> = {
-  replicon: {
-    name: "Replicon",
-    description: "Time tracking + project hours. Empleados, proyectos, time entries.",
-  },
-  "hubspot": {
-    name: "HubSpot CRM",
-    description: "CRM comercial. Deals, empresas, contactos, pipeline y forecast.",
-  },
-  banxico: {
-    name: "Banxico SIE",
-    description: "Series macro oficiales. Bronze, provenance y manifest.",
-  },
-  inegi: {
-    name: "INEGI",
-    description: "Indicadores oficiales. Silver/Gold gobernado para contexto macro.",
-  },
-  sap_hcm: {
-    name: "SAP HCM",
-    description: "Recursos humanos. Empleados, puestos, organización.",
-  },
-  sap_s4hana: {
-    name: "SAP S/4HANA",
-    description: "Financiero + logística. Cuentas, asientos, materiales.",
-  },
-  sap_successfactors: {
-    name: "SAP SuccessFactors",
-    description: "Talento + performance. Goals, reviews, learning.",
-  },
-  sap_b1: {
-    name: "SAP Business One",
-    description: "ERP PyME por compañía. Socios de negocio, ventas, compras, inventario y asientos.",
-  },
-};
+const TARGET = "/marketplace?tab=conectadas";
 
-export default function CartridgesPage() {
-  const list = useCartridgeList();
-  const kpis = useKpis();
-  const activate = useActivateCartridge();
-
-  const statusFor = (id: string): ConnectionStatus => {
-    const info = kpis.data?.data_freshness?.[id];
-    if (!info) return "unconfigured";
-    if (info.status === "never") return "unconfigured";
-    if (info.status === "very_stale") return "very_stale";
-    if (info.status === "stale") return "stale";
-    return "connected";
-  };
-
-  const activateOne = async (id: string) => {
-    try {
-      const result = await activate.mutateAsync(id);
-      const status = result.installation?.status || result.installation?.access_status || "solicitado";
-      toast.success(`${META[id]?.name ?? id}: activación enviada (${status}).`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo activar la fuente de datos.");
-    }
-  };
+export default function CartridgesRedirectPage() {
+  useEffect(() => {
+    window.location.replace(TARGET);
+  }, []);
 
   return (
-    <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
-      <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">Monitor técnico de fuentes de datos</h1>
-        <p className="text-sm text-muted-foreground">
-          Supervisa conectividad, pruebas en vivo y estado técnico de los
-          fuentes de datos ya integradas.
-        </p>
-      </header>
-
-      {list.isError ? (
-        <div
-          role="alert"
-          aria-live="polite"
-          className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm"
-        >
-          <p className="font-medium text-destructive">
-            No se pudieron cargar las fuentes de datos.
-          </p>
-          <button
-            type="button"
-            onClick={() => list.refetch()}
-            className="mt-2 inline-flex min-h-[44px] items-center justify-center rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
-          >
-            Reintentar
-          </button>
-        </div>
-      ) : null}
-
-      <section
-        aria-label="Listado de fuentes de datos"
-        aria-busy={list.isLoading}
-        className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
+    <main className="mx-auto flex min-h-[60vh] max-w-3xl flex-col items-center justify-center gap-4 px-6 py-12 text-center">
+      <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Fuentes de datos</p>
+      <h1 className="text-2xl font-semibold tracking-tight">El monitor técnico ahora vive en Fuentes de datos</h1>
+      <p className="text-sm text-muted-foreground">
+        Redirigiendo a la pestaña de conectadas.
+      </p>
+      <Link
+        href={TARGET}
+        className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {list.isLoading
-          ? Array.from({ length: 5 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-40 animate-pulse rounded-lg border bg-card"
-                aria-hidden
-              />
-            ))
-          : (list.data?.cartridges ?? []).map((id) => (
-              <CartridgeCard
-                key={id}
-                id={id}
-                name={META[id]?.name ?? id}
-                description={META[id]?.description ?? ""}
-                status={statusFor(id)}
-                ageHours={kpis.data?.data_freshness?.[id]?.age_hours ?? null}
-                activating={activate.isPending && activate.variables === id}
-                onActivate={activateOne}
-              />
-            ))}
-      </section>
+        Abrir Fuentes de datos
+      </Link>
     </main>
   );
 }

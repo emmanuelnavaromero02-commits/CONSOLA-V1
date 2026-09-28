@@ -369,9 +369,7 @@ def test_credentials_form_optional_number_uses_undefined_default():
     assert "function defaultsFor" not in src
 
 
-def test_cartridges_grid_drops_redundant_lg_breakpoint():
+def test_cartridges_route_no_longer_renders_a_grid():
     src = _read(REPO / "console-next/src/app/(shell)/cartridges/page.tsx")
-    code_only = re.sub(r"//.*?$|/\*.*?\*/|\{/\*.*?\*/\}", "",
-                       src, flags=re.MULTILINE | re.DOTALL)
-    assert "lg:grid-cols-2" not in code_only
-    assert "md:grid-cols-2" in code_only
+    assert "grid-cols" not in src
+    assert "window.location.replace(TARGET)" in src

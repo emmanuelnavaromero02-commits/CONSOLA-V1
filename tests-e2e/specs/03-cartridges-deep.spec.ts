@@ -1,15 +1,16 @@
 import { test, expect } from "../fixtures/auth";
 
 const CARTRIDGES = ["hubspot", "replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const CONNECTED_TAB = "/marketplace?tab=conectadas";
 const cartridgeViewer = (id: string) => `/cartridges/viewer?id=${id}`;
 const cartridgeViewerLink = (id: string) =>
   `a[href="/cartridges/viewer?id=${id}"], a[href="/cartridges/viewer/?id=${id}"]`;
 const cartridgeViewerLinks =
   'a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]';
 
-test.describe("Cartridges grid — coverage of all 5", () => {
+test.describe("Conectadas tab — coverage of all 5", () => {
   test("renders the data sources h1", async ({ page }) => {
-    await page.goto("/cartridges");
+    await page.goto(CONNECTED_TAB);
     await expect(
       page.getByRole("heading", { name: /fuentes de datos/i, level: 1 }),
     ).toBeVisible({ timeout: 10_000 });
@@ -18,22 +19,22 @@ test.describe("Cartridges grid — coverage of all 5", () => {
   for (const cart of CARTRIDGES) {
     test(`tile for ${cart} renders and links to /cartridges/viewer?id=${cart}`,
       async ({ page }) => {
-        await page.goto("/cartridges");
+        await page.goto(CONNECTED_TAB);
         const link = page.locator(cartridgeViewerLink(cart)).first();
         await expect(link).toBeVisible({ timeout: 15_000 });
       },
     );
   }
 
-  test("grid has at least 5 cartridge tiles", async ({ page }) => {
-    await page.goto("/cartridges");
+  test("tab has at least 5 cartridge tiles", async ({ page }) => {
+    await page.goto(CONNECTED_TAB);
     const tiles = page.locator(cartridgeViewerLinks);
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
     expect(await tiles.count()).toBeGreaterThanOrEqual(5);
   });
 
   test("each tile carries a status badge", async ({ page }) => {
-    await page.goto("/cartridges");
+    await page.goto(CONNECTED_TAB);
     const labels = /conectado|sin probar|sin configurar|falló/i;
     const badge = page.getByText(labels).first();
     await expect(badge).toBeVisible({ timeout: 15_000 });
@@ -45,7 +46,7 @@ test.describe("Cartridges grid — coverage of all 5", () => {
         await new Promise((r) => setTimeout(r, 2_000));
         await route.continue();
       });
-      await page.goto("/cartridges");
+      await page.goto(CONNECTED_TAB);
       const skeleton = page.locator(".animate-pulse").first();
       await expect(skeleton).toBeVisible({ timeout: 3_000 });
     },
@@ -55,11 +56,24 @@ test.describe("Cartridges grid — coverage of all 5", () => {
     await page.route("**/api/cartridges", (route) =>
       route.fulfill({ status: 500, body: '{"detail":"boom"}' }),
     );
-    await page.goto("/cartridges");
+    await page.goto(CONNECTED_TAB);
     await expect(
       page.getByRole("button", { name: /reintentar|retry/i }),
     ).toBeVisible({ timeout: 10_000 });
   });
+
+  test("tab navigation switches between conectadas, catalogo and licencias",
+    async ({ page }) => {
+      await page.goto(CONNECTED_TAB);
+      const nav = page.locator('nav[aria-label="Secciones de fuentes de datos"]');
+      await expect(nav).toBeVisible({ timeout: 10_000 });
+      await nav.getByRole("link", { name: /catálogo disponible/i }).click();
+      await page.waitForURL(/\/marketplace\/?\?tab=catalogo/, { timeout: 10_000 });
+      await expect(
+        page.getByRole("heading", { name: /catálogo de fuentes de datos/i, level: 1 }),
+      ).toBeVisible({ timeout: 15_000 });
+    },
+  );
 });
 
 test.describe("Cartridge detail — schema-driven form", () => {

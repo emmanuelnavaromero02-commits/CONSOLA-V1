@@ -14,11 +14,12 @@ import {
 
 const ROOT_KEY = "cartridges";
 
-export function useCartridgeList() {
+export function useCartridgeList(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [ROOT_KEY, "list"],
     queryFn: listCartridges,
     staleTime: 60_000,
+    enabled: options?.enabled ?? true,
   });
 }
 

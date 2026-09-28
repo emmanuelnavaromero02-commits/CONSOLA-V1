@@ -29,13 +29,48 @@ def test_marketplace_has_no_standalone_html_page():
 
 def test_marketplace_routes_use_console_next_export():
     main = console_route_source()
-    assert '@app.get("/marketplace"' in main
+    assert re.search(r'@app\.get\(\s*"/marketplace"', main)
     assert '@app.get("/customer/cartridges"' in main
     assert '"/admin/installations"' in main
     assert '_console_next_response(request, "marketplace/index.html")' in main
     assert '_console_next_response(request, "customer/cartridges/index.html")' in main
     assert '_console_next_response(request, "admin/installations/index.html")' in main
     assert '_console_next_response(request, "admin/licenses/index.html")' in main
+
+
+def test_marketplace_page_guard_accepts_marketplace_or_cartridges_read():
+    router = read("console/app/routers/marketplace.py")
+    v1_router = read("console/app/routers/v1/marketplace_apps.py")
+    for source in (router, v1_router):
+        block = source.split('"/marketplace"', 1)[1].split("async def", 1)[0]
+        assert 'require_any_permission("marketplace.read", "cartridges.read")' in block
+        assert source.count('require_any_permission("marketplace.read", "cartridges.read")') == 1
+
+
+def test_legacy_data_source_routes_are_redirect_shells():
+    targets = {
+        "console-next/src/app/(shell)/cartridges/page.tsx": "/marketplace?tab=conectadas",
+        "console-next/src/app/(shell)/customer/cartridges/page.tsx": "/marketplace?tab=conectadas",
+        "console-next/src/app/(shell)/admin/installations/page.tsx": "/marketplace?tab=licencias",
+        "console-next/src/app/(shell)/admin/licenses/page.tsx": "/marketplace?tab=licencias",
+    }
+    for path, target in targets.items():
+        src = read(path)
+        assert f'const TARGET = "{target}"' in src, path
+        assert "window.location.replace(TARGET)" in src, path
+        assert "MarketplaceConsole" not in src, path
+
+
+def test_marketplace_console_consolidates_tabs_on_one_route():
+    component = read("console-next/src/components/marketplace/MarketplaceConsole.tsx")
+    for label in ("Conectadas", "Catálogo disponible", "Licencias"):
+        assert label in component
+    assert "/marketplace?tab=" in component
+    assert "deriveTab" in component
+    assert "useSearchParams" in component
+    assert "stepLabel(" in component
+    assert '"sin paso"' not in component
+    assert '"Sin información"' in component
 
 
 def test_marketplace_next_surface_keeps_customer_and_admin_flows():
@@ -59,13 +94,16 @@ def test_marketplace_next_surface_keeps_customer_and_admin_flows():
         assert action in component
     assert 'href: "/marketplace"' in navigation
     assert '"can_view_marketplace"' in navigation
+    assert '"can_view_cartridges"' in navigation
     assert "can_admin_marketplace" in component
+    assert "can_view_cartridges" in component
 
 
 def test_marketplace_next_static_pages_exist_after_export():
     static = ROOT / "console/app/static/console-next"
     for page in (
         "marketplace/index.html",
+        "cartridges/index.html",
         "customer/cartridges/index.html",
         "admin/installations/index.html",
         "admin/licenses/index.html",

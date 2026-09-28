@@ -2,10 +2,11 @@ import { test, expect } from "../fixtures/auth";
 
 const cartridgeViewerLinks =
   'a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]';
+const CONNECTED_TAB = "/marketplace?tab=conectadas";
 
-test.describe("Cartridges grid (Next.js, /cartridges)", () => {
-  test("renders the built-in cartridge grid", async ({ authedPage: page }) => {
-    await page.goto("/cartridges");
+test.describe("Fuentes de datos — Conectadas tab (/marketplace?tab=conectadas)", () => {
+  test("renders the built-in cartridge tiles", async ({ authedPage: page }) => {
+    await page.goto(CONNECTED_TAB);
     const tiles = page.locator(cartridgeViewerLinks);
     await expect(tiles.first()).toBeVisible({ timeout: 10_000 });
     const count = await tiles.count();
@@ -15,7 +16,7 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
   });
 
   test("each tile shows name + status badge", async ({ authedPage: page }) => {
-    await page.goto("/cartridges");
+    await page.goto(CONNECTED_TAB);
     const firstTile = page
       .locator(cartridgeViewerLinks)
       .first()
@@ -30,7 +31,7 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
   test("clicking Replicon navigates to /cartridges/viewer?id=replicon", async ({
     authedPage: page,
   }) => {
-    await page.goto("/cartridges");
+    await page.goto(CONNECTED_TAB);
     const repliconLink = page.locator(
       'a[href="/cartridges/viewer?id=replicon"], a[href="/cartridges/viewer/?id=replicon"]',
     );
@@ -41,6 +42,21 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
       page.getByRole("link", { name: /configurar en vault/i }),
     ).toBeVisible({ timeout: 15_000 });
   });
+});
+
+test.describe("Legacy routes redirect into the unified surface", () => {
+  for (const [legacy, tab] of [
+    ["/cartridges", "conectadas"],
+    ["/customer/cartridges", "conectadas"],
+  ] as const) {
+    test(`${legacy} lands on /marketplace?tab=${tab}`, async ({ authedPage: page }) => {
+      await page.goto(legacy);
+      await page.waitForURL(new RegExp(`/marketplace/?\\?tab=${tab}`), { timeout: 10_000 });
+      await expect(
+        page.getByRole("heading", { name: /fuentes de datos/i, level: 1 }),
+      ).toBeVisible({ timeout: 15_000 });
+    });
+  }
 });
 
 test.describe("Cartridge detail (Next.js, /cartridges/viewer?id=...)", () => {

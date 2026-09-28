@@ -6,13 +6,16 @@ from app.dependencies import require_authenticated
 from app.routers.pages import _console_next_response
 from app.services import marketplace_service
 from app.services.csrf import require_csrf
-from app.services.permissions import require_permission
+from app.services.permissions import require_any_permission, require_permission
 
 
 router = APIRouter(tags=["Marketplace"])
 
 
-@router.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
+@router.get(
+    "/marketplace",
+    dependencies=[Depends(require_any_permission("marketplace.read", "cartridges.read"))],
+)
 async def marketplace_page(request: Request):
     return _console_next_response(request, "marketplace/index.html")
 

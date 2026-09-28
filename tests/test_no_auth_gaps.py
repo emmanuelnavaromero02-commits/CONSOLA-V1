@@ -49,6 +49,7 @@ AUTH_DEPENDS = (
     "require_authenticated",
     "require_csrf",
     "require_permission",
+    "require_any_permission",
     "require_any_role",
     "require_admin",
     "require_global_any_role",
