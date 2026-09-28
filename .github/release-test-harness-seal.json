@@ -1966,6 +1966,10 @@
       "sha256": "5e7acb19a94c57f05ba7c3fa868312abf9eac154dbd4a179ebd821c4d2a7d289"
     },
     {
+      "path": "console/tests/test_airflow_error_copy.py",
+      "sha256": "b69cb0ddbefc8b23d62305818241a5f54ef4a5d5e752d6436fd31dbbf8810951"
+    },
+    {
       "path": "console/tests/test_app_content_capability_flow.py",
       "sha256": "ae7e4cff363e8fcb84c172e69bbaf50be54d9d502b794e17e1470bcc668fb06e"
     },
@@ -2043,7 +2047,7 @@
     },
     {
       "path": "console/tests/test_cartridges_router.py",
-      "sha256": "f744c77e2c3f4f5e52caf7f88f568c21e03eee4c86c1c0aa9040170e2ddb5211"
+      "sha256": "44c9da38adccf9bc523c0a72fe266195e9c1afa9fba168fe3235155e7179d0de"
     },
     {
       "path": "console/tests/test_catalog_copilot_requests.py",
@@ -3191,7 +3195,7 @@
     },
     {
       "path": "console/tests/test_pipeline_extract.py",
-      "sha256": "0e82ed58453eb0f3cf0116b940d2d95f6b347b1f9daa9fd0ea6410188b1c6142"
+      "sha256": "77fbf18f014302588f730cb2b8d5a6c71c727b07f26c6ba72884e7056dd2e27c"
     },
     {
       "path": "console/tests/test_pipeline_extraction_conn_id.py",
@@ -3359,7 +3363,11 @@
     },
     {
       "path": "console/tests/test_studio_dag_deadline.py",
-      "sha256": "4a3eb673b3d7e9ce6aaaed694a8201929398fd7c07d24e24aeeffd5e0ee5224d"
+      "sha256": "bcd7f7b9f99b0e9539b886aa48c0fc4dc81dcba8823ed47c757b7dd569a26b59"
+    },
+    {
+      "path": "console/tests/test_studio_dags_health.py",
+      "sha256": "09bd4e026b238241ab3b66d4338643739a253fd69663a8973a3dd324ff58a9c2"
     },
     {
       "path": "console/tests/test_studio_entity_mutations.py",
@@ -3871,7 +3879,7 @@
     },
     {
       "path": "tests-e2e/specs/05-studio.spec.ts",
-      "sha256": "45a814dad7f92aee2cd466456b5c6631f19379092b4fa971526c4d48bc6edeca"
+      "sha256": "254af375e16eb3839065eb310498fe7fff6af17f3ce30b35e24c05bd8cf9ce8c"
     },
     {
       "path": "tests-e2e/specs/06-html-pages.spec.ts",
@@ -5603,7 +5611,7 @@
     },
     {
       "path": "tests/test_pipeline_aggregate_trigger.py",
-      "sha256": "4015c85fcd87b5c416934b02828b11e6d3547059ae1b7a59ca8c1be37fb90e61"
+      "sha256": "ebe6d165ae9944f235a72a83029d93e59fcb88811e9495bbd7619572365e2e97"
     },
     {
       "path": "tests/test_pipeline_concurrency.py",
@@ -5612,6 +5620,14 @@
     {
       "path": "tests/test_pipeline_control_room_refresh.py",
       "sha256": "d32960091db638fa1cba0360066c36c29fa0a4f67b6ad01da217dde3ea5889b3"
+    },
+    {
+      "path": "tests/test_pipeline_extract_all_automation.py",
+      "sha256": "46a18df0b2925876ae16b9992ea7343e8496fda056e5c888042be78dbffc51df"
+    },
+    {
+      "path": "tests/test_pipeline_orchestrator_health.py",
+      "sha256": "0cbbace02ee033ea71d050ccc39d623be90c9297e94af2ef54440624235da830"
     },
     {
       "path": "tests/test_pipeline_packaged_datasets.py",
@@ -5651,7 +5667,7 @@
     },
     {
       "path": "tests/test_pipeline_sync_state.py",
-      "sha256": "9381f3b8f68dc2aac0131e488723aa278cb093db1905319a503c1334e121b03f"
+      "sha256": "535b0c9e0c8af4f340c495d5e78aeb79a11721c7e09f727a3c11d62d7aec3f4f"
     },
     {
       "path": "tests/test_platform_audit_context_binding.py",
@@ -6371,11 +6387,11 @@
     },
     {
       "path": "tests/test_sync_now_scope_contract.py",
-      "sha256": "86dc899bc18d20ebbfc192059e2cac6dbaf8f6980760150179fe1b47754bf3f2"
+      "sha256": "b3d4bc4b6d9a4778d1dce95ebf0c70518ed3cc7971ed30616d1a8f46bcdd0025"
     },
     {
       "path": "tests/test_sync_progress.py",
-      "sha256": "2ce092c2cc187957ce3b256da97354a4d05a9bca3a6f5dcc7647aadc41999843"
+      "sha256": "ef340e244297313976b8667703f78dc3bdf1818111c79493b3d7992eb1de9936"
     },
     {
       "path": "tests/test_t2_aws_backup_provisioning.py",
