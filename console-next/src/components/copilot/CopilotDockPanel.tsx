@@ -47,7 +47,8 @@ function errorStatus(error: unknown): number | undefined {
 
 function publicError(error: unknown): string {
   const status = errorStatus(error);
-  if (status !== undefined && status >= 500) return OFFLINE_ERROR;
+  // No HTTP status (network failure) or 5xx: honest offline copy, never raw messages.
+  if (status === undefined || status >= 500) return OFFLINE_ERROR;
   if (error instanceof Error && error.message) return error.message;
   return OFFLINE_ERROR;
 }
@@ -67,6 +68,16 @@ export function CopilotDockPanel({ route }: { route: string }) {
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const setDraft = useCallback((value: string) => {
     setDraftState(value);
@@ -133,6 +144,8 @@ export function CopilotDockPanel({ route }: { route: string }) {
         ...readPageContext(),
       };
       setStreaming("");
+      const controller = new AbortController();
+      abortRef.current = controller;
       const data = await streamMessage(
         cid,
         text,
@@ -141,7 +154,9 @@ export function CopilotDockPanel({ route }: { route: string }) {
           onText: (content) => setStreaming(content),
         },
         pageContext,
+        { signal: controller.signal },
       );
+      if (!mountedRef.current) return;
       setMessages((current) => [...current, {
         id: data.message_id || `__dock_assistant_${Date.now()}`,
         role: "assistant",
@@ -157,13 +172,18 @@ export function CopilotDockPanel({ route }: { route: string }) {
         setApproveError(null);
       }
     } catch (err) {
+      const aborted = err instanceof Error && err.name === "AbortError";
+      if (!mountedRef.current || aborted) return;
       const status = errorStatus(err);
       if (status === 403 || status === 404) forgetConversation();
       setError(publicError(err));
       setDraft(text);
     } finally {
-      setStreaming(null);
-      setSending(false);
+      abortRef.current = null;
+      if (mountedRef.current) {
+        setStreaming(null);
+        setSending(false);
+      }
     }
   }, [conversationId, draft, forgetConversation, route, sending, setDraft]);
 

@@ -179,6 +179,7 @@ export async function streamMessage(
   message: string,
   handlers: StreamMessageHandlers = {},
   pageContext?: CopilotPageContext,
+  options: SseStreamOptions = {},
 ): Promise<SendMessageResponse> {
   let finalData: SendMessageResponse | null = null;
   let sawToken = false;
@@ -215,6 +216,7 @@ export async function streamMessage(
         throw toApiError(publicErrorMessage(502, null, requestId), 502, { code }, requestId);
       }
     },
+    options,
   );
 
   if (!finalData) throw new Error("Copilot stream ended before completion.");

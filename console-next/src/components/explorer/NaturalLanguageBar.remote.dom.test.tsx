@@ -69,7 +69,7 @@ describe("NaturalLanguageBar copilot action", () => {
         columns: [],
         filters: [
           { column: "salario", op: "gt", value: 20000, values: null },
-          { column: "nombre", op: "in", value: null, values: ["Ana", "Luis"] },
+          { column: "nombre", op: "in", value: null, values: ["García, Juan", "Luis"] },
         ],
         sort: [{ column: "salario", direction: "desc" }],
         limit: 10,
@@ -97,7 +97,13 @@ describe("NaturalLanguageBar copilot action", () => {
     const applied = onApply.mock.calls[0][0];
     expect(applied.filters).toEqual([
       { column: "salario", op: "gt", value: "20000", valueTo: "" },
-      { column: "nombre", op: "in", value: "Ana, Luis", valueTo: "" },
+      {
+        column: "nombre",
+        op: "in",
+        value: "García, Juan, Luis",
+        valueTo: "",
+        values: ["García, Juan", "Luis"],
+      },
     ]);
     expect(applied.sort).toEqual([{ column: "salario", direction: "desc" }]);
     expect(applied.limit).toBe(10);

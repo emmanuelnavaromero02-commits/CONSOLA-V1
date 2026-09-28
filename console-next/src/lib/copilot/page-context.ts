@@ -2,7 +2,8 @@ export type PageContextValue = string | number | boolean;
 export type PageContext = Record<string, PageContextValue>;
 
 export const PAGE_CONTEXT_STORAGE_KEY = "omega-copilot-page-context";
-const MAX_KEYS = 24;
+// Two below the backend's 24-key reject so route + title always fit on top.
+const MAX_KEYS = 22;
 const MAX_VALUE_CHARS = 800;
 
 interface StoredPageContext {

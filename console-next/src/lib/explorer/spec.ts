@@ -24,6 +24,8 @@ export interface ExplorerFilterDraft {
   op: ExplorerOp;
   value: string;
   valueTo: string;
+  /** Pre-structured list values (e.g. from the NL endpoint); wins over splitting `value`. */
+  values?: string[];
 }
 
 export interface ExplorerSortDraft {
@@ -125,7 +127,7 @@ export function specProblems(spec: ExplorerSpec, columns: ExplorerColumn[]): str
       problems.push(`${label}: «está entre» necesita dos valores.`);
     }
     if (arity === "many") {
-      const values = splitListValue(filter.value);
+      const values = filter.values?.length ? filter.values : splitListValue(filter.value);
       if (!values.length) problems.push(`${label}: escribe al menos un valor.`);
       if (values.length > MAX_IN_VALUES) problems.push(`${label}: máximo ${MAX_IN_VALUES} valores.`);
     }
@@ -143,7 +145,10 @@ function apiFilter(filter: ExplorerFilterDraft): ExploreApiFilter {
   const arity = operatorArity(filter.op);
   if (arity === "none") return { column: filter.column, op: filter.op };
   if (arity === "two") return { column: filter.column, op: filter.op, values: [filter.value.trim(), filter.valueTo.trim()] };
-  if (arity === "many") return { column: filter.column, op: filter.op, values: splitListValue(filter.value) };
+  if (arity === "many") {
+    const values = filter.values?.length ? filter.values : splitListValue(filter.value);
+    return { column: filter.column, op: filter.op, values };
+  }
   return { column: filter.column, op: filter.op, value: filter.value.trim() };
 }
 

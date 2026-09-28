@@ -128,6 +128,31 @@ describe("CopilotDockPanel", () => {
     expect(container.textContent).toContain("Sin conexión al asistente");
   });
 
+  it("shows the offline message for network failures without a status", async () => {
+    clientMock.streamMessage.mockRejectedValue(new TypeError("fetch failed"));
+    await render();
+    await send("hola");
+    expect(container.textContent).toContain("Sin conexión al asistente");
+    expect(container.textContent).not.toContain("fetch failed");
+  });
+
+  it("aborts an in-flight stream when the panel unmounts", async () => {
+    let seenSignal: AbortSignal | undefined;
+    clientMock.streamMessage.mockImplementation(
+      (_cid, _text, _handlers, _pageContext, options) => {
+        seenSignal = options?.signal;
+        return new Promise<SendMessageResponse>(() => undefined);
+      },
+    );
+    await render();
+    await send("hola");
+    expect(seenSignal).toBeDefined();
+    expect(seenSignal?.aborted).toBe(false);
+    await act(async () => root.unmount());
+    expect(seenSignal?.aborted).toBe(true);
+    root = createRoot(container);
+  });
+
   it("persists the draft to sessionStorage", async () => {
     await render();
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea");

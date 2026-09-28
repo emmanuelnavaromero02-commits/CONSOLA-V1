@@ -71,7 +71,8 @@ export function NaturalLanguageBar({
       if (appliedParts(converted).length) onApply(converted);
     } catch (error) {
       const status = error instanceof Error ? (error as ApiError).status : undefined;
-      if (status !== undefined && status >= 500) {
+      if (status === undefined || status >= 500) {
+        // Network failures and 5xx: honest copy, never a raw error message.
         setRemoteError("Sin conexión al asistente");
       } else if (error instanceof Error && error.message) {
         setRemoteError(error.message);

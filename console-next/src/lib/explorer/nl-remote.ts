@@ -16,11 +16,13 @@ export function nlResultFromRemoteSpec(spec: ExploreNlSpec): NlParseResult {
       return { column: filter.column, op: filter.op, value: cellText(low ?? null), valueTo: cellText(high ?? null) };
     }
     if (arity === "many") {
+      const values = (filter.values ?? []).map(cellText);
       return {
         column: filter.column,
         op: filter.op,
-        value: (filter.values ?? []).map(cellText).join(", "),
+        value: values.join(", "),
         valueTo: "",
+        values,
       };
     }
     if (arity === "none") {

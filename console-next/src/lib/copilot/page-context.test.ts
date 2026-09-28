@@ -65,10 +65,17 @@ describe("page-context store", () => {
       bad: { nested: true } as unknown as string,
     });
     const ctx = readPageContext();
-    expect(Object.keys(ctx).length).toBeLessThanOrEqual(24);
+    expect(Object.keys(ctx).length).toBeLessThanOrEqual(22);
     expect(ctx.bad).toBeUndefined();
     const long = Object.values(ctx).find((value) => typeof value === "string" && value.startsWith("xx"));
     if (typeof long === "string") expect(long.length).toBeLessThanOrEqual(800);
+  });
+
+  it("caps at 22 keys so route and title always fit under the backend's 24", () => {
+    const partial: Record<string, string> = {};
+    for (let index = 0; index < 23; index += 1) partial[`k${index}`] = "v";
+    publishPageContext(partial);
+    expect(Object.keys(readPageContext()).length).toBe(22);
   });
 
   it("survives a sessionStorage that throws", () => {

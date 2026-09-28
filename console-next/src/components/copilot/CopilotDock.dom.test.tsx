@@ -38,6 +38,12 @@ async function pressCmdK() {
   });
 }
 
+async function flushTimers() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  });
+}
+
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mockPath = "/dashboard";
@@ -80,10 +86,55 @@ describe("CopilotDock", () => {
     expect(window.sessionStorage.getItem("omega-copilot-dock-open")).toBe("0");
   });
 
-  it("reopens from sessionStorage after a full page reload", async () => {
+  it("renders closed on first paint and reopens from sessionStorage afterwards", async () => {
     window.sessionStorage.setItem("omega-copilot-dock-open", "1");
     await render();
+    expect(drawer()).toBeNull();
+    await flushTimers();
     expect(drawer()).not.toBeNull();
+  });
+
+  it("moves focus into the drawer when it opens", async () => {
+    await render();
+    await act(async () => {
+      launcher()?.click();
+    });
+    await flushTimers();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Cerrar copiloto");
+  });
+
+  it("ignores Escape while an inner dialog is open", async () => {
+    await render();
+    await act(async () => {
+      launcher()?.click();
+    });
+    const aside = container.querySelector("aside");
+    const inner = document.createElement("div");
+    inner.setAttribute("role", "dialog");
+    aside?.append(inner);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(drawer()).not.toBeNull();
+    inner.remove();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(drawer()).toBeNull();
+  });
+
+  it("restores the previous body overflow after closing", async () => {
+    document.body.style.overflow = "auto";
+    await render();
+    await act(async () => {
+      launcher()?.click();
+    });
+    expect(document.body.style.overflow).toBe("hidden");
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.body.style.overflow).toBe("auto");
+    document.body.style.overflow = "";
   });
 
   it("closes with Escape and returns focus to the launcher", async () => {

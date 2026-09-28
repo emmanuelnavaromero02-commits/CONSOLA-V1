@@ -37,10 +37,11 @@ export function CopilotDock() {
   const pathname = usePathname() || "/";
   const hidden = pathname.startsWith("/copilot") || pathname.startsWith("/workspace");
 
-  const [open, setOpenState] = useState(readStoredOpen);
-  const [hasOpened, setHasOpened] = useState(readStoredOpen);
+  const [open, setOpenState] = useState(false);
+  const [hasOpened, setHasOpened] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const setOpen = useCallback((next: boolean) => {
     setOpenState(next);
@@ -51,6 +52,18 @@ export function CopilotDock() {
       /* best-effort persistence */
     }
   }, []);
+
+  useEffect(() => {
+    // Hydration-safe restore: the static export always renders closed.
+    if (hidden) return undefined;
+    const timer = window.setTimeout(() => {
+      if (readStoredOpen()) {
+        setOpenState(true);
+        setHasOpened(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [hidden]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -70,7 +83,16 @@ export function CopilotDock() {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
+    const focusTimer = window.setTimeout(() => {
+      closeButtonRef.current?.focus();
+    }, 0);
+
+    function innerDialogOpen(): boolean {
+      return Boolean(drawerRef.current?.querySelector('[role="dialog"]'));
+    }
+
     function onKey(event: KeyboardEvent) {
+      if (innerDialogOpen()) return;
       if (event.key === "Escape") {
         setOpen(false);
         return;
@@ -93,6 +115,7 @@ export function CopilotDock() {
     document.addEventListener("keydown", onKey);
     const launcher = launcherRef.current;
     return () => {
+      window.clearTimeout(focusTimer);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
       launcher?.focus();
@@ -136,6 +159,7 @@ export function CopilotDock() {
                 Copiloto OMEGA
               </h2>
               <button
+                ref={closeButtonRef}
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label="Cerrar copiloto"
