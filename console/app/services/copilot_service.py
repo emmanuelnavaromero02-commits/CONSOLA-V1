@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services import audit_service, auth, llm_client, mcp_registry, permissions
+from app.services import copilot_local_tools
 from app.services.db_scope import scoped_db_for_user
 from app.services import memory_service
 from app.services import lessons_service
@@ -314,6 +315,26 @@ async def _invoke_tool_with_retry(
     import logging as _lg
     log = _lg.getLogger(__name__)
 
+    # Local console tools are dispatched before any MCP lookup.
+    if copilot_local_tools.is_local_tool(server_id, tool):
+        try:
+            return await copilot_local_tools.invoke_local_tool(tool, args, user=user)
+        except HTTPException as exc:
+            message = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+            return {
+                "_error": True,
+                "error_type": f"HTTPException:{exc.status_code}",
+                "error_message": (_sanitise_error(str(message)) or "")[:200],
+                "tool": tool,
+                "server": server_id,
+                "_meta": {
+                    "user_facing": (
+                        f"No pude ejecutar {tool}: "
+                        f"{_sanitise_error(str(message)) or 'permiso o servicio no disponible'}"
+                    )[:300],
+                },
+            }
+
     last_exc: Exception | None = None
     for attempt in range(_TOOL_RETRY_MAX_ATTEMPTS):
         try:
@@ -531,6 +552,23 @@ async def _build_tools_for_llm() -> tuple[list[dict], dict[str, str], dict[str, 
                 "requires_approval": bool(t.get("requires_approval")),
                 "input_schema": t.get("input_schema") or {"type": "object", "properties": {}},
             }
+    for t in copilot_local_tools.local_tools():
+        bare = t["name"]
+        full = f"{copilot_local_tools.LOCAL_SERVER_ID}__{bare}"
+        meta = tool_manifest.classify_tool(bare)
+        tools.append({
+            "name": full,
+            "description": t.get("description", ""),
+            "input_schema": t.get("input_schema") or {"type": "object", "properties": {}},
+        })
+        server_map[full] = copilot_local_tools.LOCAL_SERVER_ID
+        classifications[full] = {
+            "bare_name": bare,
+            "server": copilot_local_tools.LOCAL_SERVER_ID,
+            "risk_level": meta.get("risk_level", "write"),
+            "requires_approval": bool(meta.get("requires_approval")),
+            "input_schema": t.get("input_schema") or {"type": "object", "properties": {}},
+        }
     return tools, server_map, classifications
 
 
