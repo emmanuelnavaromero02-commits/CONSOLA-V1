@@ -67,9 +67,17 @@ def _relative(paths: set[Path]) -> list[str]:
 
 def test_route_served_legacy_pages_exist():
     pages = _served_pages()
-    assert (STATIC / "workspace.html").resolve() in pages
     missing = {page for page in pages if not page.is_file()}
     assert not missing, f"routes serve missing legacy pages: {_relative(missing)}"
+
+
+def test_legacy_workspace_is_gone_and_redirects_to_copilot():
+    workspace = (STATIC / "workspace.html").resolve()
+    assert not workspace.exists()
+    assert workspace not in _served_pages()
+    assert not (STATIC / "js" / "workspace.js").exists()
+    pages_py = (APP / "routers" / "pages.py").read_text(encoding="utf-8")
+    assert 'RedirectResponse(url=target, status_code=303)' in pages_py
 
 
 def test_legacy_studio_is_gone_and_served_by_console_next():

@@ -2,29 +2,22 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
 import re
-from collections.abc import AsyncIterator
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlencode
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 
 from app.dependencies import ROLE_ADMIN, require_admin, require_global_any_role
 from app.dependencies import require_authenticated
-from app.services import audit_service
-from app.services.csrf import CSRF_COOKIE_NAME, require_csrf, set_csrf_cookie
+from app.services.csrf import CSRF_COOKIE_NAME, set_csrf_cookie
 from app.services.permissions import has_permission, require_permission
 
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 CONSOLE_NEXT_STATIC = STATIC / "console-next"
-WORKSPACE_INTERNAL_URL = os.environ.get(
-    "WORKSPACE_INTERNAL_URL", "http://workspace:8001"
-).rstrip("/")
 _INLINE_SCRIPT_RE = re.compile(
     r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL
 )
@@ -141,82 +134,6 @@ def _viewer_redirect(
         if value:
             query[key] = value
     return RedirectResponse(url=f"/viewer?{urlencode(query)}", status_code=307)
-
-
-def _workspace_headers(request: Request) -> dict[str, str]:
-    headers: dict[str, str] = {}
-    for name in ("accept", "content-type", "cookie", "x-request-id", "x-csrf-token"):
-        value = request.headers.get(name)
-        if value:
-            headers[name] = value
-    return headers
-
-
-async def _workspace_proxy(request: Request, path: str) -> Response:
-    body = await request.body()
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            upstream = await client.request(
-                request.method,
-                f"{WORKSPACE_INTERNAL_URL}{path}",
-                params=request.query_params,
-                content=body if body else None,
-                headers=_workspace_headers(request),
-            )
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Workspace service unavailable: {exc}"
-        ) from exc
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        media_type=upstream.headers.get("content-type"),
-    )
-
-
-async def _workspace_stream_proxy(
-    request: Request, path: str
-) -> StreamingResponse | Response:
-    body = await request.body()
-    client = httpx.AsyncClient(timeout=None)
-    stream_cm = client.stream(
-        request.method,
-        f"{WORKSPACE_INTERNAL_URL}{path}",
-        params=request.query_params,
-        content=body if body else None,
-        headers=_workspace_headers(request),
-    )
-    try:
-        upstream = await stream_cm.__aenter__()
-    except httpx.RequestError as exc:
-        await client.aclose()
-        raise HTTPException(
-            status_code=502, detail=f"Workspace service unavailable: {exc}"
-        ) from exc
-
-    if upstream.status_code >= 400:
-        content = await upstream.aread()
-        await stream_cm.__aexit__(None, None, None)
-        await client.aclose()
-        return Response(
-            content=content,
-            status_code=upstream.status_code,
-            media_type=upstream.headers.get("content-type"),
-        )
-
-    async def chunks() -> AsyncIterator[bytes]:
-        try:
-            async for chunk in upstream.aiter_bytes():
-                yield chunk
-        finally:
-            await stream_cm.__aexit__(None, None, None)
-            await client.aclose()
-
-    return StreamingResponse(
-        chunks(),
-        status_code=upstream.status_code,
-        media_type=upstream.headers.get("content-type", "text/event-stream"),
-    )
 
 
 @router.get("/")
@@ -599,84 +516,12 @@ async def cartridges_viewer_page(request: Request):
     dependencies=[Depends(require_permission("workspace.access"))],
 )
 async def workspace_page(request: Request):
-    response = FileResponse(STATIC / "workspace.html")
-    set_csrf_cookie(response, request.cookies.get(CSRF_COOKIE_NAME))
-    return response
-
-
-@router.post(
-    "/workspace/chat",
-    dependencies=[
-        Depends(require_permission("workspace.access")),
-        Depends(require_csrf),
-    ],
-)
-async def workspace_chat_proxy(
-    request: Request, user: dict = Depends(require_authenticated)
-):
-    body = await request.body()
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="workspace.chat.proxy",
-        resource_type="workspace_chat",
-        resource_id="sync",
-        ip=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-        status="success",
-        metadata={"body_len": len(body)},
-    )
-    return await _workspace_proxy(request, "/workspace/chat")
-
-
-@router.post(
-    "/workspace/chat/refresh-context",
-    dependencies=[
-        Depends(require_permission("workspace.access")),
-        Depends(require_csrf),
-    ],
-)
-async def workspace_refresh_proxy(
-    request: Request, user: dict = Depends(require_authenticated)
-):
-    body = await request.body()
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="workspace.chat.refresh_context",
-        resource_type="workspace_chat",
-        resource_id="context",
-        ip=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-        status="success",
-        metadata={"body_len": len(body)},
-    )
-    return await _workspace_proxy(request, "/workspace/chat/refresh-context")
-
-
-@router.post(
-    "/workspace/chat/stream",
-    dependencies=[
-        Depends(require_permission("workspace.access")),
-        Depends(require_csrf),
-    ],
-)
-async def workspace_chat_stream_proxy(
-    request: Request, user: dict = Depends(require_authenticated)
-):
-    body = await request.body()
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="workspace.chat.stream",
-        resource_type="workspace_chat",
-        resource_id="stream",
-        ip=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-        status="success",
-        metadata={"body_len": len(body)},
-    )
-    return await _workspace_stream_proxy(request, "/workspace/chat/stream")
+    """Legacy surface merged into /copilot; preserves ?prompt= deep links."""
+    prompt = request.query_params.get("prompt")
+    target = "/copilot"
+    if prompt:
+        target += f"?{urlencode({'prompt': prompt})}"
+    return RedirectResponse(url=target, status_code=303)
 
 
 @router.get(

@@ -124,7 +124,7 @@ ROUTE_SURFACE_REGISTRY: tuple[RouteSurfaceRule, ...] = (
     RouteSurfaceRule("/tokens", "frontend", "tokens UI"),
     RouteSurfaceRule("/viewer", "frontend", "technical catalog viewer UI"),
     RouteSurfaceRule("/vpn-config", "frontend", "VPN configuration download"),
-    RouteSurfaceRule("/workspace", "frontend", "workspace UI"),
+    RouteSurfaceRule("/workspace", "frontend", "legacy workspace UI; redirects to /copilot"),
     RouteSurfaceRule("/", "frontend", "root UI"),
 )
 
