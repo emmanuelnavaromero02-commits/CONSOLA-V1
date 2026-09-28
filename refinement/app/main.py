@@ -2557,7 +2557,15 @@ def _mcp_invoke_sync(body: dict):
         sec = _require_security_permission(body, "apps.write")
         args = {**args, "created_by_id": sec.get("user_id")}
         cartridge_id = str(args.get("cartridge_id") or "").strip()
-        if not cartridge_id and not _is_unscoped_admin_security_context(sec):
+        has_workspace_scope = bool(
+            str(sec.get("tenant_id") or "").strip()
+            and str(sec.get("workspace_id") or "").strip()
+        )
+        if (
+            not cartridge_id
+            and not _is_unscoped_admin_security_context(sec)
+            and not has_workspace_scope
+        ):
             return {
                 "error": "cartridge_id is required for published apps outside admin context"
             }
@@ -3235,6 +3243,7 @@ def _publish_app(args: dict, sec: dict) -> dict:
         "cartridge_id": args.get("cartridge_id"),
         "visibility": visibility,
         "datasets_used": datasets_used,
+        "html_sha256": hashlib.sha256(html.encode("utf-8")).hexdigest(),
         "url": f"/apps/{name}",
     }
 
