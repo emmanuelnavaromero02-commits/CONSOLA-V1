@@ -366,8 +366,44 @@ export interface SfTalentNineBoxCell {
   ready_count: number;
   cpa_real_count?: number;
   reference_count?: number;
+  deduced_count?: number;
   blocked_count: number;
   status?: DataReadiness | SourceState | "ready" | "partial" | null;
+}
+
+export interface SfTalentConfianzaEstrellas {
+  count: number;
+  employee_keys?: string[];
+}
+
+export interface SfTalentConfianzaVacantes {
+  count: number;
+  roles?: string[];
+}
+
+export interface SfTalentConfianzaCertificaciones {
+  coverage_pct?: number | null;
+  completed_events?: number;
+  learning_events?: number;
+}
+
+export interface SfTalentConfianzaExposicionMoneda {
+  risk_band?: string | null;
+  currency?: string | null;
+  headcount?: number;
+  annualized_comp_total?: number | null;
+  annualized_comp_avg?: number | null;
+}
+
+export interface SfTalentConfianzaExposicion {
+  totals?: SfTalentConfianzaExposicionMoneda[];
+}
+
+export interface SfTalentConfianza {
+  estrellas_en_riesgo?: SfTalentConfianzaEstrellas | null;
+  vacantes_criticas_sin_sucesor?: SfTalentConfianzaVacantes | null;
+  cobertura_certificaciones?: SfTalentConfianzaCertificaciones | null;
+  exposicion_monetaria?: SfTalentConfianzaExposicion | null;
 }
 
 export interface SfTalentDesempenoRow {
@@ -394,11 +430,13 @@ export interface SfTalentNineBoxPayload {
     employees: number;
     ready: number;
     reference?: number;
+    deduced?: number;
     blocked: number;
     cells: number;
   };
   cells?: SfTalentNineBoxCell[];
   desempeno_disponible?: SfTalentDesempenoCohort | null;
+  confianza?: SfTalentConfianza | null;
   blockers?: SfTalentBlocker[];
   privacy?: {
     roster?: string;
@@ -420,6 +458,7 @@ export interface SfTalentRosterRow {
   potential_pending?: boolean | null;
   desempeno_disponible?: boolean | null;
   potential_band?: string | null;
+  potential_basis?: string | null;
   fit_band?: string | null;
   movement_age_bucket?: string | null;
   data_status?: string | null;

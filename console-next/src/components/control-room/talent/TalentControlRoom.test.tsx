@@ -1,12 +1,19 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import type { SfTalentDesempenoCohort, SfTalentNineBoxCell, SfTalentRosterPayload } from "@/lib/control-room/types";
+import type {
+  SfTalentConfianza,
+  SfTalentDesempenoCohort,
+  SfTalentNineBoxCell,
+  SfTalentRosterPayload,
+} from "@/lib/control-room/types";
 
 import {
+  ConfianzaTilesPanel,
   DesempenoDisponiblePanel,
   MaskedTalentRoster,
   NineBoxMatrix,
+  SindicalizadoPanel,
   TalentControlRoom,
 } from "./TalentControlRoom";
 
@@ -145,6 +152,173 @@ describe("TalentControlRoom native panels", () => {
     expect(markup).toContain("Segmento de talento");
     expect(markup).toContain("Colaborador enmascarado");
     expect(markup).not.toContain("undefined");
+  });
+});
+
+describe("TalentControlRoom copy en español", () => {
+  it("no conserva los textos en inglés de la pantalla de talento", () => {
+    const markup = renderToStaticMarkup(<TalentControlRoom />);
+
+    expect(markup).not.toContain("Recommendation only");
+    expect(markup).not.toContain("PII safe");
+    expect(markup).not.toContain("Gold Talent");
+    expect(markup).toContain("Solo recomendación");
+    expect(markup).toContain("Datos personales protegidos");
+    expect(markup).toContain("Talento (capa oro)");
+  });
+});
+
+describe("Potencial deducido de trayectoria", () => {
+  it("muestra el conteo deducido en la celda con su tooltip honesto", () => {
+    const cells: SfTalentNineBoxCell[] = [
+      {
+        box_id: "estrella",
+        box_label: "Estrella",
+        potential_band: "high",
+        performance_band: "high",
+        movement_action: "Sucesion",
+        display_order: 1,
+        employee_count: 3,
+        ready_count: 3,
+        deduced_count: 2,
+        blocked_count: 0,
+        status: "ready",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(<NineBoxMatrix cells={cells} onSelect={vi.fn()} />);
+
+    expect(markup).toContain("2 con potencial deducido de trayectoria");
+    expect(markup).toContain(
+      "Potencial calculado por trayectoria y desempeño real observado (sin PII expuesta)",
+    );
+  });
+
+  it("no muestra la insignia deducida cuando el conteo es cero", () => {
+    const cells: SfTalentNineBoxCell[] = [
+      {
+        box_id: "core",
+        box_label: "Core",
+        display_order: 1,
+        employee_count: 2,
+        ready_count: 2,
+        deduced_count: 0,
+        blocked_count: 0,
+        status: "ready",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(<NineBoxMatrix cells={cells} onSelect={vi.fn()} />);
+
+    expect(markup).not.toContain("potencial deducido de trayectoria");
+  });
+
+  it("marca en el roster las filas con potencial deducido", () => {
+    const payload: SfTalentRosterPayload = {
+      status: "ready",
+      count: 2,
+      box: { box_id: "estrella", box_label: "Estrella", display_order: 1 },
+      roster: [
+        {
+          employee_key: "tal_abc123456789", // gitleaks:allow
+          display_name: "Colaborador 6789",
+          role: "Manager",
+          unit: "People",
+          potential_basis: "trayectoria_observada",
+          fit_band: "high",
+          data_status: "ready",
+        },
+        {
+          employee_key: "tal_def123456789", // gitleaks:allow
+          display_name: "Colaborador 3456",
+          role: "Analista",
+          unit: "Finanzas",
+          potential_basis: "cpa_observado",
+          fit_band: "high",
+          data_status: "ready",
+        },
+      ],
+      blockers: [],
+    };
+
+    const markup = renderToStaticMarkup(<MaskedTalentRoster payload={payload} loading={false} />);
+
+    expect(markup.match(/Potencial deducido/g)).toHaveLength(1);
+  });
+});
+
+describe("ConfianzaTilesPanel", () => {
+  const confianza: SfTalentConfianza = {
+    estrellas_en_riesgo: { count: 4, employee_keys: ["tal_abc123456789"] }, // gitleaks:allow
+    vacantes_criticas_sin_sucesor: { count: 2, roles: ["Manager", "Representante"] },
+    cobertura_certificaciones: { coverage_pct: 60, completed_events: 60, learning_events: 100 },
+    exposicion_monetaria: {
+      totals: [
+        {
+          risk_band: "high",
+          currency: "MXN",
+          headcount: 11,
+          annualized_comp_total: 1000000,
+          annualized_comp_avg: 90909.09,
+        },
+      ],
+    },
+  };
+
+  it("pinta los cuatro tiles con datos reales del payload", () => {
+    const markup = renderToStaticMarkup(<ConfianzaTilesPanel confianza={confianza} />);
+
+    expect(markup).toContain("Estrellas en riesgo de fuga");
+    expect(markup).toContain("Vacantes críticas sin sucesor");
+    expect(markup).toContain("Manager, Representante");
+    expect(markup).toContain("Cobertura de certificaciones");
+    expect(markup).toContain("60%");
+    expect(markup).toContain("Exposición monetaria");
+    expect(markup).toContain("riesgo Alto");
+    expect(markup).toContain("grupos de 5+ personas");
+    expect(markup).not.toContain("Sin información");
+  });
+
+  it("cae a Sin información cuando las fuentes no existen", () => {
+    const markup = renderToStaticMarkup(<ConfianzaTilesPanel confianza={null} />);
+
+    expect(markup).toContain("Sin información (requiere Riesgo de retención conectado)");
+    expect(markup).toContain("Sin información (requiere Sucesión conectada)");
+    expect(markup).toContain("Sin información (requiere Aprendizaje conectado)");
+    expect(markup).toContain("Sin información (requiere Compensación conectada)");
+    expect(markup).not.toContain("$");
+    expect(markup).not.toContain("undefined");
+  });
+});
+
+describe("SindicalizadoPanel", () => {
+  it("nombra las fuentes requeridas y la futura llave employee_class", () => {
+    const markup = renderToStaticMarkup(<SindicalizadoPanel confianza={null} />);
+
+    expect(markup).toContain("En espera de conexión");
+    expect(markup).toContain("Escalafón");
+    expect(markup).toContain("Tabulador salarial");
+    expect(markup).toContain("Contrato colectivo");
+    expect(markup).toContain("employee_class (EmpEmployment)");
+    expect(markup).toContain("Sin información (requiere Aprendizaje conectado)");
+  });
+
+  it("enciende solo la señal real disponible: cobertura de certificaciones", () => {
+    const markup = renderToStaticMarkup(
+      <SindicalizadoPanel
+        confianza={{
+          cobertura_certificaciones: {
+            coverage_pct: 42.5,
+            completed_events: 17,
+            learning_events: 40,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("dato real disponible");
+    expect(markup).toContain("42.5%");
+    expect(markup).not.toContain("Sin información (requiere Aprendizaje conectado)");
   });
 });
 

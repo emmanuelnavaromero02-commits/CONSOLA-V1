@@ -28,6 +28,7 @@ import type {
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
   SfTalentBlocker,
+  SfTalentConfianza,
   SfTalentDesempenoCohort,
   SfTalentNineBoxCell,
   SfTalentNineBoxPayload,
@@ -147,7 +148,7 @@ export function TalentCollarSegmenter({
 }) {
   const options: Array<{ id: Collar; label: string; detail: string }> = [
     { id: "confianza", label: "Confianza", detail: "9-box talento" },
-    { id: "sindicalizado", label: "Sindicalizado", detail: "Escalafon futuro" },
+    { id: "sindicalizado", label: "Sindicalizado", detail: "En espera de conexión" },
   ];
 
   return (
@@ -246,6 +247,14 @@ export function NineBoxMatrix({
                 label="clasificables"
                 tone={cell.ready_count > 0 ? "good" : "warning"}
               />
+              {(cell.deduced_count ?? 0) > 0 ? (
+                <span
+                  title={POTENCIAL_DEDUCIDO_TOOLTIP}
+                  className="mt-1 inline-flex cursor-help items-center rounded-md border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 underline decoration-dotted underline-offset-2 dark:text-sky-300"
+                >
+                  {formatNumber(cell.deduced_count ?? 0)} con potencial deducido de trayectoria
+                </span>
+              ) : null}
               <p className="mt-2 min-h-[34px] text-xs opacity-85">{cell.movement_action || "Revisión supervisada"}</p>
             </button>
           );
@@ -324,6 +333,14 @@ export function MaskedTalentRoster({
                     {row.employee_key ? <span className="block text-xs text-muted-foreground">{row.employee_key}</span> : null}
                     {row.data_status && row.data_status !== "ready" ? (
                       <ReadinessBadge status={normalizeReadinessStatus(row.data_status)} compact className="mt-1" />
+                    ) : null}
+                    {row.potential_basis === "trayectoria_observada" ? (
+                      <span
+                        title={POTENCIAL_DEDUCIDO_TOOLTIP}
+                        className="mt-1 inline-flex cursor-help items-center rounded-md border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 underline decoration-dotted underline-offset-2 dark:text-sky-300"
+                      >
+                        Potencial deducido
+                      </span>
                     ) : null}
                   </td>
                   <td className="py-2 pr-3 text-muted-foreground">{row.role || "N/D"}</td>
@@ -412,6 +429,21 @@ export function TalentAnomalyList({
 const PERF_BAND_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1 };
 const POTENCIAL_PENDIENTE_TOOLTIP =
   "El Potencial requiere Competencias y Aspiración. SuccessFactors aún no expone esas entidades para este tenant, por eso permanece pendiente. No se infiere del desempeño.";
+const POTENCIAL_DEDUCIDO_TOOLTIP =
+  "Potencial calculado por trayectoria y desempeño real observado (sin PII expuesta)";
+
+function formatMoney(value: number | null | undefined, currency?: string | null): string {
+  if (value == null || !currency) return "N/D";
+  try {
+    return new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return `${formatNumber(Math.round(value))} ${currency}`;
+  }
+}
 
 function PerformanceBand({ band }: { band?: string | null }) {
   const normalizedBand = band || "unknown";
@@ -637,6 +669,153 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
   );
 }
 
+export function ConfianzaTilesPanel({ confianza }: { confianza?: SfTalentConfianza | null }) {
+  const estrellas = confianza?.estrellas_en_riesgo ?? null;
+  const vacantes = confianza?.vacantes_criticas_sin_sucesor ?? null;
+  const certificaciones = confianza?.cobertura_certificaciones ?? null;
+  const exposicion = confianza?.exposicion_monetaria ?? null;
+  const tileClass =
+    "rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423]";
+  const emptyClass = "mt-2 text-sm text-muted-foreground";
+
+  return (
+    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Panel Confianza">
+      <div className={tileClass}>
+        <p className="text-xs font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300/80">
+          Estrellas en riesgo de fuga
+        </p>
+        {estrellas ? (
+          <>
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground dark:text-white">
+              {formatNumber(estrellas.count)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              caja Estrella con riesgo de retención alto · llaves enmascaradas
+            </p>
+          </>
+        ) : (
+          <p className={emptyClass}>Sin información (requiere Riesgo de retención conectado)</p>
+        )}
+      </div>
+      <div className={tileClass}>
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300/80">
+          Vacantes críticas sin sucesor
+        </p>
+        {vacantes ? (
+          <>
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground dark:text-white">
+              {formatNumber(vacantes.count)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {vacantes.roles?.length
+                ? `Roles: ${vacantes.roles.slice(0, 4).join(", ")}${vacantes.roles.length > 4 ? "…" : ""}`
+                : "sin roles bloqueados sin sucesor"}
+            </p>
+          </>
+        ) : (
+          <p className={emptyClass}>Sin información (requiere Sucesión conectada)</p>
+        )}
+      </div>
+      <div className={tileClass}>
+        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">
+          Cobertura de certificaciones
+        </p>
+        {certificaciones && certificaciones.coverage_pct != null ? (
+          <>
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground dark:text-white">
+              {certificaciones.coverage_pct}%
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {formatNumber(certificaciones.completed_events ?? 0)} de{" "}
+              {formatNumber(certificaciones.learning_events ?? 0)} eventos completados
+            </p>
+          </>
+        ) : (
+          <p className={emptyClass}>Sin información (requiere Aprendizaje conectado)</p>
+        )}
+      </div>
+      <div className={tileClass}>
+        <p className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300/80">
+          Exposición monetaria
+        </p>
+        {exposicion?.totals?.length ? (
+          <ul className="mt-1 space-y-1">
+            {exposicion.totals.map((item, index) => (
+              <li key={`${item.risk_band}:${item.currency}:${index}`} className="text-sm text-foreground dark:text-white">
+                <span className="font-semibold tabular-nums">
+                  {formatMoney(item.annualized_comp_total, item.currency)}
+                </span>{" "}
+                <span className="text-xs text-muted-foreground">
+                  riesgo {bandLabel(item.risk_band)} · {formatNumber(item.headcount ?? 0)} personas
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className={emptyClass}>Sin información (requiere Compensación conectada)</p>
+        )}
+        {exposicion?.totals?.length ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            compensación anualizada agregada · grupos de 5+ personas
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+export function SindicalizadoPanel({ confianza }: { confianza?: SfTalentConfianza | null }) {
+  const certificaciones = confianza?.cobertura_certificaciones ?? null;
+  return (
+    <section
+      className="grid gap-3 md:grid-cols-2"
+      aria-label="Segmento sindicalizado"
+    >
+      <div className="rounded-xl border bg-card p-4 shadow-sm dark:border-amber-400/20 dark:bg-[#081423]">
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300/80">
+          En espera de conexión
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Este segmento no reutiliza la matriz de confianza. Fuentes requeridas todavía no conectadas:
+        </p>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground dark:text-white">
+          <li>Escalafón</li>
+          <li>Tabulador salarial</li>
+          <li>Contrato colectivo</li>
+        </ul>
+        <p className="mt-3 text-xs text-muted-foreground">
+          employee_class (EmpEmployment) será la llave de segmentación cuando esté validada.
+        </p>
+      </div>
+      <div className="rounded-xl border bg-card p-4 shadow-sm dark:border-emerald-400/20 dark:bg-[#081423]">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">
+            Cobertura de certificaciones
+          </p>
+          <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+            dato real disponible
+          </span>
+        </div>
+        {certificaciones && certificaciones.coverage_pct != null ? (
+          <>
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground dark:text-white">
+              {certificaciones.coverage_pct}%
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {formatNumber(certificaciones.completed_events ?? 0)} de{" "}
+              {formatNumber(certificaciones.learning_events ?? 0)} eventos completados
+            </p>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Sin información (requiere Aprendizaje conectado)
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function TalentControlRoom() {
   const [overview, setOverview] = useState<SfTalentOverviewPayload | null>(null);
   const [nineBox, setNineBox] = useState<SfTalentNineBoxPayload | null>(null);
@@ -766,9 +945,7 @@ export function TalentControlRoom() {
         <TalentOverviewPanel overview={overview} nineBox={nineBox} anomalies={anomalies} />
 
         {collar === "sindicalizado" ? (
-          <OperationalNotice tone="warning" title="Segmento sindicalizado pendiente">
-            Esta vista no reutiliza la matriz de confianza. Requiere escalafon, certificaciones y reglas de contrato colectivo como fuentes propias.
-          </OperationalNotice>
+          <SindicalizadoPanel confianza={nineBox?.confianza} />
         ) : null}
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
@@ -783,6 +960,10 @@ export function TalentControlRoom() {
           />
           <MaskedTalentRoster payload={roster} loading={rosterLoading} error={rosterError} onRetry={retryRoster} />
         </div>
+
+        {collar === "confianza" ? (
+          <ConfianzaTilesPanel confianza={nineBox?.confianza} />
+        ) : null}
 
         {collar === "confianza" ? (
           <DesempenoDisponiblePanel cohort={nineBox?.desempeno_disponible} />
@@ -807,7 +988,7 @@ export function TalentControlRoom() {
               </span>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">Politica segura</p>
-                <h3 className="text-base font-semibold text-foreground dark:text-white">Recommendation only</h3>
+                <h3 className="text-base font-semibold text-foreground dark:text-white">Solo recomendación</h3>
                 <p className="mt-2 text-sm text-muted-foreground">
                   La experiencia es exclusivamente de lectura. No ofrece preview ni write-back en SuccessFactors, no activa compensacion y no expone nombres completos ni IDs crudos.
                 </p>
@@ -816,12 +997,12 @@ export function TalentControlRoom() {
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border bg-background p-3 text-sm dark:border-emerald-400/10 dark:bg-[#06111f]">
                 <Boxes aria-hidden className="mb-2 h-4 w-4 text-emerald-700 dark:text-emerald-300" />
-                <strong className="text-foreground dark:text-white">Gold Talent</strong>
+                <strong className="text-foreground dark:text-white">Talento (capa oro)</strong>
                 <p className="text-xs text-muted-foreground">contract + operational</p>
               </div>
               <div className="rounded-lg border bg-background p-3 text-sm dark:border-emerald-400/10 dark:bg-[#06111f]">
                 <UserRoundCheck aria-hidden className="mb-2 h-4 w-4 text-emerald-700 dark:text-emerald-300" />
-                <strong className="text-foreground dark:text-white">PII safe</strong>
+                <strong className="text-foreground dark:text-white">Datos personales protegidos</strong>
                 <p className="text-xs text-muted-foreground">employee_key enmascarado</p>
               </div>
               <div className="rounded-lg border bg-background p-3 text-sm dark:border-emerald-400/10 dark:bg-[#06111f]">
