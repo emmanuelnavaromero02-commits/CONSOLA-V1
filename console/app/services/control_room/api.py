@@ -1694,7 +1694,9 @@ def _sf_talent_desempeno_cohort(
 def _sf_talent_confianza_estrellas(
     retention_result: dict[str, Any], detail_rows: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
-    if retention_result["status"] not in {"ready", "empty"}:
+    # Empty-but-materialized sources stay "Sin informacion" instead of a
+    # fabricated zero: both feeds must be materialized and non-empty.
+    if retention_result["status"] != "ready" or not detail_rows:
         return None
     high_risk_ids = {
         str(row.get("user_id"))
@@ -1720,34 +1722,10 @@ def _sf_talent_confianza_estrellas(
 
 
 @_bind_to_core
-def _sf_talent_confianza_vacantes(
-    roles_result: dict[str, Any], succession_result: dict[str, Any]
-) -> dict[str, Any] | None:
-    if roles_result["status"] not in {"ready", "empty"}:
-        return None
-    if succession_result["status"] not in {"ready", "empty"}:
-        return None
-    nominated = {
-        str(row.get("target_position") or "").strip().lower()
-        for row in succession_result["rows"]
-        if str(row.get("target_position") or "").strip()
-    }
-    uncovered: list[str] = []
-    for row in roles_result["rows"]:
-        if _sf_talent_status(row.get("required_skills_status"), "") not in {
-            "blocked",
-            "critical",
-        }:
-            continue
-        role_name = str(row.get("role_name") or row.get("job_code") or "").strip()
-        job_code = str(row.get("job_code") or "").strip().lower()
-        if not role_name:
-            continue
-        if job_code in nominated or role_name.lower() in nominated:
-            continue
-        uncovered.append(role_name)
-    uncovered = sorted(set(uncovered))
-    return {"count": len(uncovered), "roles": uncovered[:20]}
+def _sf_talent_confianza_vacantes() -> None:
+    # Waiting state: needs a published succession gold projection plus a real
+    # per-role criticality signal; anything else would fabricate vacancies.
+    return None
 
 
 @_bind_to_core
@@ -1817,12 +1795,6 @@ async def _sf_talent_confianza_panel(
     retention = await _sf_talent_gold_result(
         "sap_successfactors_talent_retention_risk", user, 5000
     )
-    roles = await _sf_talent_gold_result(
-        "sap_successfactors_talent_role_profile", user, 1000
-    )
-    succession = await _sf_talent_gold_result(
-        "sap_successfactors_successionnomination_latest", user, 5000
-    )
     certs = await _sf_talent_gold_result(
         "sap_successfactors_talent_learning_certification_status", user, 100
     )
@@ -1831,9 +1803,7 @@ async def _sf_talent_confianza_panel(
     )
     return {
         "estrellas_en_riesgo": _sf_talent_confianza_estrellas(retention, detail_rows),
-        "vacantes_criticas_sin_sucesor": _sf_talent_confianza_vacantes(
-            roles, succession
-        ),
+        "vacantes_criticas_sin_sucesor": _sf_talent_confianza_vacantes(),
         "cobertura_certificaciones": _sf_talent_confianza_certificaciones(certs),
         "exposicion_monetaria": _sf_talent_confianza_exposicion(exposure),
     }

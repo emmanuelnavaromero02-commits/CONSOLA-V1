@@ -151,7 +151,7 @@ def test_masked_roster_row_exposes_only_known_potential_basis():
 
 
 @pytest.mark.asyncio
-async def test_confianza_fields_are_null_when_sources_are_unavailable(monkeypatch):
+async def test_confianza_renders_no_fabricated_zeros_for_empty_sources(monkeypatch):
     monkeypatch.setattr(
         control_room_service, "query_dataset_rows", _fake_rows_factory()
     )
@@ -161,8 +161,31 @@ async def test_confianza_fields_are_null_when_sources_are_unavailable(monkeypatc
     confianza = result["confianza"]
     assert confianza["cobertura_certificaciones"] is None
     assert confianza["exposicion_monetaria"] is None
-    assert confianza["estrellas_en_riesgo"] == {"count": 0, "employee_keys": []}
-    assert confianza["vacantes_criticas_sin_sucesor"] == {"count": 0, "roles": []}
+    assert confianza["estrellas_en_riesgo"] is None
+    assert confianza["vacantes_criticas_sin_sucesor"] is None
+
+
+@pytest.mark.asyncio
+async def test_estrellas_needs_a_non_empty_materialized_nine_box(monkeypatch):
+    extra = {
+        "sap_successfactors_talent_retention_risk": [
+            {
+                "user_id": "deduced-0",
+                "risk_band": "high",
+                "retention_risk_score": 88.0,
+                "invalid_score_input": False,
+            }
+        ],
+    }
+
+    async def empty_nine_box(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        return extra.get(dataset, [])
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", empty_nine_box)
+
+    result = await control_room_service.sap_successfactors_talent_9box(USER)
+
+    assert result["confianza"]["estrellas_en_riesgo"] is None
 
 
 @pytest.mark.asyncio
@@ -219,21 +242,6 @@ async def test_confianza_computes_real_tiles_from_gold_aggregates(monkeypatch):
                 "invalid_score_input": True,
             },
         ],
-        "sap_successfactors_talent_role_profile": [
-            {
-                "job_code": "MGR",
-                "role_name": "Manager",
-                "required_skills_status": "blocked",
-            },
-            {
-                "job_code": "REP",
-                "role_name": "Representante",
-                "required_skills_status": "blocked",
-            },
-        ],
-        "sap_successfactors_successionnomination_latest": [
-            {"user_id": "cpa-0", "target_position": "MGR"}
-        ],
         "sap_successfactors_talent_learning_certification_status": [
             {
                 "learning_status": "completed",
@@ -287,8 +295,8 @@ async def test_confianza_computes_real_tiles_from_gold_aggregates(monkeypatch):
     ]
     assert "deduced-0" not in str(estrellas)
 
-    vacantes = confianza["vacantes_criticas_sin_sucesor"]
-    assert vacantes == {"count": 1, "roles": ["Representante"]}
+    # Waiting state until succession is published as gold with real criticality.
+    assert confianza["vacantes_criticas_sin_sucesor"] is None
 
     certificaciones = confianza["cobertura_certificaciones"]
     assert certificaciones == {

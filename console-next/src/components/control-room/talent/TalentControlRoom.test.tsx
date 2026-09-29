@@ -166,6 +166,30 @@ describe("TalentControlRoom copy en español", () => {
     expect(markup).toContain("Datos personales protegidos");
     expect(markup).toContain("Talento (capa oro)");
   });
+
+  it("el tooltip de pendiente ya no contradice a la deducción por trayectoria", () => {
+    const cohort: SfTalentDesempenoCohort = {
+      count: 1,
+      band_counts: { high: 1, medium: 0, low: 0 },
+      roster: [
+        {
+          employee_key: "tal_1",
+          display_name: "M. R.",
+          role: "Analista",
+          unit: "Finanzas",
+          performance_band_available: "high",
+          potential_pending: true,
+          fit_band: "insufficient_data",
+        },
+      ],
+      roster_truncated: false,
+    };
+    const markup = renderToStaticMarkup(<DesempenoDisponiblePanel cohort={cohort} />);
+
+    expect(markup).not.toContain("No se infiere del desempeño.");
+    expect(markup).toContain("nunca rellena desempeño faltante o inválido");
+    expect(markup).toContain("ni C/P/A ni la trayectoria son calculables");
+  });
 });
 
 describe("Potencial deducido de trayectoria", () => {
@@ -283,11 +307,23 @@ describe("ConfianzaTilesPanel", () => {
     const markup = renderToStaticMarkup(<ConfianzaTilesPanel confianza={null} />);
 
     expect(markup).toContain("Sin información (requiere Riesgo de retención conectado)");
-    expect(markup).toContain("Sin información (requiere Sucesión conectada)");
+    expect(markup).toContain(
+      "Sin información (requiere proyección de Sucesión publicada y criticidad por rol)",
+    );
     expect(markup).toContain("Sin información (requiere Aprendizaje conectado)");
-    expect(markup).toContain("Sin información (requiere Compensación conectada)");
+    expect(markup).toContain("Sin información (los montos de compensación están protegidos)");
     expect(markup).not.toContain("$");
     expect(markup).not.toContain("undefined");
+  });
+
+  it("mantiene Vacantes en estado de espera aunque el resto tenga datos", () => {
+    const markup = renderToStaticMarkup(
+      <ConfianzaTilesPanel confianza={{ ...confianza, vacantes_criticas_sin_sucesor: null }} />,
+    );
+
+    expect(markup).toContain(
+      "Sin información (requiere proyección de Sucesión publicada y criticidad por rol)",
+    );
   });
 });
 
@@ -300,6 +336,7 @@ describe("SindicalizadoPanel", () => {
     expect(markup).toContain("Tabulador salarial");
     expect(markup).toContain("Contrato colectivo");
     expect(markup).toContain("employee_class (EmpEmployment)");
+    expect(markup).toContain("Cobertura de certificaciones (global, sin segmentar)");
     expect(markup).toContain("Sin información (requiere Aprendizaje conectado)");
   });
 

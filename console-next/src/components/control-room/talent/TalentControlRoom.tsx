@@ -428,7 +428,7 @@ export function TalentAnomalyList({
 
 const PERF_BAND_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1 };
 const POTENCIAL_PENDIENTE_TOOLTIP =
-  "El Potencial requiere Competencias y Aspiración. SuccessFactors aún no expone esas entidades para este tenant, por eso permanece pendiente. No se infiere del desempeño.";
+  "El Potencial requiere Competencias y Aspiración declaradas, o una deducción por trayectoria observada. La deducción exige desempeño real válido y nunca rellena desempeño faltante o inválido; permanece pendiente cuando ni C/P/A ni la trayectoria son calculables.";
 const POTENCIAL_DEDUCIDO_TOOLTIP =
   "Potencial calculado por trayectoria y desempeño real observado (sin PII expuesta)";
 
@@ -713,7 +713,9 @@ export function ConfianzaTilesPanel({ confianza }: { confianza?: SfTalentConfian
             </p>
           </>
         ) : (
-          <p className={emptyClass}>Sin información (requiere Sucesión conectada)</p>
+          <p className={emptyClass}>
+            Sin información (requiere proyección de Sucesión publicada y criticidad por rol)
+          </p>
         )}
       </div>
       <div className={tileClass}>
@@ -752,7 +754,7 @@ export function ConfianzaTilesPanel({ confianza }: { confianza?: SfTalentConfian
             ))}
           </ul>
         ) : (
-          <p className={emptyClass}>Sin información (requiere Compensación conectada)</p>
+          <p className={emptyClass}>Sin información (los montos de compensación están protegidos)</p>
         )}
         {exposicion?.totals?.length ? (
           <p className="mt-1 text-xs text-muted-foreground">
@@ -790,7 +792,7 @@ export function SindicalizadoPanel({ confianza }: { confianza?: SfTalentConfianz
       <div className="rounded-xl border bg-card p-4 shadow-sm dark:border-emerald-400/20 dark:bg-[#081423]">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">
-            Cobertura de certificaciones
+            Cobertura de certificaciones (global, sin segmentar)
           </p>
           <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
             dato real disponible
