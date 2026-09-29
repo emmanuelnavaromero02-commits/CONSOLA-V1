@@ -25,6 +25,7 @@ const agentsApi = vi.hoisted(() => ({
   updateAgentStatus: vi.fn(),
   deleteAgent: vi.fn(),
   invokeAgent: vi.fn(),
+  getMeAccess: vi.fn(),
 }));
 const studio = vi.hoisted(() => ({ hooks: {} as Record<string, unknown> }));
 
@@ -145,6 +146,7 @@ beforeEach(() => {
     "mcp-infra": [{ name: "cartridge_get_manifest", risk_level: "read" }, { name: "request_admin_help" }],
   });
   agentsApi.listAgentRuns.mockResolvedValue([]);
+  agentsApi.getMeAccess.mockResolvedValue({ permissions: ["agents.read", "agents.execute"] });
   studio.hooks = {
     useStudioEntities: {
       data: { cartridge: "acme", total: 1, entities: [{ name: "Invoice", display_name: "Facturas", mode: "full", dag_id: "acme_invoice" }] },
@@ -168,6 +170,8 @@ afterEach(async () => {
 describe("business copy guard", () => {
   it("keeps technical vocabulary out of the agent editor default views", async () => {
     await render(<AgentsConsole />);
+    expectBusinessCopy(container, "guardians catalog");
+    await click(button("Administración técnica"));
     expectBusinessCopy(container, "agents list");
     await click(button(/Monitor de talento/));
     for (const tab of ["Configuración", "Herramientas", "Conocimiento", "Tareas", "Ejecuciones", "Probar"]) {

@@ -12,6 +12,7 @@ const PRODUCT_SURFACES = [
   new URL("../components/control-room/experience/ExperienceEmptyDiagnostic.tsx", import.meta.url),
   new URL("../components/workspace/CopilotActionsConsole.tsx", import.meta.url),
   new URL("../components/agents/AgentsConsole.tsx", import.meta.url),
+  new URL("../components/agents/GuardiansCatalog.tsx", import.meta.url),
   new URL("../components/schedule/FrequencyPicker.tsx", import.meta.url),
 ];
 
