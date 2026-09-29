@@ -241,6 +241,38 @@ datasets:
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_talent_signals.sql
       - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_b1
+    dataset: sap_b1_margin_kpis_month
+    readiness: partial
+    reason: "Requiere extraccion de SAP Business One: sin las facturas, notas de credito y costos del cliente no hay margen mensual real."
+    blockers:
+      - "Conectar el agente de SAP Business One y completar la carga de facturas, notas de credito y costos por empresa."
+    evidence:
+      - cartridges/sap_b1/datasets/sap_b1_margin_kpis_month.sql
+  - cartridge: sap_b1
+    dataset: sap_b1_kpi_reconciliation
+    readiness: partial
+    reason: "Requiere extraccion de SAP Business One y la corrida manual de Finanzas: sin las dos no hay filas que conciliar."
+    blockers:
+      - "Conectar el agente de SAP Business One y cargar la corrida manual de Finanzas desde Parametros."
+    evidence:
+      - cartridges/sap_b1/datasets/sap_b1_kpi_reconciliation.sql
+  - cartridge: sap_b1
+    dataset: sap_b1_batch_expiry
+    readiness: partial
+    reason: "Requiere extraccion de SAP Business One: sin lotes, caducidades y existencias del cliente no hay riesgo de caducidad real."
+    blockers:
+      - "Conectar el agente de SAP Business One y completar la carga de lotes, existencias y facturas de venta."
+    evidence:
+      - cartridges/sap_b1/datasets/sap_b1_batch_expiry.sql
+  - cartridge: sap_b1
+    dataset: sap_b1_item_coverage
+    readiness: partial
+    reason: "Requiere extraccion de SAP Business One: sin existencias, ordenes de compra y ordenes de produccion no hay cobertura real."
+    blockers:
+      - "Conectar el agente de SAP Business One y completar la carga de existencias, ordenes de compra y ordenes de produccion."
+    evidence:
+      - cartridges/sap_b1/datasets/sap_b1_item_coverage.sql
 knowledge_bits:
   - cartridge: sap_hcm
     id: kb_sap_hcm_employees_anomalies_active
