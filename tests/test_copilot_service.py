@@ -1466,3 +1466,23 @@ def test_copilot_local_app_tool_needs_approval_then_returns_the_card(
         "/analytics/viewer?app=ventas_semana" in str(m["tool_results"])
         for m in tool_messages
     )
+
+
+def test_fact_extraction_llm_calls_are_tagged_other_surface(copilot_module, monkeypatch):
+    captured = {}
+
+    async def fake_chat(**kwargs):
+        captured["surface"] = kwargs.get("surface", "missing")
+        return "ok", [], []
+
+    async def fake_extract(*, user_id, conversation_history, llm_call, max_new_facts, user_context=None):
+        await llm_call("sys", [])
+
+    monkeypatch.setattr(copilot_module.llm_client, "chat", fake_chat)
+    monkeypatch.setattr(copilot_module.memory_service, "extract_facts_from_turn", fake_extract)
+
+    _run(copilot_module._maybe_extract_facts(
+        user_id=1, history=[], reply_text="hola", user_context={"id": 1},
+    ))
+
+    assert captured["surface"] == "other"

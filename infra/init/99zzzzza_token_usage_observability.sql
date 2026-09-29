@@ -23,6 +23,10 @@ END $$;
 
 ALTER TABLE token_usage VALIDATE CONSTRAINT chk_token_usage_surface;
 
+CREATE INDEX IF NOT EXISTS idx_audit_events_copilot_sends
+    ON audit_events(action)
+    WHERE action = 'copilot.message.send';
+
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('99zzzzza_token_usage_observability.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;

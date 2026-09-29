@@ -388,7 +388,7 @@ async def test_openai_compat_chat_records_duration_and_surface(monkeypatch):
 def test_named_callers_tag_their_llm_surface():
     repo = Path(__file__).resolve().parents[1]
     expectations = {
-        "console/app/services/copilot_service.py": ('surface="copilot"', 2),
+        "console/app/services/copilot_service.py": ('surface="copilot"', 1),
         "console/app/services/studio_assistant.py": ('surface="studio"', 1),
         "console/app/domains/data_platform/rag_requests.py": ('surface="rag"', 1),
         "workspace/app/services/llm_client.py": ('surface="workspace"', 2),
@@ -396,3 +396,8 @@ def test_named_callers_tag_their_llm_surface():
     for path, (needle, minimum) in expectations.items():
         source = (repo / path).read_text(encoding="utf-8")
         assert source.count(needle) >= minimum, f"{path} must tag {needle}"
+    copilot_source = (repo / "console/app/services/copilot_service.py").read_text(encoding="utf-8")
+    extraction = copilot_source[copilot_source.index("async def _maybe_extract_facts") :]
+    extraction = extraction[: extraction.index("async def run_turn")]
+    assert 'surface="other"' in extraction
+    assert 'surface="copilot"' not in extraction

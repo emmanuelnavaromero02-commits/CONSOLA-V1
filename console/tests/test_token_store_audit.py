@@ -60,7 +60,10 @@ class FakeConn:
 
     async def fetchval(self, query, *args):
         self.fetchvals.append((query, args))
-        return self.fetchval_results.pop(0) if self.fetchval_results else None
+        result = self.fetchval_results.pop(0) if self.fetchval_results else None
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakePool:
@@ -214,6 +217,53 @@ async def test_token_store_summary_excludes_unpriced_models_from_total(token_sto
     assert summary["calls"] == 5
     assert summary["avg_response_ms"] == pytest.approx(250.0)
     assert summary["queries_count"] == 7
+
+
+@pytest.mark.anyio
+async def test_token_store_summary_keeps_totals_when_latency_query_fails(token_store_module, monkeypatch):
+    rows = [
+        {
+            "model": "claude-haiku-4-5-20251001",
+            "input_tokens": 1_000_000,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+            "calls": 3,
+        },
+    ]
+    conn = FakeConn(rows=rows, fetchval_results=[RuntimeError("timeout"), 6])
+    _install_pool(monkeypatch, token_store_module, conn)
+
+    summary = await token_store_module.summary()
+
+    assert summary["available"] is True
+    assert summary["calls"] == 3
+    assert summary["cost_usd"] == pytest.approx(0.80)
+    assert summary["avg_response_ms"] is None
+    assert summary["queries_count"] == 6
+
+
+@pytest.mark.anyio
+async def test_token_store_summary_keeps_totals_when_queries_count_fails(token_store_module, monkeypatch):
+    rows = [
+        {
+            "model": "claude-haiku-4-5-20251001",
+            "input_tokens": 1_000_000,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+            "calls": 3,
+        },
+    ]
+    conn = FakeConn(rows=rows, fetchval_results=[125.0, RuntimeError("timeout")])
+    _install_pool(monkeypatch, token_store_module, conn)
+
+    summary = await token_store_module.summary()
+
+    assert summary["available"] is True
+    assert summary["calls"] == 3
+    assert summary["avg_response_ms"] == pytest.approx(125.0)
+    assert summary["queries_count"] is None
 
 
 @pytest.mark.anyio

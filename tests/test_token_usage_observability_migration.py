@@ -38,12 +38,21 @@ def test_migration_constrains_surface_to_known_values():
     assert "VALIDATE CONSTRAINT chk_token_usage_surface" in code
 
 
+def test_migration_indexes_copilot_send_audit_lookups():
+    code = _code(_sql())
+    assert "CREATE INDEX IF NOT EXISTS idx_audit_events_copilot_sends" in code
+    assert "ON audit_events(action)" in code
+    assert "WHERE action = 'copilot.message.send'" in code
+
+
 def test_migration_is_idempotent_and_transaction_safe():
     code = _code(_sql())
     assert not re.search(r"^\s*(BEGIN|COMMIT|ROLLBACK)\s*;", code, re.I | re.M)
     assert "CONCURRENTLY" not in code.upper()
     for statement in re.findall(r"ADD COLUMN [^,;]+", code):
         assert "IF NOT EXISTS" in statement, statement
+    for index in re.findall(r"CREATE (?:UNIQUE )?INDEX[^;]+;", code):
+        assert "IF NOT EXISTS" in index
     assert "DROP TABLE" not in code.upper()
     assert "DELETE FROM" not in code.upper()
     assert "UPDATE token_usage" not in code

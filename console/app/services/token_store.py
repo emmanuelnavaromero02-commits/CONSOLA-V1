@@ -167,25 +167,36 @@ async def summary(user_context: dict | None = None) -> dict:
                     ORDER BY model
                 """, *args)
                 latency_where = f"{where_clause} AND" if where_clause else "WHERE"
-                avg_response_ms = await conn.fetchval(f"""
-                    SELECT AVG(duration_ms)
-                    FROM token_usage
-                    {latency_where} duration_ms IS NOT NULL AND surface = 'copilot'
-                """, *args)
-                if scoped:
-                    queries_count = await conn.fetchval("""
-                        SELECT COUNT(*)::int
-                        FROM audit_events ae
-                        JOIN conversations c ON c.id = ae.conversation_id
-                        WHERE ae.action = 'copilot.message.send'
-                          AND c.workspace_id = $1::uuid
-                    """, workspace_id)
-                else:
-                    queries_count = await conn.fetchval("""
-                        SELECT COUNT(*)::int
-                        FROM audit_events
-                        WHERE action = 'copilot.message.send'
-                    """)
+                # Savepoints: an observability query failure must not void the totals.
+                avg_response_ms = None
+                try:
+                    async with conn.transaction():
+                        avg_response_ms = await conn.fetchval(f"""
+                            SELECT AVG(duration_ms)
+                            FROM token_usage
+                            {latency_where} duration_ms IS NOT NULL AND surface = 'copilot'
+                        """, *args)
+                except Exception:
+                    avg_response_ms = None
+                queries_count = None
+                try:
+                    async with conn.transaction():
+                        if scoped:
+                            queries_count = await conn.fetchval("""
+                                SELECT COUNT(*)::int
+                                FROM audit_events ae
+                                JOIN conversations c ON c.id = ae.conversation_id
+                                WHERE ae.action = 'copilot.message.send'
+                                  AND c.workspace_id = $1::uuid
+                            """, workspace_id)
+                        else:
+                            queries_count = await conn.fetchval("""
+                                SELECT COUNT(*)::int
+                                FROM audit_events
+                                WHERE action = 'copilot.message.send'
+                            """)
+                except Exception:
+                    queries_count = None
 
         total_in = total_out = total_calls = 0
         total_cache_create = total_cache_read = 0
@@ -228,7 +239,7 @@ async def summary(user_context: dict | None = None) -> dict:
             "models":                models,
             "unpriced_models":       unpriced_models,
             "avg_response_ms":       float(avg_response_ms) if avg_response_ms is not None else None,
-            "queries_count":         int(queries_count) if queries_count is not None else 0,
+            "queries_count":         int(queries_count) if queries_count is not None else None,
         }
     except Exception:
         return _unavailable_summary()
