@@ -470,6 +470,7 @@ class FinanceReconciliation(B1Result):
     without_platform: int | None = None
     platform_only: int | None = None
     within_pct: float | None = None
+    tolerance_pct: float | None = None
     periods: list[str] = field(default_factory=list)
     outliers: list[dict[str, Any]] = field(default_factory=list)
     ledger_months: int | None = None
@@ -485,6 +486,7 @@ async def query_reconciliacion_finanzas(user: dict | None, *, as_of: date | None
                    COUNT(*) FILTER (WHERE status = 'fuera_tolerancia')::bigint AS outside,
                    COUNT(*) FILTER (WHERE status = 'sin_dato_plataforma')::bigint AS missing,
                    COUNT(*) FILTER (WHERE status = 'solo_plataforma')::bigint AS platform_only,
+                   MAX(tolerance_pct) FILTER (WHERE status <> 'solo_plataforma')::float8 AS tolerance_pct,
                    array_agg(DISTINCT period ORDER BY period) FILTER (WHERE status <> 'solo_plataforma') AS periods
               FROM {rel.sql}
              WHERE {GOLD_SCOPE_PREDICATE}
@@ -536,6 +538,7 @@ async def query_reconciliacion_finanzas(user: dict | None, *, as_of: date | None
             without_platform=as_int(totals["missing"]),
             platform_only=as_int(totals["platform_only"]),
             within_pct=_pct(within, rows_total),
+            tolerance_pct=as_float(totals["tolerance_pct"]),
             periods=periods,
             outliers=[
                 {"company": row["company"], "period": row["period"], "indicator": row["indicator"],

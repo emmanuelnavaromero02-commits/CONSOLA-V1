@@ -138,7 +138,8 @@ async def test_destroyers_name_customers_only_when_asked(monkeypatch):
 async def test_finance_matrix_counts_statuses_and_explains_outliers(monkeypatch):
     conn = _conn(b1.KPI_RECONCILIATION_DATASET, b1._KPI_RECON_REQUIRED, {
         "sap_b1.reconciliacion_finanzas.totals": {"rows": 10, "within": 8, "outside": 1, "missing": 1,
-                                                  "platform_only": 2, "periods": ["2026-07", "2026-08"]},
+                                                  "platform_only": 2, "tolerance_pct": Decimal("1.5"),
+                                                  "periods": ["2026-07", "2026-08"]},
         "sap_b1.reconciliacion_finanzas.outliers": [
             {"company": "empresa_a", "period": "2026-08", "indicator": "margen_bruto", "dimension": "cliente",
              "dim_key": "C-1", "dim_label": "Cliente", "unit": "monto", "finance_value": Decimal("100"),
@@ -153,6 +154,7 @@ async def test_finance_matrix_counts_statuses_and_explains_outliers(monkeypatch)
     install_gold_connect(monkeypatch, conn)
     result = await b1.query_reconciliacion_finanzas(user_for(), as_of=AS_OF)
     assert (result.rows, result.within, result.within_pct, result.period) == (10, 8, 80.0, "2026-08")
+    assert result.tolerance_pct == 1.5
     assert result.outliers[0]["descuentos_pie_factura"] == 5.0 and result.outliers[0]["costo_aplicado"] == 300.0
     assert result.breaches[0] == "empresa_a 2026-08: margen bruto cliente C-1 difiere -2.0 % contra Finanzas."
     assert result.breaches[1] == "empresa_a 2026-08: margen bruto cliente X de Finanzas no existe en la plataforma."
@@ -163,12 +165,12 @@ async def test_finance_matrix_counts_statuses_and_explains_outliers(monkeypatch)
 async def test_finance_matrix_without_a_run_is_degraded_with_the_reason(monkeypatch):
     install_gold_connect(monkeypatch, _conn(b1.KPI_RECONCILIATION_DATASET, b1._KPI_RECON_REQUIRED, {
         "sap_b1.reconciliacion_finanzas.totals": {"rows": 0, "within": 0, "outside": 0, "missing": 0,
-                                                  "platform_only": 0, "periods": None},
+                                                  "platform_only": 0, "tolerance_pct": None, "periods": None},
         "sap_b1.reconciliacion_finanzas.outliers": [],
     }))
     result = await b1.query_reconciliacion_finanzas(user_for(), as_of=AS_OF)
     assert result.status == "degraded" and result.notes == ["Finanzas todavía no carga su corrida manual"]
-    assert result.within_pct is None and not result.breaches
+    assert result.within_pct is None and result.tolerance_pct is None and not result.breaches
 
 
 @pytest.mark.asyncio

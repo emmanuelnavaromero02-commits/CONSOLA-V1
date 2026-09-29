@@ -450,6 +450,7 @@ class FinanceReconciliationKpi(B1KpiMetricBase):
     without_platform: int | None = None
     platform_only: int | None = None
     within_pct: Number = None
+    tolerance_pct: Number = None
     periods: list[str] = Field(default_factory=list)
     outliers: list[FinanceReconciliationRow] = Field(default_factory=list)
     ledger_months: int | None = None
