@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, type Ref } from "react";
 import {
+  AppWindow,
   Bot,
   BrainCircuit,
   Coins,
