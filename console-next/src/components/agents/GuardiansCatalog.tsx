@@ -178,10 +178,13 @@ export function GuardiansCatalog({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             const runs = runQueries[index]?.data ?? [];
             const runsFailed = Boolean(runQueries[index]?.isError);
             const lastRun = runs[0];
-            const health = guardianHealth(lastRun);
+            const health: { label: string; tone: HealthTone } = runsFailed
+              ? { label: "Sin información", tone: "none" }
+              : guardianHealth(lastRun);
             const schedule = guardianSchedule(guardian);
             const active = guardian.is_active !== false;
             const lastRunDate = formatRunDate(lastRun?.started_at || lastRun?.finished_at);
+            const inspecting = inspect.isPending && inspect.variables?.id === guardian.id;
             return (
               <article key={guardian.id || index} data-testid="guardian-card" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -221,12 +224,12 @@ export function GuardiansCatalog({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                   <div>
                     <button
                       type="button"
-                      disabled={inspect.isPending}
+                      disabled={inspecting}
                       onClick={() => inspect.mutate(guardian)}
                       className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60"
                     >
                       <Play aria-hidden className="h-4 w-4" />
-                      {inspect.isPending ? "Iniciando..." : "Inspeccionar ahora"}
+                      {inspecting ? "Iniciando..." : "Inspeccionar ahora"}
                     </button>
                   </div>
                 ) : null}

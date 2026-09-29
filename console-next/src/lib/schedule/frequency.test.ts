@@ -51,7 +51,7 @@ describe("describeSchedule", () => {
 
   it("never shows the raw expression for custom schedules", () => {
     expect(describeSchedule("45 6 * * *", "UTC")).toBe("Diario · 06:45 (UTC)");
-    expect(describeSchedule("2,17,32,47 * * * *", "UTC")).toBe("Varias veces por hora (:02, :17, :32, :47)");
+    expect(describeSchedule("2,17,32,47 * * * *", "UTC")).toBe("Varias veces por hora (:02, :17, :32, :47) (UTC)");
     expect(describeSchedule("*/15 * * * *", "Asia/Tokyo")).toBe("Programación personalizada (Asia/Tokyo)");
     expect(describeSchedule("*/15 * * * *", "Asia/Tokyo")).not.toContain("*/15");
   });

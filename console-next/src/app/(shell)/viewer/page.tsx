@@ -1495,7 +1495,7 @@ const LAYER_NAMES: Record<string, string> = { raw: "cruda", bronze: "bronce", si
 
 function layerName(layer: string | null | undefined): string {
   const key = (layer || "").toLowerCase();
-  return LAYER_NAMES[key] ?? "Sin información";
+  return LAYER_NAMES[key] ?? "sin información";
 }
 
 function LayerPill({ layer }: { layer?: string | null }) {

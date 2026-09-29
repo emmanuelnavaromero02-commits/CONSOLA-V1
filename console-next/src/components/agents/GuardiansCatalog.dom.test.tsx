@@ -145,4 +145,43 @@ describe("GuardiansCatalog", () => {
     await render();
     expect(container.textContent).toContain("Sin corridas registradas");
   });
+
+  it("says Sin información when the runs query fails, not Sin corridas", async () => {
+    api.listAgentRuns.mockRejectedValue(new Error("boom"));
+    await render();
+    expect(container.textContent).toContain("Sin información");
+    expect(container.textContent).not.toContain("Sin corridas registradas");
+    expect(container.textContent).not.toContain("Última corrida exitosa");
+  });
+
+  it("disables only the card being inspected", async () => {
+    let release: (value: unknown) => void = () => undefined;
+    api.invokeAgent.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    api.listAgents.mockResolvedValue([GUARDIAN, { ...GUARDIAN, id: "g-2", name: "Enlace Operativo Monitor", slug: "enlace", cartridge_id: "salesforce" }]);
+    await render();
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>("button")].filter(
+      (element) => element.textContent?.trim() === "Inspeccionar ahora",
+    );
+    expect(buttons).toHaveLength(2);
+    await act(async () => {
+      buttons[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const pending = [...container.querySelectorAll<HTMLButtonElement>("button")].filter(
+      (element) => element.textContent?.trim() === "Iniciando...",
+    );
+    expect(pending).toHaveLength(1);
+    expect(pending[0].disabled).toBe(true);
+    const others = [...container.querySelectorAll<HTMLButtonElement>("button")].filter(
+      (element) => element.textContent?.trim() === "Inspeccionar ahora",
+    );
+    expect(others).toHaveLength(1);
+    expect(others[0].disabled).toBe(false);
+    await act(async () => {
+      release({ queued: true });
+    });
+    await settle();
+  });
 });

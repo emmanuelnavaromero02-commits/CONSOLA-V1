@@ -1254,7 +1254,7 @@ function RunsTab(props: {
                 </td>
                 <td className="px-3 py-2">{runStatusCopy(run.status)}</td>
                 <td className="px-3 py-2 text-xs text-muted-foreground">{formatDate(run.started_at)}</td>
-                <td className="px-3 py-2 text-xs">{run.n_tool_calls ?? 0}</td>
+                <td className="px-3 py-2 text-xs">{run.n_tool_calls ?? "Sin información"}</td>
               </tr>
             )) : (
               <tr><td colSpan={4} className="px-3 py-8 text-center text-sm text-muted-foreground">Sin ejecuciones registradas.</td></tr>
@@ -1286,7 +1286,7 @@ function RunDetail({ run }: { run: AgentRunRecord }) {
         </div>
         <div className="rounded-md border bg-card p-2.5">
           <dt className="text-xs uppercase tracking-wide text-muted-foreground">{GLOSSARY.tools.other}</dt>
-          <dd className="mt-1 font-medium">{run.n_tool_calls ?? 0}</dd>
+          <dd className="mt-1 font-medium">{run.n_tool_calls ?? "Sin información"}</dd>
         </div>
         <div className="rounded-md border bg-card p-2.5">
           <dt className="text-xs uppercase tracking-wide text-muted-foreground">Inicio</dt>

@@ -673,7 +673,7 @@ export function SuccessFactorsGoldPanel({
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{signal.recommendation || "Revisar cobertura antes de decidir."}</p>
                       <p className="mt-2 text-xs font-medium text-violet-700 dark:text-violet-300">
-                        {formatNumber(signal.affected_count ?? 0)} afectados · {statusCopy(signal.status || "recommendation_only", SIGNAL_STATUS_COPY)}
+                        {signal.affected_count == null ? "Sin información" : `${formatNumber(signal.affected_count)} afectados`} · {statusCopy(signal.status || "recommendation_only", SIGNAL_STATUS_COPY)}
                       </p>
                     </div>
                   ))}

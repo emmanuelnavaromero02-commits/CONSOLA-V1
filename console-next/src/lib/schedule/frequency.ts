@@ -154,6 +154,6 @@ export function describeSchedule(cron: string | null | undefined, timeZone?: str
   const daily = dailyParts(normalizeCron(cron));
   if (daily) return `Diario · ${clock(daily.hour, daily.minute)} (${zone})`;
   const minutes = hourlyMinutes(cron);
-  if (minutes) return `Varias veces por hora (${minutes.map((minute) => `:${String(minute).padStart(2, "0")}`).join(", ")})`;
+  if (minutes) return `Varias veces por hora (${minutes.map((minute) => `:${String(minute).padStart(2, "0")}`).join(", ")}) (${zone})`;
   return `Programación personalizada (${zone})`;
 }
