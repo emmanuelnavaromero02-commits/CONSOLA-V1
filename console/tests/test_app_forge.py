@@ -215,6 +215,45 @@ async def test_forge_publish_error_stops_before_registration(forge_env, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_forge_runs_the_pre_publish_check_after_generation(forge_env):
+    order: list[str] = []
+
+    async def check(app_name):
+        order.append(f"check:{app_name}:{len(forge_env['chat'])}:{len(forge_env['invoke'])}")
+
+    result = await app_forge.generate_and_publish_app(
+        _user("workspace_admin"),
+        name="ventas_hook",
+        objective="objetivo",
+        datasets=["ventas_diarias"],
+        before_publish=check,
+    )
+    assert result["name"] == "ventas_hook"
+    assert order == ["check:ventas_hook:1:1"]
+    assert [tool for _srv, tool, _args in forge_env["invoke"]] == ["get_schema", "publish_app"]
+
+
+@pytest.mark.asyncio
+async def test_forge_pre_publish_rejection_publishes_nothing(forge_env):
+    class NameTaken(Exception):
+        pass
+
+    async def check(app_name):
+        raise NameTaken(app_name)
+
+    with pytest.raises(NameTaken):
+        await app_forge.generate_and_publish_app(
+            _user("workspace_admin"),
+            name="ventas_tomada",
+            objective="objetivo",
+            datasets=["ventas_diarias"],
+            before_publish=check,
+        )
+    assert [tool for _srv, tool, _args in forge_env["invoke"]] == ["get_schema"]
+    assert forge_env["register"] == []
+
+
+@pytest.mark.asyncio
 async def test_forge_rejects_unknown_datasets(forge_env, monkeypatch):
     async def failing_schema(server_id, tool, args, **kwargs):
         return {"error": "Dataset 'x' not found"}

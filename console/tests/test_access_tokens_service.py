@@ -250,6 +250,9 @@ async def test_list_and_revoke_are_scoped_to_the_user(pool):
     )
     pool.row = None
     assert await access_tokens.revoke_token(7, token_id) is None
+    for legacy in ({"omega_auth_revoke_access_token": False}, {"omega_auth_revoke_access_token": True}, {"token_id": None}):
+        pool.row = legacy
+        assert await access_tokens.revoke_token(7, token_id) is None
     calls = len(pool.calls)
     assert await access_tokens.revoke_token(7, "not-a-uuid") is None
     assert len(pool.calls) == calls

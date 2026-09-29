@@ -64,7 +64,7 @@ class GatewayHarness:
 def in_memory_name_lock(held: set[str]):
     @contextlib.asynccontextmanager
     async def app_name_lock(user, *, name):
-        key = f"{user['active_workspace_id']}:{name.strip().casefold()}"
+        key = name.strip().casefold()
         if key in held:
             yield False
             return

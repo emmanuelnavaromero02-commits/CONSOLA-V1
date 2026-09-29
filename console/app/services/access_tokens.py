@@ -193,7 +193,8 @@ async def revoke_token(user_id: int, token_id: str) -> dict[str, Any] | None:
     row = await pool.fetchrow(
         "SELECT * FROM omega_auth_revoke_access_token($1, $2)", int(user_id), token_uuid
     )
-    if row is None:
+    # A legacy boolean revoke function yields a row without token_id; never report that as revoked.
+    if row is None or not dict(row).get("token_id"):
         return None
     data = dict(row)
     return {

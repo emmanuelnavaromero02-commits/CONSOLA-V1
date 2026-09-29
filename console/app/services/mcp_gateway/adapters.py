@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import AsyncIterator, Mapping
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
@@ -9,6 +10,8 @@ from pydantic import BaseModel
 
 from app.services.mcp_gateway.errors import GatewayError
 
+
+logger = logging.getLogger(__name__)
 
 SAP_B1_VIEWS: dict[str, tuple[str, ...]] = {
     "finanzas": ("sap_b1_margin_kpis",),
@@ -153,9 +156,9 @@ async def app_name_in_use(user: dict[str, Any], *, name: str) -> bool:
         )
 
 
-def app_name_lock_key(user: dict[str, Any], name: str) -> str:
-    checked = require_gateway_user(user)
-    return f"omega_ia_app_name:{checked['active_workspace_id']}:{name.strip().casefold()}"
+def app_name_lock_key(name: str) -> str:
+    # analytic_apps.name is a global primary key, so the lock spans every workspace.
+    return f"omega_ia_app_name:{name.strip().casefold()}"
 
 
 async def _lock_connection() -> Any:
@@ -166,13 +169,18 @@ async def _lock_connection() -> Any:
     dsn = db_dsn()
     if not dsn:
         raise GatewayError(503, "servicio_no_disponible")
-    return await asyncpg.connect(dsn, timeout=5, command_timeout=10)
+    try:
+        return await asyncpg.connect(dsn, timeout=5, command_timeout=10)
+    except Exception as exc:
+        logger.warning("ia gateway app name lock connection failed: %s", type(exc).__name__)
+        raise GatewayError(503, "servicio_no_disponible") from None
 
 
 @contextlib.asynccontextmanager
 async def app_name_lock(user: dict[str, Any], *, name: str) -> AsyncIterator[bool]:
     """Session advisory lock on a dedicated (non-pooled) connection held for the whole publish."""
-    key = app_name_lock_key(user, name)
+    require_gateway_user(user)
+    key = app_name_lock_key(name)
     conn = await _lock_connection()
     try:
         acquired = bool(await conn.fetchval(APP_NAME_LOCK_SQL, key))
@@ -194,6 +202,7 @@ async def create_analytic_app(
     objective: str,
     datasets: list[str],
     description: str,
+    before_publish: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     from app.services import app_forge
 
@@ -205,6 +214,7 @@ async def create_analytic_app(
             description=description,
             objective=objective,
             datasets=list(datasets),
+            before_publish=before_publish,
         )
     )
 
