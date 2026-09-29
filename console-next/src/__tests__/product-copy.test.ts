@@ -3,8 +3,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const PRODUCT_SURFACES = [
-  new URL("../app/(shell)/operational-intelligence/page.tsx", import.meta.url),
-  new URL("../app/(shell)/supervised-actions/page.tsx", import.meta.url),
+  new URL("../components/control-room/phases/ControlRoomPhases.tsx", import.meta.url),
+  new URL("../components/control-room/phases/PhaseDecide.tsx", import.meta.url),
+  new URL("../components/control-room/phases/PhaseEjecuta.tsx", import.meta.url),
+  new URL("../components/control-room/phases/PhaseSupervisa.tsx", import.meta.url),
+  new URL("../components/control-room/phases/SupervisedActionsQueue.tsx", import.meta.url),
+  new URL("../components/control-room/phases/PhaseEvoluciona.tsx", import.meta.url),
+  new URL("../components/control-room/experience/ExperienceEmptyDiagnostic.tsx", import.meta.url),
   new URL("../components/workspace/CopilotActionsConsole.tsx", import.meta.url),
   new URL("../components/agents/AgentsConsole.tsx", import.meta.url),
   new URL("../components/schedule/FrequencyPicker.tsx", import.meta.url),

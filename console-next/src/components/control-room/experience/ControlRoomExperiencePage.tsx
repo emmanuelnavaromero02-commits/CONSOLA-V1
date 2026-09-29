@@ -21,6 +21,7 @@ import { useControlRoomRefresh } from "@/lib/control-room/use-control-room-refre
 import { cn } from "@/lib/utils";
 
 import { ExperienceActionDialog } from "./ExperienceActionDialog";
+import { ExperienceEmptyDiagnostic } from "./ExperienceEmptyDiagnostic";
 import { ExperienceExceptions } from "./ExperienceExceptions";
 import { ExperienceLiveBadge } from "./ExperienceLiveBadge";
 import { ExperienceLoadState } from "./ExperienceLoadState";
@@ -77,7 +78,7 @@ export function ControlRoomExperienceContent({
 
       <div className="pt-7">
         {sections.length === 0 ? (
-          <ExperienceLoadState state="empty" />
+          <ExperienceEmptyDiagnostic />
         ) : (
           sections.map((section, index) => (
             <ExperienceSection

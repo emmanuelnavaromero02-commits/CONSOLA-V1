@@ -2,10 +2,9 @@ import { AlertCircle, Loader2, RefreshCcw } from "lucide-react";
 
 import type { ExperienceErrorKind } from "@/lib/control-room/experience-presenter";
 
-type LoadState = "loading" | "empty" | ExperienceErrorKind;
+type LoadState = "loading" | ExperienceErrorKind;
 
 const stateCopy: Record<Exclude<LoadState, "loading">, string> = {
-  empty: "No hay observaciones empresariales para mostrar.",
   forbidden: "No tienes acceso a esta vista.",
   "not-found": "Esta vista no está disponible.",
   unavailable: "No se pudo cargar la información empresarial.",
@@ -30,7 +29,7 @@ export function ExperienceLoadState({
   return (
     <div
       className="flex min-h-64 flex-col items-center justify-center px-4 text-center"
-      role={state === "empty" ? "status" : "alert"}
+      role="alert"
     >
       <AlertCircle aria-hidden className="mb-3 h-6 w-6 text-muted-foreground" />
       <p className="text-sm text-muted-foreground">{stateCopy[state]}</p>

@@ -102,9 +102,11 @@ export interface Decision {
   outcome?: string | null;
   created_at?: string | null;
   closed_at?: string | null;
+  created_by?: string | null;
   created_by_id?: number | null;
   assignee_id?: number | null;
   visibility?: DecisionVisibility | string | null;
+  kpis?: unknown;
   protected?: boolean;
 }
 

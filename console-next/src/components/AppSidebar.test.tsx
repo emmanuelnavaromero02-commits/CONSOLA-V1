@@ -32,27 +32,22 @@ describe("AppSidebar", () => {
     expect(markup).not.toContain("Ajustes");
   });
 
-  it("shows operational intelligence and supervised actions only with their permissions", () => {
-    const permitted = render({
+  it("merges the retired operational entries into the single Control Room entry", () => {
+    const markup = render({
       role: { is_platform_admin: false },
       permissions: ["datasets.read", "control_room.write"],
-      ui_capabilities: {},
-    }, "/operational-intelligence");
+      ui_capabilities: { can_view_control_room: true, can_view_decisions: true },
+    }, "/control-room");
 
-    expect(permitted).toContain("Inteligencia Operativa");
-    expect(permitted).toContain('href="/operational-intelligence"');
-    expect(permitted).toContain("Acciones Supervisadas");
-    expect(permitted).toContain('href="/supervised-actions"');
-    expect(permitted).toContain('aria-current="page"');
-
-    const blocked = render({
-      role: { is_platform_admin: false },
-      permissions: ["workspace.access"],
-      ui_capabilities: {},
-    }, "/operational-intelligence");
-
-    expect(blocked).not.toContain("Inteligencia Operativa");
-    expect(blocked).not.toContain("Acciones Supervisadas");
+    expect(markup).toContain("Control Room");
+    expect(markup).toContain('href="/control-room"');
+    expect(markup).toContain('aria-current="page"');
+    expect(markup).not.toContain('href="/operational-intelligence"');
+    expect(markup).not.toContain('href="/supervised-actions"');
+    expect(markup).not.toContain('href="/decisions"');
+    expect(markup).not.toContain("Inteligencia Operativa");
+    expect(markup).not.toContain("Acciones Supervisadas");
+    expect(markup).not.toContain("Decisiones");
   });
 
   it("marks the active nav item and keeps nested data routes active", () => {

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SupervisedAction } from "@/lib/supervised-actions/types";
 
-import SupervisedActionsPage from "./page";
+import { SupervisedActionsQueue } from "./SupervisedActionsQueue";
 
 const clientBoundary = vi.hoisted(() => ({
   listSupervisedActions: vi.fn(),
@@ -20,10 +20,6 @@ const clientBoundary = vi.hoisted(() => ({
   executeSupervisedAction: vi.fn(),
   rejectSupervisedAction: vi.fn(),
   cancelSupervisedAction: vi.fn(),
-}));
-
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
 vi.mock("@/lib/supervised-actions/client", () => clientBoundary);
@@ -50,7 +46,7 @@ async function renderPage() {
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <SupervisedActionsPage />
+        <SupervisedActionsQueue />
       </QueryClientProvider>,
     );
   });
@@ -76,7 +72,7 @@ afterEach(async () => {
   container.remove();
 });
 
-describe("SupervisedActionsPage sin camino a approve/execute (PR-A sin cablear)", () => {
+describe("SupervisedActionsQueue sin camino a approve/execute (PR-A sin cablear)", () => {
   it("no renderiza CTA de Aprobar ni de Ejecutar, ni siquiera para requires_approval", async () => {
     await renderPage();
 
@@ -118,8 +114,12 @@ describe("SupervisedActionsPage sin camino a approve/execute (PR-A sin cablear)"
     expect(clientBoundary.executeSupervisedAction).not.toHaveBeenCalled();
   });
 
-  it("el módulo de la página no referencia approve ni execute (contrato de superficie)", () => {
-    const source = readFileSync(join(__dirname, "page.tsx"), "utf8");
+  it("el módulo de la cola no referencia approve ni execute (contrato de superficie)", () => {
+    const source = [
+      readFileSync(join(__dirname, "SupervisedActionsQueue.tsx"), "utf8"),
+      readFileSync(join(__dirname, "use-action-mutations.ts"), "utf8"),
+      readFileSync(join(__dirname, "PhaseSupervisa.tsx"), "utf8"),
+    ].join("\n");
 
     expect(source).not.toMatch(/approveSupervisedAction/);
     expect(source).not.toMatch(/executeSupervisedAction/);

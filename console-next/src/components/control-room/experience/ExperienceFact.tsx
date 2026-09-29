@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { COUNCIL_LINK_LABEL } from "./ExperienceActionDialog";
 import { FactFallbackReading } from "./FactFallbackReading";
 
-export const COUNCIL_HREF = "/decisions?tab=consejo";
+export const COUNCIL_HREF = "/control-room?fase=ejecuta";
 
 const severityStyle = {
   critical: "border-destructive/30 bg-destructive/10 text-destructive",
