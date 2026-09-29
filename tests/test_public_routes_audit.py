@@ -19,6 +19,8 @@ FORBIDDEN_PUBLIC = {
     "/api/users", "/api/admin/users",
     "/api/vault", "/api/datasets",
     "/studio/import", "/studio/cartridges",
+    "/api/ia/v1/whoami", "/api/ia/v1/actions/execute", "/api/ia/v1/mcp",
+    "/api/ia/v1/actions", "/api/me/access-tokens",
 }
 
 

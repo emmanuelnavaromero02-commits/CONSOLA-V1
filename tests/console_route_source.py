@@ -16,6 +16,8 @@ CONSOLE_ROUTER_MODULES = (
     CONSOLE_ROUTERS / "pipeline_automations.py",
     CONSOLE_ROUTERS / "catalog_copilot.py",
     CONSOLE_ROUTERS / "data_explorer.py",
+    CONSOLE_ROUTERS / "access_tokens.py",
+    CONSOLE_ROUTERS / "mcp_gateway.py",
 )
 
 

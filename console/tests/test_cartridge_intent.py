@@ -123,3 +123,17 @@ def test_parse_build_intent_sap_business_one_resolves_to_sap_b1():
         assert len(result["sources"]) == 1, text
         assert result["cross_source"] is False, text
     assert parse_build_intent("sap ventas")["primary_source"]["id"] == "sap_s4hana"
+
+
+def test_parse_build_intent_prefers_the_longest_sap_alias():
+    for text in (
+        "SAP SuccessFactors",
+        "conecta SAP SuccessFactors para ver headcount",
+        "quiero rotación de successfactors",
+    ):
+        result = parse_build_intent(text)
+        assert result["primary_source"]["id"] == "sap_successfactors", text
+        assert [source["id"] for source in result["sources"]] == ["sap_successfactors"], text
+    assert parse_build_intent("SAP Business One ventas")["primary_source"]["id"] == "sap_b1"
+    assert parse_build_intent("datos de SAP S/4HANA")["primary_source"]["id"] == "sap_s4hana"
+    assert parse_build_intent("SAP S4HANA compras")["primary_source"]["id"] == "sap_s4hana"

@@ -75,7 +75,27 @@ def _valid_internal_service_request(request: Request) -> bool:
     return secrets.compare_digest(str(supplied), str(expected))
 
 
+def _personal_token_gateway_request(request: Request) -> bool:
+    user = getattr(request.state, "user", None)
+    if (
+        not isinstance(user, dict)
+        or user.get("auth_method") != "pat"
+        or not user.get("access_token_id")
+    ):
+        return False
+    from app.domains.security.access_token_auth import (
+        carries_personal_token,
+        is_gateway_path,
+    )
+
+    return is_gateway_path(request.url.path) and carries_personal_token(request)
+
+
 async def require_csrf(request: Request) -> None:
+    # Gateway identity comes only from the bearer personal token; cookies are ignored there.
+    if _personal_token_gateway_request(request):
+        return
+
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer ") and (
         SESSION_COOKIE_NAME not in request.cookies

@@ -1,30 +1,93 @@
 from __future__ import annotations
 
+import json
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
 from app.services import mcp_registry
 from app.dependencies import require_admin
 from app.services import audit_service
+from app.services import tool_policy
 from app.services.csrf import require_csrf
-from app.services.tool_manifest import classify_tool
 
 
-_SENSITIVE_ARG_FRAGMENTS = ("api_key", "authorization", "bearer", "client_secret", "password", "secret", "token")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
-def _scrub_args(value):
-    if isinstance(value, dict):
-        out = {}
-        for key, item in value.items():
-            if any(fragment in str(key).lower() for fragment in _SENSITIVE_ARG_FRAGMENTS):
-                out[key] = "***"
-            else:
-                out[key] = _scrub_args(item)
-        return out
-    if isinstance(value, list):
-        return [_scrub_args(item) for item in value]
+def _identifier(value: object, label: str) -> str:
+    if not isinstance(value, str) or not _IDENTIFIER_RE.fullmatch(value):
+        raise HTTPException(status_code=422, detail=f"invalid {label} identifier")
     return value
+
+
+async def _record_invoke(
+    user: dict,
+    server_id: str,
+    tool: str,
+    args: object,
+    *,
+    status: str,
+    risk: str,
+    metadata: dict | None = None,
+) -> None:
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="mcp.tool.invoke",
+        resource_type="mcp_tool",
+        resource_id=f"{server_id}__{tool}",
+        status=status,
+        metadata={"server": server_id, "tool": tool, **(metadata or {})},
+        tool_name=f"{server_id}__{tool}",
+        tool_args=tool_policy.clip_args(tool_policy.scrub_args(args if isinstance(args, dict) else {})),
+        tool_result_status=status,
+        risk_level=risk,
+    )
+
+
+async def _policy_invoke(server_value: object, tool_value: object, args: object, user: dict):
+    server_id = _identifier(server_value, "server")
+    tool = _identifier(tool_value, "tool")
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise HTTPException(status_code=422, detail="tool args must be a JSON object")
+    risk = tool_policy.classify(tool)["risk_level"]
+    required = tool_policy.required_permission(risk)
+    if not tool_policy.has_permission(user, risk):
+        await _record_invoke(
+            user, server_id, tool, args, status="denied", risk=risk,
+            metadata={"required_permission": required},
+        )
+        raise HTTPException(status_code=403, detail=f"permission required: {required}")
+    if len(json.dumps(args, default=str)) > tool_policy.MAX_TOOL_ARGS_BYTES:
+        await _record_invoke(
+            user, server_id, tool, args, status="rejected", risk=risk,
+            metadata={"reason": "args_too_large"},
+        )
+        raise HTTPException(status_code=413, detail="tool args exceed size limit")
+    schema = await mcp_registry.cached_tool_schema(server_id, tool)
+    try:
+        tool_policy.validate_tool_args(tool, args, schema, risk_level=risk)
+    except tool_policy.ToolPolicyError as exc:
+        await _record_invoke(
+            user, server_id, tool, args, status="rejected", risk=risk,
+            metadata={"reason": "tool_policy"},
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    try:
+        result = await mcp_registry.invoke(server_id, tool, args, user=user)
+    except HTTPException as exc:
+        await _record_invoke(
+            user, server_id, tool, args, status="error", risk=risk,
+            metadata={"status_code": exc.status_code},
+        )
+        raise
+    status = "error" if isinstance(result, dict) and result.get("error") else "success"
+    await _record_invoke(user, server_id, tool, args, status=status, risk=risk)
+    return result
 
 
 router = APIRouter(
@@ -67,81 +130,13 @@ async def list_tools(server_id: str):
 
 @router.post("/servers/{server_id}/invoke", dependencies=[Depends(require_csrf)])
 async def invoke_tool(server_id: str, body: dict, user: dict = Depends(require_admin)):
-    tool = body.get("tool")
-    args = body.get("args", {})
-    risk = classify_tool(tool or "")["risk_level"]
-    try:
-        result = await mcp_registry.invoke(server_id, tool, args, user=user)
-    except HTTPException as exc:
-        await audit_service.record_event(
-            user_id=user.get("id"),
-            email=user.get("email"),
-            action="mcp.tool.invoke",
-            resource_type="mcp_tool",
-            resource_id=f"{server_id}__{tool}",
-            status="error",
-            metadata={"server": server_id, "tool": tool, "status_code": exc.status_code},
-            tool_name=f"{server_id}__{tool}",
-            tool_args=_scrub_args(args),
-            tool_result_status="error",
-            risk_level=risk,
-        )
-        raise
-    status = "error" if isinstance(result, dict) and result.get("error") else "success"
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="mcp.tool.invoke",
-        resource_type="mcp_tool",
-        resource_id=f"{server_id}__{tool}",
-        status=status,
-        metadata={"server": server_id, "tool": tool},
-        tool_name=f"{server_id}__{tool}",
-        tool_args=_scrub_args(args),
-        tool_result_status=status,
-        risk_level=risk,
-    )
-    return result
+    return await _policy_invoke(server_id, body.get("tool"), body.get("args", {}), user)
 
 
 @router.post("/invoke", dependencies=[Depends(require_csrf)])
 async def invoke_tool_generic(body: dict, user: dict = Depends(require_admin)):
     """Generic invoke: {server, tool, args}. Used by Studio UI for Pattern B actions."""
-    server_id = body.get("server", "")
-    tool = body.get("tool", "")
-    args = body.get("args", {})
-    risk = classify_tool(tool)["risk_level"]
-    try:
-        result = await mcp_registry.invoke(server_id, tool, args, user=user)
-    except HTTPException as exc:
-        await audit_service.record_event(
-            user_id=user.get("id"),
-            email=user.get("email"),
-            action="mcp.tool.invoke",
-            resource_type="mcp_tool",
-            resource_id=f"{server_id}__{tool}",
-            status="error",
-            metadata={"server": server_id, "tool": tool, "status_code": exc.status_code},
-            tool_name=f"{server_id}__{tool}",
-            tool_args=_scrub_args(args),
-            tool_result_status="error",
-            risk_level=risk,
-        )
-        raise
-    status = "error" if isinstance(result, dict) and result.get("error") else "success"
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="mcp.tool.invoke",
-        resource_type="mcp_tool",
-        resource_id=f"{server_id}__{tool}",
-        status=status,
-        metadata={"server": server_id, "tool": tool},
-        tool_name=f"{server_id}__{tool}",
-        tool_args=_scrub_args(args),
-        tool_result_status=status,
-        risk_level=risk,
-    )
+    result = await _policy_invoke(body.get("server", ""), body.get("tool", ""), body.get("args", {}), user)
     return {"result": result}
 
 

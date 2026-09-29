@@ -611,6 +611,21 @@ async def list_tools(server_id: str) -> list[dict]:
     return await _fetch_tools(row["url"], server_id)
 
 
+async def cached_tool_schema(server_id: str, tool: str) -> dict | None:
+    pool = await _get_pool()
+    raw = await pool.fetchval("SELECT tools FROM mcp_servers WHERE id=$1", server_id)
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return None
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict) and item.get("name") == tool:
+            schema = item.get("input_schema") or item.get("inputSchema")
+            return schema if isinstance(schema, dict) else None
+    return None
+
+
 def _headers_for(server_id: str, url: str) -> dict[str, str]:
     key_env = ""
     normalized = server_id.replace("-", "_").upper()

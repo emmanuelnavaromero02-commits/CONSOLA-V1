@@ -23,6 +23,11 @@ def _is_production_env() -> bool:
     return value.strip().lower() in {"prod", "production", "staging"}
 
 
+PERSONAL_TOKEN_PREFIX = "omega_pat_"
+PERSONAL_TOKEN_OUTSIDE_GATEWAY_DETAIL = "Este token solo es válido en la pasarela de IA"
+INTERACTIVE_SESSION_DETAIL = "Esta operación requiere una sesión iniciada en la consola"
+
+
 def _bearer_token(request: Request) -> str | None:
     authorization = request.headers.get("authorization")
     if not authorization:
@@ -30,6 +35,8 @@ def _bearer_token(request: Request) -> str | None:
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="invalid authorization header")
+    if token.strip().startswith(PERSONAL_TOKEN_PREFIX):
+        raise HTTPException(status_code=401, detail=PERSONAL_TOKEN_OUTSIDE_GATEWAY_DETAIL)
     return token
 
 
@@ -217,6 +224,17 @@ async def get_current_user(request: Request) -> dict:
 
 
 require_authenticated = get_current_user
+
+
+async def require_interactive_session(request: Request) -> dict:
+    if request.headers.get("authorization") is not None:
+        raise HTTPException(status_code=401, detail=INTERACTIVE_SESSION_DETAIL)
+    if not request.cookies.get(_auth.COOKIE_NAME):
+        raise HTTPException(status_code=401, detail=INTERACTIVE_SESSION_DETAIL)
+    state_user = getattr(request.state, "user", None)
+    if not isinstance(state_user, dict) or state_user.get("auth_method") == "pat":
+        raise HTTPException(status_code=401, detail=INTERACTIVE_SESSION_DETAIL)
+    return await get_current_user(request)
 
 
 async def get_current_global_user(request: Request) -> dict:

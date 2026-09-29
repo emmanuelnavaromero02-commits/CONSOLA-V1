@@ -338,7 +338,8 @@ jobs:
             tests/test_staged_publication_recovery_matrix_live.py \
             tests/test_staged_publication_red.py \
             tests/test_staged_publication_verifier_boundary_live.py \
-            tests/test_talent_benchmark_publication_authority_live.py
+            tests/test_talent_benchmark_publication_authority_live.py \
+            tests/test_personal_access_tokens_live.py
 
       - name: Run SAP Business One cartridge tests against the Postgres fake
         if: always()

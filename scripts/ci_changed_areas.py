@@ -455,6 +455,33 @@ def _root_test_targets(files: list[str]) -> str:
             for target in {"tests/test_sap_b1_hints.py"}
             if Path(target).exists()
         )
+    ai_gateway_contracts = (
+        (
+            (
+                r"^console/app/services/mcp_gateway/",
+                r"^console/app/routers/(?:mcp_gateway|access_tokens)\.py$",
+                r"^console/app/domains/security/access_token_auth\.py$",
+                r"^console/app/services/access_tokens\.py$",
+            ),
+            {"tests/test_mcp_gateway_sdk_conformance.py"},
+        ),
+        (
+            (r"^console/app/routers/mcp_public\.py$", r"^console/app/services/mcp_registry\.py$"),
+            {"tests/test_mcp_invoke_requires_admin.py"},
+        ),
+        ((r"^scripts/omega_mcp_bridge/",), {"tests/test_omega_mcp_bridge.py"}),
+        ((r"^scripts/ia_gateway_smoke\.py$",), {"tests/test_ia_gateway_smoke_script.py"}),
+        (
+            (r"^infra/init/99zzzzzzb_personal_access_tokens\.sql$",),
+            {
+                "tests/test_personal_access_tokens_contract.py",
+                "tests/test_personal_access_tokens_live.py",
+            },
+        ),
+    )
+    for patterns, contract_targets in ai_gateway_contracts:
+        if _any(files, *patterns):
+            targets.update(target for target in contract_targets if Path(target).exists())
     for prefix, shared_targets in SHARED_RUNTIME_ROOT_TESTS.items():
         if any(path.startswith(prefix) for path in files):
             targets.update(target for target in shared_targets if Path(target).exists())

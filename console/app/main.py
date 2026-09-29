@@ -362,6 +362,8 @@ from app.domains.security.cors import (
     allowed_origins as _allowed_origins_impl,
 )
 from app.domains.security.redirects import safe_login_next
+from app.domains.security import access_token_auth as _access_token_auth
+from app.services.mcp_gateway import errors as _gateway_errors
 from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 from app.domains.system.runtime import (
     healthz_payload as _healthz_payload,
@@ -610,7 +612,13 @@ from fastapi import (
     Header,
     Query,
 )
+from fastapi.exception_handlers import (
+    http_exception_handler as _default_http_exception_handler,
+    request_validation_exception_handler as _default_request_validation_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -904,6 +912,8 @@ app = FastAPI(title="ΩMEGA Console", lifespan=lifespan)
 @app.exception_handler(HTTPException)
 async def _http_exception_handler(request: Request, exc: HTTPException):
     path = request.url.path
+    if _access_token_auth.is_gateway_path(path):
+        return _gateway_errors.exception_response(exc)
     if _is_api_like(path, request.headers.get("accept", "")):
         return JSONResponse(
             {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers
@@ -915,6 +925,26 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
+@app.exception_handler(StarletteHTTPException)
+async def _starlette_http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+):
+    if _access_token_auth.is_gateway_path(request.url.path):
+        return _gateway_errors.exception_response(exc)
+    return await _default_http_exception_handler(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def _request_validation_exception_handler(
+    request: Request, exc: RequestValidationError
+):
+    if _access_token_auth.is_gateway_path(request.url.path):
+        return _gateway_errors.error_response(
+            _gateway_errors.GatewayError(400, "argumentos_invalidos")
+        )
+    return await _default_request_validation_handler(request, exc)
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     request_id = _internal_error_request_id(request)
@@ -923,6 +953,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
         request_id,
         extra={"request_id": request_id, "exception_type": type(exc).__name__},
     )
+    if _access_token_auth.is_gateway_path(request.url.path):
+        return _gateway_errors.error_response(
+            _gateway_errors.GatewayError(500, "error_interno")
+        )
     return JSONResponse(
         {"error": "Internal Error", "request_id": request_id},
         status_code=500,
@@ -1143,6 +1177,7 @@ _AUTH_PUBLIC_EXACT = {
     "/favicon.ico",
     "/healthz",
     "/readyz",
+    "/api/ia/v1/openapi.json",
 }
 _AUTH_PUBLIC_PREFIX = ("/static/", "/vpn-config/")
 _AUTH_API_LIKE_PREFIX = (
@@ -1469,9 +1504,28 @@ async def _auth_preflight_response(
     return None
 
 
+async def _rate_limit_gateway(user: dict) -> None:
+    await _request_rate_limits.rate_limit_gateway(
+        user, limiter_factory=get_rate_limiter
+    )
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+    response = await _access_token_auth.middleware_response(
+        request,
+        call_next,
+        path=path,
+        is_public_path=_is_auth_public_path,
+        apply_security_headers=_apply_security_headers,
+        client_ip=_client_ip,
+        rate_limit_ip=_rate_limit,
+        rate_limit_surface=_rate_limit_api_surface,
+        rate_limit_gateway=_rate_limit_gateway,
+    )
+    if response is not None:
+        return response
     response = await _auth_preflight_response(request, call_next, path=path)
     if response is not None:
         return response
@@ -7935,6 +7989,8 @@ from app.routers import sap_b1 as sap_b1_router
 from app.routers import pipeline_operations as pipeline_operations_router
 from app.routers import pipeline_automations as pipeline_automations_router
 from app.routers import catalog_copilot as catalog_copilot_router
+from app.routers import access_tokens as access_tokens_router
+from app.routers import mcp_gateway as mcp_gateway_router
 from app.routers import (
     control_room,
     data_explorer,
@@ -7982,6 +8038,8 @@ app.include_router(pipeline_operations_router.router)
 app.include_router(pipeline_automations_router.router)
 app.include_router(catalog_copilot_router.router)
 app.include_router(data_explorer.router)
+app.include_router(access_tokens_router.router)
+app.include_router(mcp_gateway_router.router)
 
 
 app.add_middleware(RequestIDMiddleware)

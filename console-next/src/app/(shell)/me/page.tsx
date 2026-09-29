@@ -1,3 +1,4 @@
+import { AccessTokensPanel } from "@/components/me/AccessTokensPanel";
 import { MeAccessPanel } from "@/components/me/MeAccessPanel";
 
 export default function MePage() {
@@ -10,6 +11,7 @@ export default function MePage() {
         </p>
       </header>
       <MeAccessPanel />
+      <AccessTokensPanel />
     </main>
   );
 }
