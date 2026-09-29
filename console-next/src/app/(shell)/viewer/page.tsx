@@ -86,19 +86,19 @@ type SchemaIssue = {
 };
 
 const VIEWER_LINKS: Array<{ type: ViewerType; label: string; icon: LucideIcon }> = [
-  { type: "jobs", label: "Jobs", icon: ListChecks },
-  { type: "pipeline", label: "Pipeline", icon: Layers3 },
-  { type: "watermarks", label: "Watermarks", icon: Droplets },
-  { type: "semantic", label: "Semantic", icon: Database },
-  { type: "datasets", label: "Datasets", icon: Table2 },
-  { type: "schema", label: "Schema", icon: Search },
-  { type: "lineage", label: "Lineage", icon: GitBranch },
-  { type: "vault", label: "Vault", icon: KeyRound },
+  { type: "jobs", label: "Tareas de Extracción", icon: ListChecks },
+  { type: "pipeline", label: "Flujo de Datos", icon: Layers3 },
+  { type: "watermarks", label: "Última Actualización", icon: Droplets },
+  { type: "semantic", label: "Glosario de Negocio", icon: Database },
+  { type: "datasets", label: "Tablas de Datos", icon: Table2 },
+  { type: "schema", label: "Estructura y Campos", icon: Search },
+  { type: "lineage", label: "Origen y Trazabilidad", icon: GitBranch },
+  { type: "vault", label: "Bóveda de Accesos Seguros", icon: KeyRound },
 ];
 
 export default function ViewerPage() {
   return (
-    <Suspense fallback={<ViewerShell title="Viewer" subtitle="Cargando parámetros..." />}>
+    <Suspense fallback={<ViewerShell title="Visor de datos" subtitle="Cargando parámetros..." />}>
       <ViewerContent />
     </Suspense>
   );
@@ -221,7 +221,7 @@ function ViewerShell({
             className="inline-flex min-h-[44px] items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ArrowLeft aria-hidden className="h-4 w-4" />
-            Monitor
+            Monitoreo
           </Link>
           <div className="space-y-1">
             <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
@@ -242,7 +242,7 @@ function ViewerSwitcher({ activeCartridge = DEFAULT_CARTRIDGE }: { activeCartrid
   const activeCartridges = useActiveScopedCartridges();
   const cartridge = resolveScopedCartridge(activeCartridge, activeCartridges);
   return (
-    <nav aria-label="Viewers" className="flex flex-wrap gap-2">
+    <nav aria-label="Visores" className="flex flex-wrap gap-2">
       {VIEWER_LINKS.map(({ type, label, icon: Icon }) => (
         <Link
           key={type}
@@ -270,8 +270,8 @@ function JobsViewer() {
   const jobs = useJobs(100);
   return (
     <ViewerShell
-      title="Jobs"
-      subtitle="Historial reciente de ejecución y entrada directa a logs."
+      title="Tareas de Extracción"
+      subtitle="Historial reciente de ejecución y entrada directa a los registros."
       actions={<RefreshButton onClick={() => jobs.refetch()} />}
     >
       {jobs.isError ? (
@@ -291,10 +291,10 @@ function JobViewer({ jobId }: { jobId: string | null }) {
 
   if (!jobId) {
     return (
-      <ViewerShell title="Job" subtitle="Falta el parámetro id.">
+      <ViewerShell title="Tarea de extracción" subtitle="Falta el parámetro id.">
         <EmptyPanel
           icon={FileText}
-          title="Selecciona un job"
+          title="Selecciona una tarea"
           detail="Abre este viewer desde el historial para cargar los logs de una ejecución concreta."
         />
       </ViewerShell>
@@ -303,25 +303,25 @@ function JobViewer({ jobId }: { jobId: string | null }) {
 
   return (
     <ViewerShell
-      title={`Job ${jobId}`}
-      subtitle="Detalle, resultado y líneas de log de la ejecución."
+      title={`Tarea ${jobId}`}
+      subtitle="Detalle, resultado y líneas de registro de la ejecución."
       actions={<RefreshButton onClick={() => { job.refetch(); logs.refetch(); }} />}
     >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[0.7fr_1.3fr]">
-        <section className="space-y-3 rounded-lg border bg-card p-4" aria-label="Detalle del job">
+        <section className="space-y-3 rounded-lg border bg-card p-4" aria-label="Detalle de la tarea">
           <h2 className="text-base font-semibold">Detalle</h2>
           {job.isError ? (
-            <ErrorPanel message="No se pudo cargar el job." onRetry={() => job.refetch()} />
+            <ErrorPanel message="No se pudo cargar la tarea." onRetry={() => job.refetch()} />
           ) : job.isLoading ? (
             <SkeletonRows rows={4} />
           ) : (
             <JobDetails job={job.data} />
           )}
         </section>
-        <section className="space-y-3 rounded-lg border bg-card p-4" aria-label="Logs del job">
-          <h2 className="text-base font-semibold">Logs</h2>
+        <section className="space-y-3 rounded-lg border bg-card p-4" aria-label="Registros de la tarea">
+          <h2 className="text-base font-semibold">Registros</h2>
           {logs.isError ? (
-            <ErrorPanel message="No se pudieron cargar los logs." onRetry={() => logs.refetch()} />
+            <ErrorPanel message="No se pudieron cargar los registros." onRetry={() => logs.refetch()} />
           ) : logs.isLoading ? (
             <SkeletonRows rows={8} />
           ) : (
@@ -337,13 +337,13 @@ function PipelineViewer({ cartridge }: { cartridge: string }) {
   const pipeline = usePipeline(cartridge);
   return (
     <ViewerShell
-      title="Pipeline"
-      subtitle={`Fuente de datos ${cartridge}: bronze, silver, gold y última corrida.`}
+      title="Flujo de Datos"
+      subtitle={`Fuente de datos ${cartridge}: estado por entidad en bronce, plata y oro, y su última corrida.`}
       actions={<RefreshButton onClick={() => pipeline.refetch()} />}
       activeCartridge={cartridge}
     >
       {pipeline.isError ? (
-        <ErrorPanel message="No se pudo cargar el pipeline." onRetry={() => pipeline.refetch()} />
+        <ErrorPanel message="No se pudo cargar el flujo de datos." onRetry={() => pipeline.refetch()} />
       ) : pipeline.isLoading ? (
         <SkeletonRows />
       ) : (
@@ -361,8 +361,8 @@ function WatermarksViewer({ cartridge }: { cartridge: string }) {
   const freshness = useFreshness(cartridge);
   return (
     <ViewerShell
-      title="Watermarks"
-      subtitle={`Fuente de datos ${cartridge}: marcas de agua y último estado por entidad.`}
+      title="Última Actualización"
+      subtitle={`Fuente de datos ${cartridge}: último corte y estado por entidad.`}
       actions={<RefreshButton onClick={() => freshness.refetch()} />}
       activeCartridge={cartridge}
     >
@@ -400,8 +400,8 @@ function SemanticViewer({ cartridge }: { cartridge: string }) {
 
   return (
     <ViewerShell
-      title="Semantic Layer"
-      subtitle={`Fuente de datos ${cartridge}: entidades, campos y metadatos expuestos por /api/semantic.`}
+      title="Glosario de Negocio"
+      subtitle={`Fuente de datos ${cartridge}: entidades, campos y descripciones de negocio publicadas.`}
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -437,8 +437,8 @@ function SchemaViewer({ source }: { source: string | null }) {
 
   return (
     <ViewerShell
-      title="Schema"
-      subtitle="Particiones, columnas inferidas y preview seguro de una fuente Bronze."
+      title="Estructura y Campos"
+      subtitle="Particiones, columnas inferidas y vista previa segura de una fuente de datos cruda."
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <select
@@ -485,8 +485,8 @@ function DatasetsViewer() {
 
   return (
     <ViewerShell
-      title="Datasets"
-      subtitle="Inventario Silver/Gold con filtros de capa y fuente de datos."
+      title="Tablas de Datos"
+      subtitle="Inventario de plata y oro con filtros de capa y fuente de datos."
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <select
@@ -496,8 +496,8 @@ function DatasetsViewer() {
             aria-label="Capa"
           >
             <option value="">Todas las capas</option>
-            <option value="silver">Silver</option>
-            <option value="gold">Gold</option>
+            <option value="silver">Plata</option>
+            <option value="gold">Oro</option>
           </select>
           <select
             value={cartridge}
@@ -531,7 +531,7 @@ function DatasetViewer({ name }: { name: string | null }) {
   if (!name) {
     return (
       <ViewerShell title="Dataset" subtitle="Falta el parámetro name.">
-        <EmptyPanel icon={Table2} title="Selecciona un dataset" detail="Abre este viewer desde el inventario de datasets para cargar metadata y preview." />
+        <EmptyPanel icon={Table2} title="Selecciona un dataset" detail="Abre este visor desde el inventario de datasets para cargar su detalle y vista previa." />
       </ViewerShell>
     );
   }
@@ -539,7 +539,7 @@ function DatasetViewer({ name }: { name: string | null }) {
   return (
     <ViewerShell
       title={`Dataset ${name}`}
-      subtitle="Definición, mapeo, lineage y preview con RLS aplicado por backend."
+      subtitle="Definición, mapeo, trazabilidad y vista previa con la seguridad por espacio de trabajo aplicada."
       actions={<RefreshButton onClick={() => { detail.refetch(); preview.refetch(); lineage.refetch(); }} />}
     >
       {detail.isError ? (
@@ -551,9 +551,9 @@ function DatasetViewer({ name }: { name: string | null }) {
           <DatasetSummaryPanel detail={detail.data} fallbackName={name} />
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.85fr_1.15fr]">
             <section className="space-y-3 rounded-lg border bg-card p-4">
-              <h2 className="text-base font-semibold">Lineage</h2>
+              <h2 className="text-base font-semibold">Trazabilidad</h2>
               {lineage.isError ? (
-                <ErrorPanel message="No se pudo cargar el lineage del dataset." onRetry={() => lineage.refetch()} />
+                <ErrorPanel message="No se pudo cargar la trazabilidad del dataset." onRetry={() => lineage.refetch()} />
               ) : lineage.isLoading ? (
                 <SkeletonRows rows={4} />
               ) : (
@@ -561,9 +561,9 @@ function DatasetViewer({ name }: { name: string | null }) {
               )}
             </section>
             <section className="space-y-3 rounded-lg border bg-card p-4">
-              <h2 className="text-base font-semibold">Preview</h2>
+              <h2 className="text-base font-semibold">Vista previa</h2>
               {preview.isError ? (
-                <ErrorPanel message="No se pudo cargar el preview." onRetry={() => preview.refetch()} />
+                <ErrorPanel message="No se pudo cargar la vista previa." onRetry={() => preview.refetch()} />
               ) : preview.isLoading ? (
                 <SkeletonRows rows={4} />
               ) : (
@@ -582,13 +582,13 @@ function LineageViewer({ cartridge }: { cartridge: string }) {
 
   return (
     <ViewerShell
-      title="Lineage"
-      subtitle={cartridge ? `Grafo de datasets para ${cartridge}.` : "Grafo global de fuentes raw y datasets Silver/Gold."}
+      title="Origen y Trazabilidad"
+      subtitle={cartridge ? `Grafo de datasets para ${cartridge}.` : "Grafo global de fuentes crudas y datasets de plata y oro."}
       actions={<RefreshButton onClick={() => lineage.refetch()} />}
       activeCartridge={cartridge || DEFAULT_CARTRIDGE}
     >
       {lineage.isError ? (
-        <ErrorPanel message="No se pudo cargar el lineage." onRetry={() => lineage.refetch()} />
+        <ErrorPanel message="No se pudo cargar la trazabilidad." onRetry={() => lineage.refetch()} />
       ) : lineage.isLoading ? (
         <SkeletonRows />
       ) : (
@@ -604,8 +604,8 @@ function VaultViewer({ cartridge, scope }: { cartridge: string; scope: string })
 
   return (
     <ViewerShell
-      title="Vault"
-      subtitle={`Conexiones de ${cartridge} y secretos masked del scope ${scope}.`}
+      title="Bóveda de Accesos Seguros"
+      subtitle={`Conexiones de ${cartridge} y secretos enmascarados del alcance ${scope}.`}
       actions={<RefreshButton onClick={() => { connections.refetch(); secrets.refetch(); }} />}
       activeCartridge={cartridge}
     >
@@ -621,9 +621,9 @@ function VaultViewer({ cartridge, scope }: { cartridge: string; scope: string })
           )}
         </section>
         <section className="space-y-3 rounded-lg border bg-card p-4">
-          <h2 className="text-base font-semibold">Secretos masked</h2>
+          <h2 className="text-base font-semibold">Secretos enmascarados</h2>
           {secrets.isError ? (
-            <ErrorPanel message="No se pudieron cargar secretos masked." onRetry={() => secrets.refetch()} />
+            <ErrorPanel message="No se pudieron cargar los secretos enmascarados." onRetry={() => secrets.refetch()} />
           ) : secrets.isLoading ? (
             <SkeletonRows rows={4} />
           ) : (
@@ -649,7 +649,7 @@ function RefreshButton({ onClick }: { onClick: () => void }) {
 }
 
 function JobDetails({ job }: { job: JobRun | undefined }) {
-  if (!job) return <EmptyPanel icon={FileText} title="Sin detalle" detail="El backend no devolvió datos para este job." />;
+  if (!job) return <EmptyPanel icon={FileText} title="Sin detalle" detail="El sistema no devolvió datos para esta tarea." />;
   const result = job.result && Object.keys(job.result).length > 0 ? job.result : null;
   const args = job.args && Object.keys(job.args).length > 0 ? job.args : null;
 
@@ -657,13 +657,13 @@ function JobDetails({ job }: { job: JobRun | undefined }) {
     <div className="space-y-4 text-sm">
       <dl className="grid grid-cols-1 gap-3">
         <DetailItem label="Estado" value={<StatusPill status={job.status} />} />
-        <DetailItem label="Tool" value={job.tool || "-"} />
+        <DetailItem label="Herramienta" value={job.tool || "-"} />
         <DetailItem label="Mensaje" value={job.message || "-"} />
         <DetailItem label="Creado" value={formatDate(job.created_at)} />
         <DetailItem label="Inicio" value={formatDate(job.started_at)} />
         <DetailItem label="Fin" value={formatDate(job.finished_at)} />
       </dl>
-      {args ? <JsonBlock label="Args" value={args} /> : null}
+      {args ? <JsonBlock label="Argumentos" value={args} /> : null}
       {result ? <JsonBlock label="Resultado" value={result} /> : null}
     </div>
   );
@@ -679,7 +679,7 @@ function DetailItem({ label, value }: { label: string; value: ReactNode }) {
 }
 
 function JobLogTable({ logs }: { logs: JobLogLine[] }) {
-  if (!logs.length) return <EmptyPanel icon={FileText} title="Sin logs" detail="No hay líneas de log para esta ejecución." />;
+  if (!logs.length) return <EmptyPanel icon={FileText} title="Sin registros" detail="No hay líneas de registro para esta ejecución." />;
   return (
     <div className="overflow-x-auto rounded-lg border bg-background">
       <table className="w-full text-sm">
@@ -710,7 +710,7 @@ function JobLogTable({ logs }: { logs: JobLogLine[] }) {
 
 function WatermarksTable({ rows }: { rows: FreshnessEntity[] }) {
   if (!rows.length) {
-    return <EmptyPanel icon={Droplets} title="Sin watermarks" detail="El backend no devolvió marcas para esta fuente de datos." />;
+    return <EmptyPanel icon={Droplets} title="Sin cortes registrados" detail="El sistema no devolvió cortes para esta fuente de datos." />;
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
@@ -718,7 +718,7 @@ function WatermarksTable({ rows }: { rows: FreshnessEntity[] }) {
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
             <th className="px-3 py-2 font-medium">Entidad</th>
-            <th className="px-3 py-2 font-medium">Watermark</th>
+            <th className="px-3 py-2 font-medium">Corte</th>
             <th className="px-3 py-2 font-medium">Actualizado</th>
             <th className="px-3 py-2 font-medium">Último estado</th>
             <th className="px-3 py-2 font-medium">Última corrida</th>
@@ -751,7 +751,7 @@ function SemanticTable({ rows }: { rows: SemanticEntity[] }) {
           <tr>
             <th className="px-3 py-2 font-medium">Entidad</th>
             <th className="px-3 py-2 font-medium">Capa</th>
-            <th className="px-3 py-2 font-medium">Watermark</th>
+            <th className="px-3 py-2 font-medium">Corte</th>
             <th className="px-3 py-2 font-medium">Campos</th>
             <th className="px-3 py-2 font-medium">Descripción</th>
           </tr>
@@ -820,7 +820,7 @@ export function SchemaPanel({ payload }: { payload: SourceSchemaPayload | undefi
           {sqlLatest ? <JsonBlock label="SQL última partición" value={{ sql_latest: sqlLatest }} /> : null}
         </section>
         <section className="space-y-3 rounded-lg border bg-card p-4">
-          <h2 className="text-base font-semibold">Columnas y preview</h2>
+          <h2 className="text-base font-semibold">Columnas y vista previa</h2>
           <ColumnTable columns={columns} sample={rows[0]} />
           <PreviewTable rows={rows.slice(0, 5)} />
         </section>
@@ -891,7 +891,7 @@ function DatasetSummaryPanel({ detail, fallbackName }: { detail: DatasetDetail |
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <DetailItem label="Columnas" value={mapping.length || detail?.column_count || 0} />
         <DetailItem label="Fecha fuente" value={detail?.source_load_date || "-"} />
-        <DetailItem label="Batch fuente" value={detail?.source_batch_id || "-"} />
+        <DetailItem label="Lote fuente" value={detail?.source_batch_id || "-"} />
       </div>
       {detail?.sql ? (
         <section className="space-y-2">
@@ -919,7 +919,7 @@ function DatasetSummaryPanel({ detail, fallbackName }: { detail: DatasetDetail |
 
 function DatasetLineageTable({ rows }: { rows: DatasetLineageRow[] }) {
   if (!rows.length) {
-    return <EmptyPanel icon={GitBranch} title="Sin lineage" detail="No hay historial de materialización para este dataset." />;
+    return <EmptyPanel icon={GitBranch} title="Sin trazabilidad" detail="No hay historial de materialización para este dataset." />;
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-background">
@@ -927,9 +927,9 @@ function DatasetLineageTable({ rows }: { rows: DatasetLineageRow[] }) {
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
             <th className="px-3 py-2 font-medium">Fecha</th>
-            <th className="px-3 py-2 font-medium">Batch</th>
+            <th className="px-3 py-2 font-medium">Lote</th>
             <th className="px-3 py-2 font-medium">Filas</th>
-            <th className="px-3 py-2 font-medium">Storage</th>
+            <th className="px-3 py-2 font-medium">Almacenamiento</th>
           </tr>
         </thead>
         <tbody>
@@ -953,7 +953,7 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
   const [cartridgeFilter, setCartridgeFilter] = useState("all");
 
   if (!nodes.length) {
-    return <EmptyPanel icon={GitBranch} title="Sin lineage" detail="No hay nodos visibles para el filtro actual." />;
+    return <EmptyPanel icon={GitBranch} title="Sin trazabilidad" detail="No hay nodos visibles para el filtro actual." />;
   }
 
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -978,8 +978,8 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <MetricBox label="Nodos" value={visibleNodes.length} />
             <MetricBox label="Dependencias" value={visibleEdges.length} />
-            <MetricBox label="Gold" value={visibleNodes.filter((node) => normaliseLayer(node.type) === "gold").length} />
-            <MetricBox label="Stale" value={visibleNodes.filter((node) => node.is_stale).length} />
+            <MetricBox label="Oro" value={visibleNodes.filter((node) => normaliseLayer(node.type) === "gold").length} />
+            <MetricBox label="Desactualizado" value={visibleNodes.filter((node) => node.is_stale).length} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-xs font-medium text-muted-foreground">
@@ -1009,9 +1009,9 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
                 className="ml-2 min-h-[40px] rounded-md border bg-background px-2 text-sm text-foreground"
               >
                 <option value="all">Todas</option>
-                <option value="raw">raw</option>
-                <option value="silver">silver</option>
-                <option value="gold">gold</option>
+                <option value="raw">Cruda</option>
+                <option value="silver">Plata</option>
+                <option value="gold">Oro</option>
               </select>
             </label>
           </div>
@@ -1138,10 +1138,10 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
                     {shortText(node.label || node.id, 28)}
                   </text>
                   <text x={14} y={44} className="fill-muted-foreground text-[10px]">
-                    {shortText(`${node.cartridge || "sin fuente de datos"} · ${normaliseLayer(node.type)}`, 34)}
+                    {shortText(`${node.cartridge || "sin fuente de datos"} · ${layerName(normaliseLayer(node.type))}`, 34)}
                   </text>
                   <text x={14} y={59} className="fill-muted-foreground text-[10px]">
-                    {node.row_count != null ? `${Number(node.row_count).toLocaleString("es")} filas` : formatDate(node.last_refresh) || "sin refresh"}
+                    {node.row_count != null ? `${Number(node.row_count).toLocaleString("es")} filas` : formatDate(node.last_refresh) || "sin actualización"}
                   </text>
                 </g>
               );
@@ -1163,10 +1163,10 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
                 <StatusPill status={selectedNode.is_stale == null ? "unknown" : selectedNode.is_stale ? "stale" : "fresh"} />
               </div>
               <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-                <DetailItem label="Capa" value={normaliseLayer(selectedNode.type)} />
+                <DetailItem label="Capa" value={layerName(normaliseLayer(selectedNode.type))} />
                 <DetailItem label="Fuente de datos" value={selectedNode.cartridge || "-"} />
                 <DetailItem label="Filas" value={selectedNode.row_count ?? "-"} />
-                <DetailItem label="Último refresh" value={formatDate(selectedNode.last_refresh) || "-"} />
+                <DetailItem label="Última actualización" value={formatDate(selectedNode.last_refresh) || "-"} />
               </dl>
               {selectedNode.staleness_reason ? (
                 <p className="rounded-md border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
@@ -1311,7 +1311,7 @@ function DependencyList({
             return (
               <li key={`${title}:${edge.from}:${edge.to}`} className="rounded-md border bg-background p-3 text-sm">
                 <span className="font-medium">{peer?.label || peerId}</span>
-                <span className="ml-2 text-xs text-muted-foreground">{normaliseLayer(peer?.type)} {edge.relation || ""}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{layerName(normaliseLayer(peer?.type))} {edge.relation || ""}</span>
               </li>
             );
           })}
@@ -1325,16 +1325,16 @@ function DependencyList({
 
 function VaultConnectionsTable({ rows }: { rows: VaultConnection[] }) {
   if (!rows.length) {
-    return <EmptyPanel icon={ShieldCheck} title="Sin conexiones" detail="No hay conexiones masked para esta fuente de datos." />;
+    return <EmptyPanel icon={ShieldCheck} title="Sin conexiones" detail="No hay conexiones enmascaradas para esta fuente de datos." />;
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-background">
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th className="px-3 py-2 font-medium">Conn ID</th>
-            <th className="px-3 py-2 font-medium">Base URL</th>
-            <th className="px-3 py-2 font-medium">Auth</th>
+            <th className="px-3 py-2 font-medium">Conexión</th>
+            <th className="px-3 py-2 font-medium">Dirección</th>
+            <th className="px-3 py-2 font-medium">Autenticación</th>
             <th className="px-3 py-2 font-medium">Actualizado</th>
           </tr>
         </thead>
@@ -1355,14 +1355,14 @@ function VaultConnectionsTable({ rows }: { rows: VaultConnection[] }) {
 
 function VaultSecretsTable({ rows }: { rows: VaultSecret[] }) {
   if (!rows.length) {
-    return <EmptyPanel icon={KeyRound} title="Sin secretos" detail="No hay secretos masked visibles para este scope." />;
+    return <EmptyPanel icon={KeyRound} title="Sin secretos" detail="No hay secretos enmascarados visibles para este alcance." />;
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-background">
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th className="px-3 py-2 font-medium">Key</th>
+            <th className="px-3 py-2 font-medium">Llave</th>
             <th className="px-3 py-2 font-medium">Valor</th>
             <th className="px-3 py-2 font-medium">Actualizado</th>
           </tr>
@@ -1491,11 +1491,18 @@ function MetricBox({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+const LAYER_NAMES: Record<string, string> = { raw: "cruda", bronze: "bronce", silver: "plata", gold: "oro" };
+
+function layerName(layer: string | null | undefined): string {
+  const key = (layer || "").toLowerCase();
+  return LAYER_NAMES[key] ?? "Sin información";
+}
+
 function LayerPill({ layer }: { layer?: string | null }) {
   const value = (layer || "silver").toLowerCase();
   return (
     <span className="inline-flex items-center rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium uppercase">
-      {value}
+      {layerName(value)}
     </span>
   );
 }
