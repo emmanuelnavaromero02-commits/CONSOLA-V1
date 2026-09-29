@@ -68,6 +68,9 @@ export const FORBIDDEN_UI_TERMS = [
   "RAG",
   "pgvector",
   "chunk",
+  "dry_run_passed",
+  "blocked_by_sap",
+  "recommendation_only",
 ] as const;
 
 const FORBIDDEN_PATTERNS = FORBIDDEN_UI_TERMS.map((word) => ({

@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   updateAgentStatus: vi.fn(),
   deleteAgent: vi.fn(),
   invokeAgent: vi.fn(),
+  getMeAccess: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
@@ -71,6 +72,7 @@ async function render() {
     );
   });
   await settle();
+  await click(byText("button", "Administración técnica"));
 }
 
 async function settle() {
@@ -126,6 +128,7 @@ beforeEach(() => {
   api.listAgents.mockResolvedValue([EXISTING, { ...EXISTING, id: "a-2", slug: "oficial_de_cumplimiento_normativo", name: "Otro", extra: {} }]);
   api.listAgentToolCatalog.mockResolvedValue(CATALOG);
   api.listAgentRuns.mockResolvedValue([]);
+  api.getMeAccess.mockResolvedValue({ permissions: ["agents.read", "agents.execute"] });
   api.createAgent.mockImplementation(async (payload) => ({ id: "new-1", ...payload }));
   api.updateAgent.mockImplementation(async (id, payload) => ({ id, ...payload }));
   container = document.createElement("div");
@@ -137,6 +140,29 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+});
+
+describe("AgentsConsole guardians-first layout", () => {
+  it("leads with the guardians catalog and hides slugs from the technical list", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <AgentsConsole />
+        </QueryClientProvider>,
+      );
+    });
+    await settle();
+    expect(container.textContent).toContain("Guardianes del negocio");
+    expect(container.textContent).toContain("Monitor de talento");
+    expect(container.textContent).not.toContain("Otro");
+    await click(byText("button", "Administración técnica"));
+    expect(container.textContent).toContain("Volver a guardianes");
+    expect(container.textContent).toContain("Otro");
+    expect(container.textContent).not.toContain("monitor_de_talento");
+    await click(byText("button", "Volver a guardianes"));
+    expect(container.textContent).toContain("Guardianes del negocio");
+  });
 });
 
 describe("AgentsConsole executive profiles", () => {

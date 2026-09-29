@@ -172,7 +172,8 @@ describe("SuccessFactorsGoldPanel", () => {
     expect(markup).toContain("0/12");
     expect(markup).toContain("C/P/A pendiente");
     expect(markup).toContain("Fit Score bloqueado");
-    expect(markup).toContain("recommendation_only");
+    expect(markup).toContain("Solo recomendación");
+    expect(markup).not.toContain("recommendation_only");
   });
 
   it("renders the Workforce Trends section from the single backend bundle without fetching data", () => {

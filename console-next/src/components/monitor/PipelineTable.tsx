@@ -308,7 +308,7 @@ export function PipelineTable({
             <tr>
               <th className="px-3 py-2 font-medium">Entidad</th>
               <th className="px-3 py-2 font-medium">Bronze</th>
-              <th className="px-3 py-2 font-medium">Watermark</th>
+              <th className="px-3 py-2 font-medium">Corte</th>
               <th className="px-3 py-2 font-medium">Última corrida</th>
               <th className="px-3 py-2 font-medium">Capas</th>
               <th className="px-3 py-2 text-right font-medium">Acciones</th>

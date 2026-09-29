@@ -135,7 +135,7 @@ afterEach(async () => {
 describe("Bronze query page", () => {
   it("hides raw SQL by default and asks for a data source first", async () => {
     await renderPage();
-    expect(container.querySelector("h1")?.textContent).toBe("Consulta Bronze");
+    expect(container.querySelector("h1")?.textContent).toBe("Datos crudos");
     expect(container.textContent).toContain("Elige una fuente de datos para construir la consulta sin escribir SQL.");
     expect(container.querySelector("details")?.open).toBe(false);
     const options = [...(sourceSelect()?.options ?? [])].map((option) => option.value);

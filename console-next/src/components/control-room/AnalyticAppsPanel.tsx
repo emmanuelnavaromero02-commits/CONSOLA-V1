@@ -30,6 +30,7 @@ import type {
   SfTalentWidget,
   SourceStatus,
 } from "@/lib/control-room/types";
+import { runStatusCopy, statusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 
 type NativeModuleKind = "successfactors" | "talent" | "agentops" | "generic";
@@ -196,7 +197,7 @@ function agentOpsEngineTone(status?: string | null): string {
 function widgetRows(widget: SfGoldWidget | SfTalentWidget): Array<{ label: string; value: number }> {
   return (widget.rows || [])
     .map((row) => ({
-      label: String(row.label || row.fact || row.status || "Sin etiqueta"),
+      label: String(row.label || row.fact || "") || (row.status ? statusCopy(row.status) : "Sin etiqueta"),
       value: Number(row.headcount ?? row.value ?? row.count ?? 0),
     }))
     .filter((row) => Number.isFinite(row.value) && row.value > 0)
@@ -582,7 +583,7 @@ function AgentOpsNativeModule({ payload }: { payload?: ControlRoomAgentsOpsPaylo
               {runs.slice(0, 5).map((run, index) => (
                 <div key={`${run.agent_name || "run"}:${run.started_at || run.finished_at || index}`} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
                   <p className="text-sm font-semibold text-slate-100">{run.agent_name || "Agente"}</p>
-                  <p className="mt-1 text-xs text-slate-400">{run.status || "sin estado"} · {run.tool_count} capacidades · {run.started_at ? updated(run.started_at) : "sin fecha"}</p>
+                  <p className="mt-1 text-xs text-slate-400">{runStatusCopy(run.status)} · {run.tool_count} capacidades · {run.started_at ? updated(run.started_at) : "sin fecha"}</p>
                 </div>
               ))}
               {!runs.length ? <p className="text-sm text-slate-400">Sin ejecuciones recientes persistidas.</p> : null}

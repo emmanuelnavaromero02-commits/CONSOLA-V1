@@ -127,10 +127,10 @@ export default function BronzeQueryPage() {
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Consulta Bronze</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Datos crudos</h1>
           <p className="text-sm text-muted-foreground">
-            Explora la capa cruda con filtros guiados. La ejecución está protegida por el backend y la consulta SQL técnica
-            queda disponible para usuarios avanzados.
+            Explora los datos tal como llegan de cada fuente, con filtros guiados. La ejecución está protegida y la
+            consulta técnica queda disponible para usuarios avanzados.
           </p>
         </div>
         <button
@@ -160,12 +160,12 @@ export default function BronzeQueryPage() {
             >
               <option value="">{sources.isLoading ? "Cargando fuentes…" : "Elige una fuente de datos"}</option>
               {options.bronze.length ? (
-                <optgroup label="Bronze (datos crudos)">
+                <optgroup label="Datos crudos">
                   {options.bronze.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
                 </optgroup>
               ) : null}
               {options.gold.length ? (
-                <optgroup label="Oro (datasets publicados)">
+                <optgroup label="Publicados (oro)">
                   {options.gold.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
                 </optgroup>
               ) : null}

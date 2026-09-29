@@ -37,4 +37,11 @@ describe("glossary", () => {
     expect(forbiddenTermsIn("Sincronizado · Cronograma")).toEqual([]);
     expect(forbiddenTermsIn("Fuentes de datos conectadas")).toEqual([]);
   });
+
+  it("rejects machine statuses rendered as literals", () => {
+    expect(forbiddenTermsIn("estado dry_run_passed")).toEqual(["dry_run_passed"]);
+    expect(forbiddenTermsIn("blocked_by_sap")).toEqual(["blocked_by_sap"]);
+    expect(forbiddenTermsIn("12 afectados · recommendation_only")).toEqual(["recommendation_only"]);
+    expect(forbiddenTermsIn("Simulado con éxito · Solo recomendación")).toEqual([]);
+  });
 });

@@ -25,9 +25,9 @@ export const readinessLabels: Record<string, string> = {
   ok: "Listo",
   available: "Disponible",
   partial: "Datos parciales",
-  stub: "Fuera de alcance actual",
+  stub: "En espera de conexión",
   empty: "Sin datos configurados",
-  missing: "Dataset no materializado",
+  missing: "En espera de conexión",
   unavailable: "Dependencia no configurada",
   invalid_schema: "Dataset no materializado",
   blocked: "Bloqueado",
@@ -37,7 +37,7 @@ export const readinessLabels: Record<string, string> = {
   no_sources: "Sin datos configurados",
   benchmark_internal: "Referencia interna",
   insufficient_data: "Datos insuficientes",
-  blocked_by_sap: "Entidad no expuesta en SAP",
+  blocked_by_sap: "Requiere permisos en SAP",
   blocked_by_permission: "Falta permiso SAP",
   pending_approval: "Requiere confirmación",
   partial_fields: "Campos parciales",
@@ -93,22 +93,22 @@ export function ReadinessBadge({
       )}
     >
       <ReadinessStatusIcon status={status} className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
-      {label || readinessLabels[status || "missing"] || String(status || "missing")}
+      {label || readinessLabels[status || "missing"] || "Sin información"}
     </span>
   );
 }
 
 export const originLabels: Record<string, string> = {
   rule: "Regla",
-  generic_gold_signal: "Gold generico",
-  gold_generic: "Gold generico",
-  intelligence_signal: "Intelligence",
-  intelligence: "Intelligence",
+  generic_gold_signal: "Oro genérico",
+  gold_generic: "Oro genérico",
+  intelligence_signal: "Inteligencia",
+  intelligence: "Inteligencia",
   bayes: "Historial operativo",
   bayesian_calibration: "Historial operativo",
   monte_carlo: "Análisis operativo",
-  agent_alert: "Agent",
-  agent: "Agent",
+  agent_alert: "Agente",
+  agent: "Agente",
   source_health: "Salud fuente",
   source_state: "Salud fuente",
 };
@@ -166,7 +166,7 @@ export function OriginBadge({
       )}
     >
       <OriginIcon origin={key} className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
-      {label || originLabels[key] || key}
+      {label || originLabels[key] || "Sin información"}
     </span>
   );
 }

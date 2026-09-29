@@ -33,50 +33,50 @@ const MODULES: TechnicalModule[] = [
     href: () => "/data/inventory",
   },
   {
-    title: "Ejecuciones y logs",
-    description: "Historial operativo de extraccion, colas y enlaces a logs.",
+    title: "Ejecuciones y registros",
+    description: "Historial operativo de extraccion, colas y enlaces a registros.",
     icon: Activity,
     href: () => "/monitor",
   },
   {
-    title: "Pipeline",
-    description: "Estado por entidad entre bronze, silver, gold y ultima corrida.",
+    title: "Flujo de Datos",
+    description: "Estado por entidad entre bronce, plata y oro, y su ultima corrida.",
     icon: Workflow,
     href: (cartridge) => `/viewer?type=pipeline&cartridge=${encodeURIComponent(cartridge)}`,
   },
   {
-    title: "Watermarks",
-    description: "Ultimas marcas de extraccion por entidad y fuente de datos.",
+    title: "Última Actualización",
+    description: "Ultimo corte de extraccion por entidad y fuente de datos.",
     icon: Droplets,
     href: (cartridge) => `/viewer?type=watermarks&cartridge=${encodeURIComponent(cartridge)}`,
   },
   {
-    title: "Semantic",
-    description: "Capa semantica, entidades, descripciones y campos publicados.",
+    title: "Glosario de Negocio",
+    description: "Entidades, descripciones y campos de negocio publicados.",
     icon: Layers3,
     href: (cartridge) => `/viewer?type=semantic&cartridge=${encodeURIComponent(cartridge)}`,
   },
   {
-    title: "Datasets",
-    description: "Datasets disponibles, capas, columnas, staleness y preview.",
+    title: "Tablas de Datos",
+    description: "Datasets disponibles, capas, columnas, frescura y vista previa.",
     icon: Table2,
     href: () => "/viewer?type=datasets",
   },
   {
-    title: "Schema",
-    description: "Particiones, columnas inferidas y preview seguro de fuentes.",
+    title: "Estructura y Campos",
+    description: "Particiones, columnas inferidas y vista previa segura de fuentes.",
     icon: Search,
     href: () => "/viewer?type=schema",
   },
   {
-    title: "Lineage",
+    title: "Origen y Trazabilidad",
     description: "Grafo tecnico de dependencias y relaciones de transformacion.",
     icon: GitBranch,
     href: (cartridge) => `/viewer?type=lineage&cartridge=${encodeURIComponent(cartridge)}`,
   },
   {
-    title: "Consulta Bronze",
-    description: "Consulta protegida contra capa cruda para diagnostico tecnico.",
+    title: "Datos crudos",
+    description: "Consulta protegida sobre los datos crudos para diagnostico tecnico.",
     icon: Database,
     href: () => "/data/bronze",
   },
@@ -97,8 +97,8 @@ export function DataTechnicalHub() {
         <div className="space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight">Catalogo tecnico</h1>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            Centro unico para pipeline, schema, semantic, datasets, lineage, watermarks,
-            bronze y exploracion tecnica.
+            Centro unico para flujo de datos, estructura, glosario, tablas, trazabilidad,
+            ultima actualizacion, datos crudos y exploracion tecnica.
           </p>
         </div>
         <label className="space-y-1 text-sm">

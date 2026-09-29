@@ -14,6 +14,7 @@ import {
   usePlanOperationWorkflow,
 } from "@/lib/operations/hooks";
 import type { OperationWorkflow, OperationWorkflowStep } from "@/lib/operations/types";
+import { statusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 
 const ACTIVE_STATUSES = new Set(["planning", "running", "waiting_approval"]);
@@ -342,11 +343,17 @@ function MetricCard({
   );
 }
 
+const WORKFLOW_STATUS_COPY: Record<string, string> = {
+  dry_run_passed: "Simulado con éxito",
+  prepared: "Lista para aprobación",
+  proposed: "Lista para aprobación",
+};
+
 function StatusBadge({ status }: { status: string }) {
   const tone = statusTone(status);
   return (
     <span className={cn("inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium", tone)}>
-      {status}
+      {statusCopy(status, WORKFLOW_STATUS_COPY)}
     </span>
   );
 }

@@ -137,6 +137,15 @@ function clock(hour: number, minute: number): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+const HOURLY_MINUTES_CRON = /^(\d{1,2}(?:,\d{1,2})+)\s+\*\s+\*\s+\*\s+\*$/;
+
+export function hourlyMinutes(cron: string | null | undefined): number[] | null {
+  const match = HOURLY_MINUTES_CRON.exec(normalizeCron(cron));
+  if (!match) return null;
+  const minutes = match[1].split(",").map(Number);
+  return minutes.every((minute) => minute <= 59) ? minutes : null;
+}
+
 export function describeSchedule(cron: string | null | undefined, timeZone?: string | null): string {
   const choice = presetFromCron(cron);
   if (choice === "manual") return presetById("manual").summary;
@@ -144,5 +153,7 @@ export function describeSchedule(cron: string | null | undefined, timeZone?: str
   if (choice !== "custom") return `${presetById(choice).summary} (${zone})`;
   const daily = dailyParts(normalizeCron(cron));
   if (daily) return `Diario · ${clock(daily.hour, daily.minute)} (${zone})`;
+  const minutes = hourlyMinutes(cron);
+  if (minutes) return `Varias veces por hora (${minutes.map((minute) => `:${String(minute).padStart(2, "0")}`).join(", ")}) (${zone})`;
   return `Programación personalizada (${zone})`;
 }

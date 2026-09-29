@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bot, CheckCircle2, Clock, MessageSquareText, Play, Plus, RefreshCw, Save, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
+import { GuardiansCatalog } from "@/components/agents/GuardiansCatalog";
 import { FrequencyPicker } from "@/components/schedule/FrequencyPicker";
 import {
   createAgent,
@@ -35,6 +36,7 @@ import { isApiError } from "@/lib/api";
 import { KNOWN_CARTRIDGES } from "@/lib/cartridges";
 import { dataSourceName, GLOSSARY } from "@/lib/glossary";
 import { customScheduleError, defaultTimeZone, describeSchedule } from "@/lib/schedule/frequency";
+import { runStatusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 
 type AgentTab = "config" | "tools" | "rag" | "schedule" | "runs" | "test";
@@ -254,6 +256,15 @@ function payloadFromDraft(draft: AgentDraft): AgentPayload {
 function resultText(result: Record<string, unknown>): string {
   const direct = result.output_text || result.text || result.reply;
   if (typeof direct === "string" && direct.trim()) return direct;
+  const parts: string[] = [];
+  if (result.queued === true) parts.push("Ejecución encolada en segundo plano.");
+  if (typeof result.status === "string" && result.status) parts.push(`Estado: ${runStatusCopy(result.status)}`);
+  if (result.run_id != null) parts.push(`Ejecución #${String(result.run_id)}`);
+  if (typeof result.error_message === "string" && result.error_message.trim()) parts.push(`Detalle: ${result.error_message.trim()}`);
+  return parts.length ? parts.join(" · ") : "Sin información";
+}
+
+function resultRaw(result: Record<string, unknown>): string {
   return JSON.stringify(result, null, 2);
 }
 
@@ -287,6 +298,7 @@ function agentWarnings(draft: AgentDraft): string[] {
 
 export function AgentsConsole() {
   const queryClient = useQueryClient();
+  const [view, setView] = useState<"guardians" | "admin">("guardians");
   const [query, setQuery] = useState("");
   const [listFilter, setListFilter] = useState<AgentListFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -294,6 +306,7 @@ export function AgentsConsole() {
   const [tab, setTab] = useState<AgentTab>("config");
   const [testMessage, setTestMessage] = useState("");
   const [testOutput, setTestOutput] = useState("");
+  const [testRaw, setTestRaw] = useState("");
   const [selectedRunId, setSelectedRunId] = useState<number | string | null>(null);
 
   const refreshRunsSoon = (agentId: string) => {
@@ -372,6 +385,7 @@ export function AgentsConsole() {
       setDraft(draftFromAgent(saved));
       setTab("runs");
       setTestOutput(resultText(result));
+      setTestRaw(resultRaw(result));
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo guardar y ejecutar."),
   });
@@ -401,6 +415,7 @@ export function AgentsConsole() {
     }),
     onSuccess: ({ result, agentId, showRuns }) => {
       setTestOutput(resultText(result));
+      setTestRaw(resultRaw(result));
       queryClient.invalidateQueries({ queryKey: ["agents", agentId, "runs"] });
       if (showRuns) {
         refreshRunsSoon(agentId);
@@ -410,6 +425,7 @@ export function AgentsConsole() {
     onError: (error) => {
       const requestId = isApiError(error) ? error.requestId : undefined;
       setTestOutput(requestId ? `No se pudo invocar el agente. Ref: ${requestId}` : "No se pudo invocar el agente.");
+      setTestRaw("");
     },
   });
 
@@ -456,6 +472,7 @@ export function AgentsConsole() {
     setDraft(draftFromAgent(agent));
     setTab("config");
     setTestOutput("");
+    setTestRaw("");
     setSelectedRunId(null);
   }
 
@@ -464,7 +481,12 @@ export function AgentsConsole() {
     setDraft(emptyDraft(cartridgeOptions[0] || "replicon"));
     setTab("config");
     setTestOutput("");
+    setTestRaw("");
     setSelectedRunId(null);
+  }
+
+  if (view === "guardians") {
+    return <GuardiansCatalog onOpenAdmin={() => setView("admin")} />;
   }
 
   if (agents.isLoading) {
@@ -494,7 +516,21 @@ export function AgentsConsole() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+    <div className="space-y-4">
+      <div className="flex flex-col gap-2 rounded-lg border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-base font-semibold">Administración técnica</h2>
+          <p className="text-xs text-muted-foreground">Editor completo de agentes: configuración, herramientas, conocimiento, tareas, ejecuciones y pruebas.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setView("guardians")}
+          className="inline-flex min-h-[44px] items-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5"
+        >
+          Volver a guardianes
+        </button>
+      </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
       <aside className="space-y-4">
         <div className="rounded-lg border bg-card p-4">
           <label className="flex flex-col gap-1.5 text-sm">
@@ -568,8 +604,7 @@ export function AgentsConsole() {
                     <Bot aria-hidden className="h-5 w-5" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold">{agent.name}</span>
-                    <span className="block truncate font-mono text-xs text-muted-foreground">{agent.slug || agent.id}</span>
+                    <span className="block truncate text-sm font-semibold" title={agent.id}>{agent.name}</span>
                   </span>
                   <span className={cn(
                     "rounded-md px-2 py-1 text-xs font-semibold",
@@ -626,15 +661,18 @@ export function AgentsConsole() {
             onExecuteNow={() => {
               if (!draft.id) return;
               setTestOutput("");
+              setTestRaw("");
               invoke.mutate({ id: draft.id, message: operationalMessage(draft), showRuns: true });
             }}
             testMessage={testMessage}
             setTestMessage={setTestMessage}
             testOutput={testOutput}
+            testRaw={testRaw}
             invoking={invoke.isPending}
             onInvoke={() => {
               if (!draft.id || !testMessage.trim()) return;
               setTestOutput("");
+              setTestRaw("");
               invoke.mutate({ id: draft.id, message: testMessage.trim() });
             }}
           />
@@ -656,6 +694,7 @@ export function AgentsConsole() {
           </div>
         )}
       </section>
+      </div>
     </div>
   );
 }
@@ -687,6 +726,7 @@ function AgentEditor(props: {
   testMessage: string;
   setTestMessage: (value: string) => void;
   testOutput: string;
+  testRaw: string;
   invoking: boolean;
   onInvoke: () => void;
 }) {
@@ -717,6 +757,7 @@ function AgentEditor(props: {
     testMessage,
     setTestMessage,
     testOutput,
+    testRaw,
     invoking,
     onInvoke,
   } = props;
@@ -817,6 +858,7 @@ function AgentEditor(props: {
             message={testMessage}
             setMessage={setTestMessage}
             output={testOutput}
+            raw={testRaw}
             invoking={invoking}
             onInvoke={onInvoke}
           />
@@ -1210,9 +1252,9 @@ function RunsTab(props: {
                 <td className="px-3 py-2">
                   <button type="button" onClick={() => setSelectedRunId(run.id)} className="font-mono text-xs underline-offset-2 hover:underline">#{run.id}</button>
                 </td>
-                <td className="px-3 py-2">{run.status || "-"}</td>
+                <td className="px-3 py-2">{runStatusCopy(run.status)}</td>
                 <td className="px-3 py-2 text-xs text-muted-foreground">{formatDate(run.started_at)}</td>
-                <td className="px-3 py-2 text-xs">{run.n_tool_calls ?? 0}</td>
+                <td className="px-3 py-2 text-xs">{run.n_tool_calls ?? "Sin información"}</td>
               </tr>
             )) : (
               <tr><td colSpan={4} className="px-3 py-8 text-center text-sm text-muted-foreground">Sin ejecuciones registradas.</td></tr>
@@ -1223,11 +1265,49 @@ function RunsTab(props: {
       <div className="rounded-lg border bg-background p-4">
         <h3 className="text-sm font-semibold">Detalle</h3>
         {selectedRunLoading ? <SkeletonRows rows={4} /> : selectedRun ? (
-          <pre className="mt-3 max-h-[460px] overflow-auto rounded-md bg-muted/40 p-3 text-xs">{JSON.stringify(selectedRun, null, 2)}</pre>
+          <RunDetail run={selectedRun} />
         ) : (
           <p className="mt-3 text-sm text-muted-foreground">Selecciona una ejecución.</p>
         )}
       </div>
+    </div>
+  );
+}
+
+function RunDetail({ run }: { run: AgentRunRecord }) {
+  const summary = typeof run.output_text === "string" ? run.output_text.trim() : "";
+  const error = typeof run.error_message === "string" ? run.error_message.trim() : "";
+  return (
+    <div className="mt-3 space-y-3 text-sm">
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="rounded-md border bg-card p-2.5">
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Estado</dt>
+          <dd className="mt-1 font-medium">{runStatusCopy(run.status)}</dd>
+        </div>
+        <div className="rounded-md border bg-card p-2.5">
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{GLOSSARY.tools.other}</dt>
+          <dd className="mt-1 font-medium">{run.n_tool_calls ?? "Sin información"}</dd>
+        </div>
+        <div className="rounded-md border bg-card p-2.5">
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Inicio</dt>
+          <dd className="mt-1 font-medium">{formatDate(run.started_at)}</dd>
+        </div>
+        <div className="rounded-md border bg-card p-2.5">
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Fin</dt>
+          <dd className="mt-1 font-medium">{formatDate(run.finished_at)}</dd>
+        </div>
+      </dl>
+      {error ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">{error}</p> : null}
+      {summary ? (
+        <div>
+          <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Resumen</h4>
+          <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-xs">{summary}</pre>
+        </div>
+      ) : null}
+      <details className="rounded-md border bg-card p-3">
+        <summary className="cursor-pointer text-xs font-medium">Detalle técnico</summary>
+        <pre className="mt-2 max-h-[380px] overflow-auto rounded-md bg-muted/40 p-3 text-xs">{JSON.stringify(run, null, 2)}</pre>
+      </details>
     </div>
   );
 }
@@ -1237,10 +1317,11 @@ function TestTab(props: {
   message: string;
   setMessage: (value: string) => void;
   output: string;
+  raw: string;
   invoking: boolean;
   onInvoke: () => void;
 }) {
-  const { canInvoke, message, setMessage, output, invoking, onInvoke } = props;
+  const { canInvoke, message, setMessage, output, raw, invoking, onInvoke } = props;
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[0.8fr_1.2fr]">
       <section className="rounded-lg border bg-background p-4">
@@ -1256,6 +1337,12 @@ function TestTab(props: {
       <section className="rounded-lg border bg-background p-4">
         <h3 className="text-sm font-semibold">Respuesta</h3>
         <pre className="mt-3 min-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-xs">{output || "Sin respuesta todavía."}</pre>
+        {raw && raw !== output ? (
+          <details className="mt-3 rounded-md border bg-card p-3">
+            <summary className="cursor-pointer text-xs font-medium">Detalle técnico</summary>
+            <pre className="mt-2 max-h-72 overflow-auto rounded-md bg-muted/40 p-3 text-xs">{raw}</pre>
+          </details>
+        ) : null}
       </section>
     </div>
   );

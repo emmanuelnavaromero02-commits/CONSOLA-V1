@@ -205,7 +205,7 @@ export function VaultConnectionsTable() {
   function saveConnectionForm() {
     const connId = connForm.connId.trim();
     if (!connId) {
-      toast.error("Conn ID es obligatorio.");
+      toast.error("El identificador de la conexión es obligatorio.");
       return;
     }
     const payload = buildVaultConnectionPayload(connForm);
@@ -405,9 +405,9 @@ export function VaultConnectionsTable() {
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
                     <tr>
-                      <th className="px-3 py-2">Conn ID</th>
-                      <th className="px-3 py-2">Base URL</th>
-                      <th className="px-3 py-2">Auth</th>
+                      <th className="px-3 py-2">Conexión</th>
+                      <th className="px-3 py-2">Dirección</th>
+                      <th className="px-3 py-2">Autenticación</th>
                       <th className="px-3 py-2">Secreto</th>
                       <th className="px-3 py-2">Acciones</th>
                     </tr>
@@ -474,7 +474,7 @@ export function VaultConnectionsTable() {
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
                     <tr>
-                      <th className="px-3 py-2">Key</th>
+                      <th className="px-3 py-2">Llave</th>
                       <th className="px-3 py-2">Valor</th>
                       <th className="px-3 py-2">Acciones</th>
                     </tr>
@@ -550,13 +550,13 @@ export function ConnectionForm({
   return (
     <aside className="space-y-3 rounded-lg border bg-card p-4">
       <h2 className="text-base font-semibold">{editingId ? `Editar ${editingId}` : "Nueva conexión"}</h2>
-      <Field label="Conn ID">
+      <Field label="Conexión (identificador)">
         <input value={form.connId} readOnly={Boolean(editingId)} onChange={(event) => setForm({ ...form, connId: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 font-mono text-sm read-only:bg-muted/40" />
       </Field>
-      <Field label="Base URL">
+      <Field label="Dirección (URL base)">
         <input value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" placeholder="https://tenant/api" />
       </Field>
-      <Field label="Auth method">
+      <Field label="Método de autenticación">
         <select value={form.authMethod} onChange={(event) => setForm({ ...form, authMethod: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm">
           {authOptions.map((method) => (
             <option key={method} value={method}>{method}</option>
