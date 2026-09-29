@@ -22,6 +22,7 @@ import {
   listSupervisedActions,
 } from "@/lib/supervised-actions/client";
 import type { SupervisedAction } from "@/lib/supervised-actions/types";
+import { statusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 
 import { useSupervisedActionMutations, type MutationNotice } from "./use-action-mutations";
@@ -72,7 +73,7 @@ function stateLabel(status?: string): string {
     case "failed":
       return "Requiere revisión";
     default:
-      return status || "Sin estado";
+      return status ? statusCopy(status) : "Sin estado";
   }
 }
 
