@@ -1344,3 +1344,125 @@ def test_copilot_open_turn_stream_emits_events_and_scrubs_args(
     assert tool_evt["args"] == {"password": "***", "safe": "ok"}
     done_evt = next(e for e in events if e.get("type") == "done")
     assert done_evt["result"]["reply"] == "Hola"
+
+
+def test_copilot_offers_the_local_app_forge_tool(copilot_module):
+    _patch_manifest(copilot_module, [])
+    tools, server_map, classifications = _run(
+        copilot_module._build_tools_for_llm()
+    )
+    full = "copilot_local__generar_app_analitica"
+    assert full in server_map
+    assert server_map[full] == "copilot_local"
+    tool = next(t for t in tools if t["name"] == full)
+    assert "html" not in tool["input_schema"]["properties"]
+    assert set(tool["input_schema"]["required"]) == {"objetivo", "datasets"}
+    meta = classifications[full]
+    assert meta["risk_level"] == "write"
+    assert meta["requires_approval"] is True
+
+
+def test_copilot_local_tool_dispatches_before_any_mcp_lookup(
+    copilot_module, admin_user,
+):
+    async def mcp_must_not_run(*_args, **_kwargs):
+        raise AssertionError("local tools must never reach the MCP registry")
+
+    _patch_invoke(copilot_module, mcp_must_not_run)
+    seen = []
+
+    async def fake_local(tool, args, *, user):
+        seen.append((tool, args, user["id"]))
+        return {"published": True, "app_url": "/analytics/viewer?app=x"}
+
+    copilot_module.copilot_local_tools.invoke_local_tool = fake_local
+    result = _run(copilot_module._invoke_tool_with_retry(
+        "copilot_local", "generar_app_analitica",
+        {"objetivo": "kpis", "datasets": ["ventas"]},
+        user=admin_user,
+    ))
+    assert result["published"] is True
+    assert seen == [(
+        "generar_app_analitica", {"objetivo": "kpis", "datasets": ["ventas"]}, 1,
+    )]
+
+
+def test_copilot_local_app_tool_needs_approval_then_returns_the_card(
+    copilot_module, db, admin_user,
+):
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+
+    args = {"objetivo": "kpis de ventas", "datasets": ["ventas_diarias"]}
+    forged = []
+
+    async def fake_local(tool, tool_args, *, user):
+        forged.append((tool, tool_args))
+        return {
+            "published": True,
+            "name": "ventas_semana",
+            "title": "Ventas semana",
+            "url": "/analytics/viewer?app=ventas_semana",
+            "app_url": "/analytics/viewer?app=ventas_semana",
+            "datasets": ["ventas_diarias"],
+        }
+
+    copilot_module.copilot_local_tools.invoke_local_tool = fake_local
+
+    async def mcp_must_not_run(*_args, **_kwargs):
+        raise AssertionError("local tools must never reach the MCP registry")
+
+    _patch_invoke(copilot_module, mcp_must_not_run)
+
+    captured = []
+
+    async def fake_chat_first(*, messages, invoke_tool, **_kw):
+        r = await invoke_tool("copilot_local", "generar_app_analitica", dict(args))
+        captured.append(r)
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_app",
+                 "name": "copilot_local__generar_app_analitica",
+                 "input": dict(args)},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Espero aprobación."},
+            ]},
+        ]
+        return ("Espero aprobación.", [], final)
+
+    _patch_llm(copilot_module, fake_chat_first)
+    conv = _run(copilot_module.create_conversation(user=admin_user))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="crea una app de ventas",
+        user=admin_user,
+    ))
+    assert captured[0]["error"] == "approval_required"
+    assert forged == []
+    assert out["requires_approval"] is True
+    assert out["pending_actions"][0]["tool"] == "generar_app_analitica"
+    assert out["pending_actions"][0]["server"] == "copilot_local"
+
+    async def fake_chat_second(*, messages, invoke_tool, **_kw):
+        final = list(messages) + [
+            {"role": "assistant", "content": [{"type": "text", "text": "Lista."}]},
+        ]
+        return ("Lista.", [], final)
+
+    _patch_llm(copilot_module, fake_chat_second)
+    out2 = _run(copilot_module.approve_pending_action(
+        conversation_id=conv["id"], message_id=out["message_id"], user=admin_user,
+    ))
+    assert forged == [("generar_app_analitica", args)]
+    executed = out2["tool_calls"][0]
+    assert executed["tool"] == "generar_app_analitica"
+    assert executed["status"] == "success"
+    tool_messages = [
+        m for m in db.messages
+        if m.get("role") == "tool" and m.get("tool_results")
+    ]
+    assert any(
+        "/analytics/viewer?app=ventas_semana" in str(m["tool_results"])
+        for m in tool_messages
+    )

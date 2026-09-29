@@ -423,7 +423,7 @@ async def test_grant_lookup_keeps_transaction_local_rls_scope_alive(monkeypatch)
     monkeypatch.setattr(main, "_granted_datasets", grants)
 
     request = SimpleNamespace(state=SimpleNamespace(user={"id": 42}))
-    _html, granted, digest, cartridge = await main._app_grant_context(
+    _html, granted, digest, cartridge, stale = await main._app_grant_context(
         request,
         "skill_gaps_heatmap",
         {"id": 42},
@@ -432,5 +432,6 @@ async def test_grant_lookup_keeps_transaction_local_rls_scope_alive(monkeypatch)
     assert granted == ["replicon_resource_skill_daily"]
     assert digest == "a" * 64
     assert cartridge == "replicon"
+    assert stale is False
     assert events == ["scope", "grants"]
     assert connection.active_transaction is False

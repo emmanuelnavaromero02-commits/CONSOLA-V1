@@ -264,7 +264,11 @@ async def test_apps_list_filters_to_active_scoped_vault_cartridges(monkeypatch):
     result = await console_main.api_apps(USER)
 
     assert result["apps"] == [
-        {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"}
+        {
+            "name": "sap_successfactors_workforce_overview",
+            "cartridge": "sap_successfactors",
+            "origin": "cartridge",
+        }
     ]
     assert result["active_scoped_cartridges"] == ["sap_successfactors"]
 
@@ -346,7 +350,11 @@ async def test_apps_list_resolves_scope_from_membership_when_user_is_unscoped(mo
     result = await console_main.api_apps(unscoped_super_admin)
 
     assert result["apps"] == [
-        {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"}
+        {
+            "name": "sap_successfactors_workforce_overview",
+            "cartridge": "sap_successfactors",
+            "origin": "cartridge",
+        }
     ]
     assert result["active_scoped_cartridges"] == ["sap_successfactors"]
 
@@ -398,7 +406,9 @@ async def test_apps_list_global_super_admin_uses_vault_service_for_scoped_connec
         "allowed_cartridges": USER["allowed_cartridges"],
     })
 
-    assert result["apps"] == [{"name": "sap_successfactors_workforce_overview"}]
+    assert result["apps"] == [
+        {"name": "sap_successfactors_workforce_overview", "origin": "cartridge"}
+    ]
     assert result["active_scoped_cartridges"] == ["sap_successfactors"]
 
 

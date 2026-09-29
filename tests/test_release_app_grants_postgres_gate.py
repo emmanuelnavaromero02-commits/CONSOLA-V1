@@ -70,6 +70,8 @@ def test_validate_release_runs_app_grant_regressions_on_real_postgres():
         "infra/init/99zzzzf_analytic_app_grant_convergence.sql",
         "infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql",
         "infra/init/99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql",
+        "infra/init/99zzzzz_workspace_app_publications.sql",
+        "infra/init/99zzzzzz_analytic_app_manifest_registry_packaged_scope.sql",
     )
     for path in ordered_inputs:
         assert path in source
@@ -118,6 +120,8 @@ def test_app_grant_database_inputs_are_source_bound_and_failed_version_is_not_re
         "infra/init/99zzzzf_analytic_app_grant_convergence.sql",
         "infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql",
         "infra/init/99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql",
+        "infra/init/99zzzzz_workspace_app_publications.sql",
+        "infra/init/99zzzzzz_analytic_app_manifest_registry_packaged_scope.sql",
     ):
         assert f'"{path}"' in verifier
     assert (REPO / "VERSION").read_text(encoding="utf-8").strip() != (

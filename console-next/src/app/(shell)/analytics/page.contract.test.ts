@@ -95,9 +95,10 @@ describe("navigation no longer points at the removed anchor", () => {
     expect(sidebar).not.toContain("/control-room#apps");
   });
 
-  it("redirects the legacy gallery to the canonical catalog", () => {
+  it("mounts the real gallery instead of redirecting", () => {
     const gallery = read("src/app/(shell)/apps-gallery/page.tsx");
-    expect(gallery).toContain('window.location.replace("/analytics")');
+    expect(gallery).not.toContain("window.location.replace");
+    expect(gallery).toContain("AppsGallery");
   });
 
   it("gives the Marketplace app counter a destination", () => {

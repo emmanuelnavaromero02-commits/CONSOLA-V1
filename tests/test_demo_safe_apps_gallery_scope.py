@@ -63,17 +63,19 @@ def test_apps_gallery_does_not_fall_back_to_global_catalog_without_active_connec
     }
 
 
-def test_apps_gallery_is_only_a_control_room_entrypoint():
+def test_apps_gallery_reads_only_the_authorized_apps_api():
     src = (REPO / "console-next/src/components/apps/AppsGallery.tsx").read_text(encoding="utf-8")
 
-    assert "Analitica del workspace" in src
-    assert "Revisa indicadores, agentes y decisiones" in src
-    assert "listApps({ includeUnready: true })" not in src
-    assert "Apps publicadas" not in src
+    # The real gallery goes through the scoped hook, never a raw endpoint.
+    assert "useAnalyticsApps" in src
+    assert '"/api/' not in src
+    assert "/analytics/viewer?app=" in src
+    assert "Creadas en este workspace" in src
+    assert "Aplicaciones de fuentes de datos" in src
+    assert "Sin información" in src
     assert "Ver en Control Room" not in src
     assert "Ver dentro de Control Room" not in src
     assert "No hay aplicaciones instaladas para este workspace." not in src
-    assert "No hay aplicaciones configuradas para las conexiones activas del workspace." not in src
     assert "No hay aplicaciones publicadas todavía." not in src
 
 

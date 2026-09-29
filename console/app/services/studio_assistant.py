@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
 
+logger = logging.getLogger(__name__)
+
 from app.services import audit_service, mcp_registry, llm_client
+from app.services.app_html_prompt import APP_HTML_STYLE_RULES
 from app.services.tool_manifest import classify_tool, requires_approval
 
 
@@ -367,6 +371,36 @@ def _scrub_tool_args(value: Any) -> Any:
     return value
 
 
+async def _register_workspace_publication(
+    result: dict[str, Any], args: dict[str, Any], actor_user: dict | None
+) -> dict[str, Any]:
+    """After a successful publish_app, register the workspace manifest so the app can render."""
+    from app.services import app_publication
+
+    scope = app_publication.scope_from_user(actor_user or {})
+    if not scope[0] or not scope[1]:
+        return result
+    try:
+        await app_publication.register_workspace_app(
+            scope,
+            str(result.get("name") or (args or {}).get("name") or ""),
+            str((args or {}).get("html") or ""),
+            [
+                item
+                for item in (result.get("datasets_used") or [])
+                if isinstance(item, str)
+            ],
+        )
+    except Exception:
+        logger.warning(
+            "[studio] workspace app registration failed for %s",
+            result.get("name"),
+            exc_info=True,
+        )
+        return {**result, "workspace_registration": "failed"}
+    return {**result, "workspace_registration": "registered"}
+
+
 def _current_user_text_allows_approval_tool(tool_name: str, args: dict[str, Any] | None, message: str) -> bool:
     bare = _bare_tool_name(tool_name)
     if bare not in _APPROVAL_DECISION_TOOLS:
@@ -627,29 +661,9 @@ APPS HTML — flujo obligatorio:
    mantenlas autocontenidas, con fetch a `/api/data/{dataset}` y datasets del
    cartucho activo para que el panel embebido pueda autorizarlas.
 
-REGLAS DE ESTILO (apps HTML):
-- Al servir cada app, la plataforma inyecta el tema (variables, Inter y estilos base) y
-  theme-switch.js, que pone data-theme="light" o "dark" en <html>. NO agregues botón de
-  tema propio ni leas localStorage para el tema.
-- Colores SOLO con variables: fondo var(--bg); tarjetas var(--card) (alias var(--bg2));
-  superficie secundaria var(--bg3); bordes var(--border) y var(--border-strong); texto
-  var(--text-primary) (alias var(--text1)), var(--text-secondary) (alias var(--text2)) y
-  var(--text-muted) (alias var(--text3)); acento var(--primary), var(--primary-hover) y
-  var(--primary-soft); fondo de botón con texto var(--on-primary): var(--primary-strong) y
-  var(--primary-strong-hover); estados var(--green), var(--amber), var(--red), var(--blue),
-  var(--purple). PROHIBIDO fijar #fff, #000, white, black u otro hex en fondos, textos o bordes.
-- color-scheme lo declara la app (la plataforma no lo fija): :root { color-scheme: light } y
-  :root[data-theme="dark"] { color-scheme: dark }; da color explícito (var(--text-primary)) a
-  body y a cada panel con fondo propio. Nunca prefers-color-scheme ni clases .dark.
-- Tipografía: no declares font-family en body (la plataforma aplica Inter, var(--font-sans));
-  cifras con font-variant-numeric: tabular-nums; código con var(--font-mono). En Chart.js usa
-  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily.
-- Componentes listos: class="omega-card", "omega-table", "omega-btn" y "omega-btn-secondary".
-  El foco visible y las barras de desplazamiento ya vienen con el tema.
-- Gráficas: lee colores con getComputedStyle(document.documentElement).getPropertyValue('--text2').trim()
-  y redibuja al cambiar data-theme (MutationObserver sobre <html>).
-- No cargues fuentes ni hojas de estilo externas; no uses @import ni @layer.
-
+"""
+    + APP_HTML_STYLE_RULES
+    + """
 Tools:
 - list_apps, get_app_details(name), get_app_html(name), publish_app, delete_app.
 - list_datasets / list_datasets_with_schemas → conoce los datasets disponibles.
@@ -1038,6 +1052,12 @@ async def chat(
             return {"error": str(error_message), "status_code": exc.status_code}
         if step == 4 and bare_name == "preview_transform":
             refine_preview_state["ok"] = not _result_is_error(result)
+        if (
+            bare_name == "publish_app"
+            and isinstance(result, dict)
+            and result.get("published")
+        ):
+            result = await _register_workspace_publication(result, args or {}, actor_user)
         status = "error" if isinstance(result, dict) and result.get("error") else "success"
         await audit_service.record_event(
             user_id=(actor_user or {}).get("id"),

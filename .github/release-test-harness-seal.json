@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "c64790db4b0a17f55682f31fe7faeed98733f3ffd4674e0204765f8517166192"
+      "sha256": "1e3104f152a4ca147d4bdfdad9d1738c5e4d7c0b0736dca1750b306b90c4614b"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "70609ffc2cf045a588603e250e7b950279f4c7d3a46ad97d6044a07e2a432015"
+      "sha256": "b2e29ec52a46f3f31c215324535e5184bf9c738a592566485c1be0b53a6aae8d"
     },
     {
       "path": "Makefile",
@@ -1971,7 +1971,15 @@
     },
     {
       "path": "console/tests/test_app_content_capability_flow.py",
-      "sha256": "ae7e4cff363e8fcb84c172e69bbaf50be54d9d502b794e17e1470bcc668fb06e"
+      "sha256": "d3951d3857cc39a919e2585ecacabfcf9130736f1894b04090a8450e7df2e83c"
+    },
+    {
+      "path": "console/tests/test_app_forge.py",
+      "sha256": "f24009028e49bf6d862a708bf314cc0e214f50a31e367a312a1a6869214dfd2b"
+    },
+    {
+      "path": "console/tests/test_app_publication.py",
+      "sha256": "42cbf240a708ebb5173533fca8abd02969f0052d4109ea2fcdcc004539556f92"
     },
     {
       "path": "console/tests/test_apps_embed.py",
@@ -1979,7 +1987,7 @@
     },
     {
       "path": "console/tests/test_apps_payloads.py",
-      "sha256": "7ad4b5706fc4446fd1fc4336afdc25b67c68d1521537369a5a3561f584c820dd"
+      "sha256": "557c1a087311926bb0a5afc62b0cefcfc8e442516daf3d4f615e6e0ae78d80d5"
     },
     {
       "path": "console/tests/test_apps_readiness.py",
@@ -2918,6 +2926,10 @@
       "sha256": "74bc5a5e5933a94995f752cd1e1aaca6da2e5ef97aef6697338add3cfcbe4025"
     },
     {
+      "path": "console/tests/test_copilot_local_tools.py",
+      "sha256": "cdccdd2c1912d13a45543e94e35a46fa388c9403c29f4a42f199acd534c29406"
+    },
+    {
       "path": "console/tests/test_copilot_router_helpers.py",
       "sha256": "438c6bf9dc9fa8585051a240475f2d2a7f8bae3c2392bdac99adbdaf78251d56"
     },
@@ -3275,7 +3287,7 @@
     },
     {
       "path": "console/tests/test_scoped_surface_hardening.py",
-      "sha256": "42224b8a5634ce2cf3d9348d1d8444029200a20b1d8848afda56aacf1bd3fc99"
+      "sha256": "7123dc23c876729c736e1dcd5730fe800060876ac2cef097f2bef7233604643e"
     },
     {
       "path": "console/tests/test_security_context_scope.py",
@@ -3446,6 +3458,10 @@
       "sha256": "fb92cfa93bb743b21ef390f3b90d624923d1d1395c55f00609677d1b60485e0d"
     },
     {
+      "path": "console/tests/test_workspace_app_serving.py",
+      "sha256": "19eb027a777abe4b5ec4ca3e4446a17fa1a9b2808311b0dbfbd62b0617cde99f"
+    },
+    {
       "path": "console/tests/test_workspace_copilot_merge.py",
       "sha256": "6f03c4e80ec551d962d93c0b727bacba734b449727fce41d4296bab04782ce37"
     },
@@ -3488,6 +3504,14 @@
     {
       "path": "infra/init/99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql",
       "sha256": "8035b175a38b27fa28c5a356c736004332768ab3642bba0c77d4eee15e6429ce"
+    },
+    {
+      "path": "infra/init/99zzzzz_workspace_app_publications.sql",
+      "sha256": "45bcdb0ce3bf1622321db75cab9cfb3033f216e592562a65b238dab6aef633ae"
+    },
+    {
+      "path": "infra/init/99zzzzzz_analytic_app_manifest_registry_packaged_scope.sql",
+      "sha256": "1780a7191cc65b77ddc7567e45ee3efe53ce0d8561d2a54605743a9871f9bfe6"
     },
     {
       "path": "infra/terraform-gcp/release/docker-compose.release.yml",
@@ -3658,6 +3682,10 @@
       "sha256": "1b45dc2f0f162aba80f2006fbe20b95b1a6efbdb43a26ce26f2f9dbb95d8cdb6"
     },
     {
+      "path": "refinement/tests/test_publish_app_workspace_scope.py",
+      "sha256": "7fd16fb935da334ed35d62abe81d8996f362d86f81aa0c73dd1cd950394254ee"
+    },
+    {
       "path": "refinement/tests/test_raw_input_fingerprint.py",
       "sha256": "fc8132a07a67710a11ffa44f8ad9264c7eeb1b61be7435f394cf1ac063a7258b"
     },
@@ -3819,7 +3847,7 @@
     },
     {
       "path": "scripts/verify_release_test_harness.py",
-      "sha256": "42cc52d364231e3fa29f46e9ae294ee1c45e8fb5f1ea3a6bdc6f807505b9fe90"
+      "sha256": "67bbad7677d13f0d01ff77151f70227bad0a31128e3e645c44368b2b8b649aff"
     },
     {
       "path": "scripts/verify_test_skip_policy.py",
@@ -4203,7 +4231,7 @@
     },
     {
       "path": "tests/test_analytic_app_dataset_grants.py",
-      "sha256": "1bdd009753a33f4c8a9eb8564cdc1f93e1aa65e406d275060ffde765c337f82f"
+      "sha256": "f403f93837718284414912a9ee713233b18b61f8d5255e67bba23473f4c1fced"
     },
     {
       "path": "tests/test_app_env_safe_default.py",
@@ -4211,7 +4239,7 @@
     },
     {
       "path": "tests/test_app_manifest_registry_migrations.py",
-      "sha256": "b6869d1841a4be8e03ac47aeac97ef8bab9176f1c7e2c33feb802c8aac931af7"
+      "sha256": "b2a50f9b828954a0a5bc4b0e0eb3ad8cf6b2d3a46c464f7d28b33bdbbd9d8f69"
     },
     {
       "path": "tests/test_apply_db_migrations_script.py",
@@ -4863,7 +4891,7 @@
     },
     {
       "path": "tests/test_copilot_service.py",
-      "sha256": "e15b0b0ed19cf38e7dc6d6783cffe8654e593d562cfb38a4457357c85086c25b"
+      "sha256": "7d20f318d53dd17d2f568ed0b325fe65813f4a07d1b8e3b4afb7084dbb3b3291"
     },
     {
       "path": "tests/test_copilot_turn_page_context.py",
@@ -4987,7 +5015,7 @@
     },
     {
       "path": "tests/test_demo_safe_apps_gallery_scope.py",
-      "sha256": "ce2c8a2e03517d296fea6222c606efe6a12bd3b65807f0daa5093be4d517dfb0"
+      "sha256": "02e34729fd47993a02b59c42c8c744bd7168adf9eec00513babc468e35cdcedb"
     },
     {
       "path": "tests/test_demo_safe_pipeline_and_airflow_logs.py",
@@ -5823,7 +5851,7 @@
     },
     {
       "path": "tests/test_release_app_grants_postgres_gate.py",
-      "sha256": "4c2e9e294cf3d6f1bd87be8df1e0a3e6995e2df554653a8a4d3b1d888f3f5dd1"
+      "sha256": "1dc53e279a4dd1ccd566f71a1979d3c7edc146fcea4dc9004f47d605f104df63"
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",

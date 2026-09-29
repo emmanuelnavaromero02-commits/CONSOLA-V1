@@ -40,6 +40,16 @@ def app_cartridge_id(app: dict) -> str:
     return ""
 
 
+def app_is_workspace_published(app: dict) -> bool:
+    # created_by_id only survives the refinement listing for rows RLS already
+    # scoped to the caller's workspace; packaged templates carry NULL.
+    return app.get("created_by_id") is not None
+
+
+def app_origin(app: dict) -> str:
+    return "workspace" if app_is_workspace_published(app) else "cartridge"
+
+
 def app_payload_cartridge_candidates(payload: Any) -> set[str]:
     return {
         cartridge
@@ -88,9 +98,13 @@ def filter_apps_payload_to_scoped_connections(
     normalized["apps"] = apps
 
     visible_apps = [
-        app
+        {**app, "origin": app_origin(app)}
         for app in apps
-        if isinstance(app, dict) and app_cartridge_id(app) in active_cartridges
+        if isinstance(app, dict)
+        and (
+            app_cartridge_id(app) in active_cartridges
+            or app_is_workspace_published(app)
+        )
     ]
     normalized[apps_key] = visible_apps
     normalized["apps"] = visible_apps

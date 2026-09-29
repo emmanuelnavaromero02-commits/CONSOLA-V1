@@ -60,4 +60,5 @@ async def api_apps_delete(name: str, user: dict = Depends(require_permission("ap
     result = payload.get("result", payload)
     if not result.get("deleted"):
         raise HTTPException(404, result.get("error") or f"App '{name}' not found")
+    await _retire_workspace_app_publication(name, user)
     return result

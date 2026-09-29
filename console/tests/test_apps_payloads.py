@@ -2,6 +2,7 @@ from app.domains.apps.payloads import (
     app_cartridge_id,
     app_datasets_from_payload,
     app_declared_datasets,
+    app_origin,
     app_payload_cartridge_candidates,
     apps_from_payload,
     filter_apps_payload_to_ready_datasets,
@@ -91,6 +92,35 @@ def test_apps_payload_helpers_filter_by_ready_datasets():
     )
     assert unchecked["apps"] == payload["apps"]
     assert unchecked["apps_readiness"]["mode"] == "gold_unreachable"
+
+
+def test_workspace_published_apps_bypass_the_cartridge_filter_with_origin():
+    payload = {
+        "apps": [
+            {"name": "sap_successfactors_workforce_overview"},
+            {"name": "ventas_semana", "created_by_id": 7,
+             "datasets_used": ["ventas_diarias"]},
+            {"name": "replicon_margin_dashboard"},
+        ]
+    }
+    scoped = filter_apps_payload_to_scoped_connections(payload, {"sap_successfactors"})
+    assert [(app["name"], app["origin"]) for app in scoped["apps"]] == [
+        ("sap_successfactors_workforce_overview", "cartridge"),
+        ("ventas_semana", "workspace"),
+    ]
+    assert scoped["apps_scope"]["hidden_unconfigured_count"] == 1
+
+    # No active connections: only the workspace-published app survives.
+    none_active = filter_apps_payload_to_scoped_connections(payload, set())
+    assert [app["name"] for app in none_active["apps"]] == ["ventas_semana"]
+
+    # Origin survives the readiness pass and packaged templates stay cartridge.
+    ready = filter_apps_payload_to_ready_datasets(scoped, {"ventas_diarias"})
+    assert [(app["name"], app["origin"]) for app in ready["apps"]] == [
+        ("ventas_semana", "workspace"),
+    ]
+    assert app_origin({"created_by_id": None}) == "cartridge"
+    assert app_origin({"created_by_id": 3}) == "workspace"
 
 
 def test_app_embed_helpers_extract_and_guard_declared_datasets():

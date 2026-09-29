@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 APP_NAME_RE = DATASET_NAME_RE
 CARTRIDGE_ID_RE = DATASET_NAME_RE
 
+WORKSPACE_CARTRIDGE_ID = "workspace"
+
 _REGISTRY_CANDIDATES = (
     pathlib.Path(os.environ.get("OMEGA_CARTRIDGE_REGISTRY", "/registry/cartridges")),
     pathlib.Path(__file__).resolve().parents[4] / "cartridges",
@@ -109,6 +111,39 @@ def packaged_manifest(app_name: str, root: pathlib.Path | None = None) -> dict |
     if not APP_NAME_RE.fullmatch(str(app_name or "")):
         return None
     return load_packaged_manifests(root).get(str(app_name))
+
+
+def html_sha256(html: str) -> str:
+    return hashlib.sha256((html or "").encode("utf-8")).hexdigest()
+
+
+def workspace_manifest_digest(*, app_name: str, datasets: list[str], html: str) -> str:
+    return manifest_digest(
+        app_name=app_name,
+        cartridge_id=WORKSPACE_CARTRIDGE_ID,
+        datasets=datasets,
+        html=html,
+    )
+
+
+async def active_workspace_manifest(conn: Any, app_name: str) -> dict | None:
+    """Scoped active workspace-publication manifest row; RLS applies via GUCs."""
+    if not APP_NAME_RE.fullmatch(str(app_name or "")):
+        return None
+    row = await conn.fetchrow(
+        "SELECT manifest_digest, html_sha256, cartridge_id "
+        "FROM public.analytic_app_manifests "
+        "WHERE app_name = $1 AND revision = 'active' "
+        "AND source = 'workspace_publication'",
+        str(app_name),
+    )
+    if row is None:
+        return None
+    return {
+        "manifest_digest": str(row["manifest_digest"]),
+        "html_sha256": str(row["html_sha256"]),
+        "cartridge_id": str(row["cartridge_id"] or WORKSPACE_CARTRIDGE_ID),
+    }
 
 
 def served_digest(app_name: str, html: str, root: pathlib.Path | None = None) -> str | None:

@@ -228,13 +228,56 @@ def inject_app_bridge(html_text: str, nonce: str) -> str:
     return bridge + text
 
 
+APP_STALE_PUBLICATION_MESSAGE = "Aplicación desactualizada — vuelve a publicarla"
+
+
+def app_embed_stale_html(name: str) -> str:
+    title = html.escape(name.replace("_", " ").strip() or "Analytic app")
+    message = html.escape(APP_STALE_PUBLICATION_MESSAGE)
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title} - OMEGA</title>
+  <style>
+    html, body {{
+      margin: 0;
+      min-height: 100%;
+      background: #07111e;
+      color: #e2e8f0;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }}
+    .stale {{
+      margin: 48px auto;
+      max-width: 560px;
+      padding: 18px;
+      color: #fecaca;
+      font-size: 14px;
+      border: 1px solid rgba(248, 113, 113, 0.24);
+      border-radius: 8px;
+      background: rgba(127, 29, 29, 0.22);
+    }}
+  </style>
+</head>
+<body>
+  <div class="stale" role="alert">{message}</div>
+</body>
+</html>"""
+
+
 def app_embed_wrapper_html(
     name: str,
     datasets_used: list[str],
     nonce: str,
     *,
     capability: str | None = None,
+    stale: bool = False,
 ) -> str:
+    if stale:
+        # Fail closed: the served HTML no longer matches the registered
+        # publication, so no content frame and no capability are emitted.
+        return app_embed_stale_html(name)
     title = html.escape(name.replace("_", " ").strip() or "Analytic app")
     content_src = f"/apps/{quote(name, safe='')}/content"
     if capability:

@@ -12,6 +12,7 @@ REPO = Path(__file__).resolve().parents[1]
 FROZEN = {
     "99zzu_analytic_app_manifest_registry.sql": "adad0c9f710ce80aa5ec46dad16b919233f1f0f20ad8fd6d9af7984197577123",
     "99zzzzm_analytic_app_manifest_registry_sap_b1.sql": "39d3cde28e6c3b1ba6a3412c4237b0068b53c44fd9f46173b0ed0cb1a1729044",
+    "99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql": "8035b175a38b27fa28c5a356c736004332768ab3642bba0c77d4eee15e6429ce",
 }
 REGISTRY_FILES = sorted(
     path.name for path in (REPO / "infra/init").glob("*_analytic_app_manifest_registry*.sql")
