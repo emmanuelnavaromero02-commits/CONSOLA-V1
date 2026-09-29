@@ -103,3 +103,42 @@ def test_missing_source_codes_require_an_explicit_absence(
     )
 
     assert (actual_status, detail["code"]) == (status, code)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "InternalError",
+        "ServiceUnavailable",
+        "RequestTimeout",
+        "ExpiredToken",
+        "SlowDown",
+        "AccessDenied",
+        "Failed to write connection",
+        "SSL connection failed",
+        "Couldn't connect to server",
+        "Temporary failure in name resolution",
+        "503 Service Unavailable",
+    ],
+)
+def test_transport_and_s3_error_codes_map_to_storage_unavailable(monkeypatch, marker):
+    from refinement.app.successfactors_fallbacks import (
+        is_missing_successfactors_dependency_error,
+        is_storage_infra_failure,
+    )
+
+    monkeypatch.setattr(
+        refinement_main, "_log_internal_error", lambda *_args, **_kwargs: "req-3"
+    )
+    error_text = (
+        "IO Error: No files found that match the pattern "
+        f'"s3://lakehouse/raw/replicon/Candidate/**/*.parquet": {marker}'
+    )
+
+    status, detail = refinement_main._friendly_duckdb_error(
+        RuntimeError(error_text), "silver_a"
+    )
+
+    assert (status, detail["code"]) == (503, "storage_unavailable")
+    assert is_storage_infra_failure(error_text.upper())
+    assert not is_missing_successfactors_dependency_error(RuntimeError(error_text))

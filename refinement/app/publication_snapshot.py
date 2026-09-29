@@ -17,6 +17,16 @@ def _dsn(raw: str) -> str:
     return (raw or "").replace("postgresql+psycopg2://", "postgresql://")
 
 
+class PublicationHeadUnavailable(RuntimeError):
+    pass
+
+
+def publication_head_unavailable(exc: BaseException) -> PublicationHeadUnavailable:
+    return PublicationHeadUnavailable(
+        f"publication head unavailable (http 503): {type(exc).__name__}"
+    )
+
+
 def _require_pinned_version(version: str, subject: str) -> None:
     if not version or version == "null":
         raise RuntimeError(f"{subject} has no pinned version")
@@ -205,7 +215,7 @@ class PublicationSnapshotResolver:
         try:
             current = self.storage.stat(key, expected_version=version)
         except Exception as exc:
-            raise RuntimeError("published snapshot object is unavailable") from exc
+            raise publication_head_unavailable(exc) from exc
         recorded = current.checksum_sha256 or ""
         if not recorded:
             raise RuntimeError("published snapshot object has no recorded checksum")

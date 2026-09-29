@@ -44,8 +44,17 @@ _INFRA_FAILURE_MARKERS = (
     "accessdenied",
     "invalidaccesskeyid",
     "signaturedoesnotmatch",
+    "expiredtoken",
     "nosuchbucket",
     "slowdown",
+    "internalerror",
+    "serviceunavailable",
+    "requesttimeout",
+    "failed to write connection",
+    "ssl connection failed",
+    "couldn't connect to server",
+    "temporary failure in name resolution",
+    "503 service unavailable",
 )
 
 _HTTP_STATUS_PATTERNS = (

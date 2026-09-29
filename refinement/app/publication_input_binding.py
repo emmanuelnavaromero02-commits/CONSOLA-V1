@@ -8,11 +8,19 @@ from sqlglot import exp
 try:
     from app.publication_contract import canonical_digest
     from app.publication_inputs import resolve_input_state
-    from app.publication_snapshot import PublicationSnapshotResolver
+    from app.publication_snapshot import (
+        PublicationHeadUnavailable,
+        PublicationSnapshotResolver,
+        publication_head_unavailable,
+    )
 except ModuleNotFoundError:
     from refinement.app.publication_contract import canonical_digest
     from refinement.app.publication_inputs import resolve_input_state
-    from refinement.app.publication_snapshot import PublicationSnapshotResolver
+    from refinement.app.publication_snapshot import (
+        PublicationHeadUnavailable,
+        PublicationSnapshotResolver,
+        publication_head_unavailable,
+    )
 
 
 def _quote(value: str) -> str:
@@ -41,9 +49,14 @@ class PublicationInputBindingMixin:
             published = item.get("published")
             return str((published or {}).get("uri") or "") or None
         context = user_context or {}
-        snapshot = PublicationSnapshotResolver(self.storage).published_snapshot(
-            {"name": name, "layer": layer, "cartridge": cartridge}, context
-        )
+        try:
+            snapshot = PublicationSnapshotResolver(self.storage).published_snapshot(
+                {"name": name, "layer": layer, "cartridge": cartridge}, context
+            )
+        except PublicationHeadUnavailable:
+            raise
+        except Exception as exc:
+            raise publication_head_unavailable(exc) from exc
         return str((snapshot.head if snapshot else {}).get("object_uri") or "") or None
 
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:

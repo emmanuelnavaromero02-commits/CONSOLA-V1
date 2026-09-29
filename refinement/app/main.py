@@ -40,7 +40,10 @@ from app.publication_public import (
     published_dataset_metadata,
     published_lineage,
 )
-from app.publication_snapshot import PublicationSnapshotResolver
+from app.publication_snapshot import (
+    PublicationHeadUnavailable,
+    PublicationSnapshotResolver,
+)
 from app.relationship_discovery import discover_relationship_candidates
 from app.security import get_internal_api_key
 from app.security_scope import (  # noqa: F401  (re-exported)
@@ -211,6 +214,8 @@ def _materialize_readfree_empty(
 def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict:
     try:
         return engine.materialize(ds, user_context)
+    except PublicationHeadUnavailable:
+        raise
     except Exception as exc:
         fallback = fallback_dataset_for_successfactors(ds, exc)
         if not fallback:
@@ -220,6 +225,8 @@ def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict
             raise
         try:
             result = engine.materialize(fallback, user_context)
+        except PublicationHeadUnavailable:
+            raise
         except Exception as fb_exc:
             readfree = _materialize_readfree_empty(ds, user_context, fb_exc)
             if readfree is not None:
@@ -2328,7 +2335,7 @@ def _mcp_invoke_sync(body: dict):
             result = _materialize_with_operational_fallback(
                 ds, _trusted_user_context(body, args)
             )
-        except (duckdb.Error, ValueError) as exc:
+        except (duckdb.Error, ValueError, PublicationHeadUnavailable) as exc:
             status_code, detail = _friendly_duckdb_error(exc, args["name"])
             raise HTTPException(status_code=status_code, detail=detail) from exc
         if not engine.consume_publication_replay():

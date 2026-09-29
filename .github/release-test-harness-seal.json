@@ -3678,6 +3678,10 @@
       "sha256": "0c6c328ff7c8f75573888f0762097ed78c80d1452938469384fca2194fd04416"
     },
     {
+      "path": "refinement/tests/test_publication_head_unavailable.py",
+      "sha256": "b0c39302091b702c6d39954d37e407990ebf1e3916fd3ef5a31e63079f5a15d1"
+    },
+    {
       "path": "refinement/tests/test_publication_semantics_copilot.py",
       "sha256": "78824f31e94fe385d374c96e012132c3e5ce33b3e221ef94e1d9576d0b606b20"
     },
@@ -3703,7 +3707,7 @@
     },
     {
       "path": "refinement/tests/test_refinement_materialization_errors.py",
-      "sha256": "996f1a722ed99fe14c070b689e5f6411c639767f40499bbb3dffb7725f3669cd"
+      "sha256": "0c435eaad119f29da56b2bb3943b6fed72b02f1a77f86f75b0cbdd90fb65e0e9"
     },
     {
       "path": "refinement/tests/test_refinement_supervisor.py",
