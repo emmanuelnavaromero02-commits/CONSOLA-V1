@@ -60,6 +60,11 @@ const EVOLUCIONA_FILES = [
   "src/components/control-room/phases/PhaseEvoluciona.tsx",
 ];
 
+const EVOLUCIONA_CLIENT_FILES = [
+  "src/lib/control-room/client.ts",
+  "src/lib/sap-b1/client.ts",
+];
+
 const ALL_PHASE_FILES = [
   ...ENTIENDE_FILES,
   ...DIAGNOSTIC_FILES,
@@ -240,6 +245,12 @@ describe("Control Room phase shell boundary", () => {
     const source = concat(SUPERVISA_FILES);
 
     expect(controlRoomEndpoints(source)).toEqual([]);
+    for (const path of apiPaths(source)) {
+      expect(
+        path.startsWith("/api/decisions") || path.startsWith("/api/actions"),
+        `unexpected endpoint in Supervisa: ${path}`,
+      ).toBe(true);
+    }
     for (const forbidden of [
       "/approve",
       "/execute",
@@ -256,16 +267,51 @@ describe("Control Room phase shell boundary", () => {
     expect(source).toContain("Sin fecha compromiso");
   });
 
-  it("Evoluciona reads lessons and the learning view without console KB writes", () => {
+  it("Supervisa closes and reopens tickets only through the decisions PATCH, write-gated", () => {
+    const phase = read("src/components/control-room/phases/PhaseSupervisa.tsx");
+
+    expect(phase).toContain("updateDecision");
+    expect(phase).toContain("addDecisionAction");
+    expect(phase).toContain('includes("control_room.write")');
+    expect(phase).toContain("Cerrar con resultado");
+    expect(phase).toContain("Reabrir");
+    expect(phase).toContain("Cumplida");
+    expect(phase).toContain("No cumplida");
+    expect(phase).toContain('role="dialog"');
+    expect(phase).not.toContain("createDecision");
+    expect(phase).not.toContain("deleteDecision");
+    expect(phase).not.toContain("toast.");
+  });
+
+  it("Evoluciona stays read-only and bridges threshold edits to Parámetros", () => {
     const source = concat(EVOLUCIONA_FILES);
 
     expect(source).toContain("getControlRoomLessons");
     expect(source).toContain('getSapB1View("sap_b1_learning_kpis")');
     expect(source).toContain("Candidata a incorporarse al paquete");
+    expect(source).toContain('"/control-room/sap-b1#parametros"');
+    expect(source).toContain("Ajustar en Parámetros");
     expect(apiPaths(source)).toEqual([]);
-    for (const forbidden of ["api.post", "api.put", "upsertThreshold", "applyLesson"]) {
+    for (const forbidden of [
+      "api.post",
+      "api.put",
+      "api.patch",
+      "api.delete",
+      "upsertThreshold",
+      "applyLesson",
+    ]) {
       expect(source).not.toContain(forbidden);
     }
+
+    const clients = concat(EVOLUCIONA_CLIENT_FILES);
+    expect(clients).toContain('lessons: "/api/control-room/lessons"');
+    expect(clients).toContain("/api/control-room/sap-b1/views/");
+    expect(read("src/lib/control-room/client.ts")).toMatch(
+      /getControlRoomLessons[\s\S]{0,400}api\.get/,
+    );
+    expect(read("src/lib/sap-b1/client.ts")).toMatch(
+      /getSapB1View[\s\S]{0,400}api\.get/,
+    );
   });
 
   it("keeps the global bans across every phase surface", () => {

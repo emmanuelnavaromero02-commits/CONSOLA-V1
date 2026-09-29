@@ -16,6 +16,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { EmptyState } from "@/components/EmptyState";
+import { isApiError } from "@/lib/api";
 import {
   getSupervisedAction,
   listSupervisedActions,
@@ -82,6 +83,10 @@ function shortDate(value?: string | null): string {
   return parsed.toLocaleString("es", { dateStyle: "short", timeStyle: "short" });
 }
 
+function isForbiddenQueue(error: unknown): boolean {
+  return isApiError(error) && (error.status === 401 || error.status === 403);
+}
+
 function MutationNoticeLine({ notice }: { notice: MutationNotice | null }) {
   if (!notice) return null;
   if (notice.kind === "error") {
@@ -132,6 +137,21 @@ export function SupervisedActionsQueue() {
     const failed = rows.filter((row) => ["failed", "validation_failed", "dry_run_failed"].includes(String(row.status || row.state || ""))).length;
     return { pending, executed, failed };
   }, [rows]);
+
+  if (actions.isError && isForbiddenQueue(actions.error)) {
+    return (
+      <section
+        aria-label="Acciones supervisadas"
+        className="flex flex-col gap-2"
+        data-testid="supervised-actions-queue"
+      >
+        <h2 className="text-lg font-semibold tracking-tight">Acciones supervisadas</h2>
+        <p className="text-sm text-muted-foreground">
+          Requiere permisos de operación para ver la cola supervisada.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section
