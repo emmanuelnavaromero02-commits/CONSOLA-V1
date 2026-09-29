@@ -2859,7 +2859,7 @@
     },
     {
       "path": "console/tests/test_control_room_talent_confianza.py",
-      "sha256": "927d481a2d118e58803224ac96bd3ebf86e1f00a9e7aaaefc56e915a9bcdbe3a"
+      "sha256": "bffd005efd829f14d87f63db1b0af7e80cfc06a973faddb6a48dc8b73fe4aa20"
     },
     {
       "path": "console/tests/test_control_room_talent_kpis.py",
@@ -6507,7 +6507,7 @@
     },
     {
       "path": "tests/test_talent_trajectory_potential_sql.py",
-      "sha256": "c8b1e8413f7d54911263ba20c8c26d97330c9f7cf1bd76d599ef4e59683629b9"
+      "sha256": "24adb7b4643e93b50a3ccbec595c71887418392abaf88ad79e16284903ccf502"
     },
     {
       "path": "tests/test_tenant_isolation_20b.py",
