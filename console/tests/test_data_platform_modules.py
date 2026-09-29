@@ -43,12 +43,17 @@ from app.domains.data_platform.rag_payloads import (
     rag_search_arguments,
     rag_synthesis_messages,
 )
+from app.domains.data_platform import rag_requests
 from app.domains.data_platform.rag_requests import (
+    RAG_INGEST_MAX_BODY_BYTES,
+    rag_answer_payload,
     rag_delete_source_payload,
     rag_ingest_payload,
     rag_reindex_payload,
     rag_search_payload,
     rag_sources_payload,
+    read_json_body_capped,
+    require_rag_ingest_size,
 )
 from app.domains.data_platform.refinement_errors import (
     payload_error_detail,
@@ -1156,3 +1161,272 @@ def test_security_admin_context_can_see_all_sources():
             "allowed_cartridges": ["*"],
         }
     )
+
+
+class FakeIngestRequest:
+    def __init__(self, chunks: list[bytes], content_length: str | None = None):
+        self._chunks = chunks
+        self.headers = {}
+        if content_length is not None:
+            self.headers["content-length"] = content_length
+
+    async def stream(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+@pytest.mark.asyncio
+async def test_read_json_body_capped_rejects_declared_oversize_before_reading():
+    request = FakeIngestRequest([b"x"], content_length=str(RAG_INGEST_MAX_BODY_BYTES + 1))
+
+    with pytest.raises(HTTPException) as exc:
+        await read_json_body_capped(request, RAG_INGEST_MAX_BODY_BYTES)
+
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_read_json_body_capped_guards_streams_without_content_length():
+    request = FakeIngestRequest([b"a" * 600, b"a" * 500])
+
+    with pytest.raises(HTTPException) as exc:
+        await read_json_body_capped(request, 1000)
+
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_read_json_body_capped_rejects_invalid_declared_length():
+    request = FakeIngestRequest([b"{}"], content_length="not-a-number")
+
+    with pytest.raises(HTTPException) as exc:
+        await read_json_body_capped(request, 1000)
+
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_read_json_body_capped_parses_body_under_cap():
+    request = FakeIngestRequest([b'{"name": "manual", ', b'"mime_type": "application/pdf"}'])
+
+    body = await read_json_body_capped(request, 1000)
+
+    assert body == {"name": "manual", "mime_type": "application/pdf"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", [b"not-json", b'"just a string"', b"\xff\xfe"])
+async def test_read_json_body_capped_rejects_non_object_bodies(raw):
+    request = FakeIngestRequest([raw])
+
+    with pytest.raises(HTTPException) as exc:
+        await read_json_body_capped(request, 1000)
+
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_rag_ingest_payload_passes_pdf_mime_and_content_untouched():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"source_id": 3}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    result = await rag_ingest_payload(
+        body={
+            "name": "politicas.pdf",
+            "kind": "document",
+            "content": "JVBERi0xLjQ=",
+            "mime_type": "application/pdf",
+        },
+        user=SCOPED_USER,
+        rag_url="http://rag",
+        http_client_factory=FakeClient,
+        headers_factory=lambda service: {"x-service": service},
+        upstream_error_detail=lambda _response, fallback: fallback,
+        build_security_context=lambda user: {"workspace_id": user["workspace_id"]},
+    )
+
+    assert result == {"source_id": 3}
+    assert captured["json"]["mime_type"] == "application/pdf"
+    assert captured["json"]["content"] == "JVBERi0xLjQ="
+    assert captured["json"]["security_context"] == {"workspace_id": "workspace-a"}
+
+
+@pytest.mark.asyncio
+async def test_rag_answer_payload_records_usage_with_rag_surface(monkeypatch):
+    recorded = {}
+
+    async def fake_record(provider, model, input_tokens, output_tokens, *args, **kwargs):
+        recorded.update(
+            provider=provider,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            duration_ms=kwargs.get("duration_ms"),
+            surface=kwargs.get("surface"),
+            user_context=kwargs.get("user_context"),
+        )
+
+    monkeypatch.setattr(rag_requests.token_store, "record", fake_record)
+
+    class SearchResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"results": [{"source_name": "Manual", "context": "texto"}]}}
+
+    class SearchClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json):
+            return SearchResponse()
+
+    class TextBlock:
+        type = "text"
+        text = "Respuesta"
+
+    class Usage:
+        input_tokens = 11
+        output_tokens = 7
+        cache_creation_input_tokens = 0
+        cache_read_input_tokens = 0
+
+    class LLMResponse:
+        content = [TextBlock()]
+        usage = Usage()
+
+    class Messages:
+        async def create(self, **_kwargs):
+            return LLMResponse()
+
+    class AnthropicClient:
+        messages = Messages()
+
+    class FakeLLM:
+        @staticmethod
+        def _ensure_provider_configured(_provider):
+            return None
+
+        @staticmethod
+        def _anthropic_client():
+            return AnthropicClient()
+
+        @staticmethod
+        def _resolve_chat_model(_model):
+            return "claude-haiku-4-5-20251001"
+
+    result = await rag_answer_payload(
+        body={"query": "¿Qué dice la política?"},
+        user=SCOPED_USER,
+        rag_url="http://rag",
+        http_client_factory=lambda **_kwargs: SearchClient(),
+        headers_factory=lambda _service: {},
+        mcp_payload_factory=lambda tool, args, user: {"tool": tool, "args": args},
+        upstream_error_detail=lambda _response, fallback: fallback,
+        llm_client=FakeLLM,
+        uuid_factory=None,
+        logger_exception=lambda *_a, **_k: None,
+        rag_search_arguments=rag_search_arguments,
+        rag_empty_answer=rag_empty_answer,
+        rag_synthesis_messages=rag_synthesis_messages,
+    )
+
+    assert result["answer"] == "Respuesta"
+    assert recorded["provider"] == "anthropic"
+    assert recorded["model"] == "claude-haiku-4-5-20251001"
+    assert recorded["input_tokens"] == 11
+    assert recorded["output_tokens"] == 7
+    assert recorded["surface"] == "rag"
+    assert isinstance(recorded["duration_ms"], int)
+    assert recorded["user_context"] == SCOPED_USER
+
+
+class BodylessRequest:
+    def __init__(self, content_length: str | None):
+        self.headers = {}
+        if content_length is not None:
+            self.headers["content-length"] = content_length
+
+    def stream(self):
+        raise AssertionError("size gate must not touch the body")
+
+    async def body(self):
+        raise AssertionError("size gate must not touch the body")
+
+    async def json(self):
+        raise AssertionError("size gate must not touch the body")
+
+
+def test_rag_ingest_size_gate_requires_content_length_without_buffering():
+    with pytest.raises(HTTPException) as exc:
+        require_rag_ingest_size(BodylessRequest(None))
+
+    assert exc.value.status_code == 411
+
+
+def test_rag_ingest_size_gate_rejects_oversize_before_any_read():
+    with pytest.raises(HTTPException) as exc:
+        require_rag_ingest_size(BodylessRequest(str(RAG_INGEST_MAX_BODY_BYTES + 1)))
+
+    assert exc.value.status_code == 413
+
+
+def test_rag_ingest_size_gate_rejects_invalid_content_length():
+    with pytest.raises(HTTPException) as exc:
+        require_rag_ingest_size(BodylessRequest("nope"))
+
+    assert exc.value.status_code == 400
+
+
+def test_rag_ingest_size_gate_accepts_bodies_at_the_cap():
+    assert require_rag_ingest_size(BodylessRequest(str(RAG_INGEST_MAX_BODY_BYTES))) is None
+
+
+def test_rag_ingest_cap_matches_mcp_infra_request_limit():
+    from pathlib import Path
+
+    upstream = Path("mcp-infra/app/rag/ingest.py").read_text(encoding="utf-8")
+    assert "MAX_INGEST_REQUEST_BYTES = 15 * 1024 * 1024" in upstream
+    assert RAG_INGEST_MAX_BODY_BYTES == 15 * 1024 * 1024
+
+
+def test_rag_ingest_routes_run_size_gate_before_csrf():
+    from pathlib import Path
+    import re
+
+    for path in ("console/app/main.py", "console/app/routers/v1/rag.py"):
+        source = Path(path).read_text(encoding="utf-8")
+        match = re.search(
+            r'"/api/rag/ingest",\s*dependencies=\[(?P<deps>[^]]+)\]',
+            source,
+        )
+        assert match, f"{path}: ingest route dependencies not found"
+        deps = match.group("deps")
+        assert "require_rag_ingest_size" in deps, path
+        assert "require_csrf" in deps, path
+        assert deps.index("require_rag_ingest_size") < deps.index("require_csrf"), (
+            f"{path}: size gate must run before the CSRF body fallback"
+        )

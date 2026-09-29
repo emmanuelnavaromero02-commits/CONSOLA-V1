@@ -1,8 +1,56 @@
 from __future__ import annotations
 
+import json
+import time
 from typing import Any, Callable
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+
+from app.services import token_store
+
+RAG_INGEST_MAX_BODY_BYTES = 15 * 1024 * 1024
+
+
+def _declared_content_length(request: Request) -> int | None:
+    raw_length = request.headers.get("content-length")
+    if raw_length is None:
+        return None
+    try:
+        declared = int(raw_length)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid Content-Length") from exc
+    if declared < 0:
+        raise HTTPException(400, "Invalid Content-Length")
+    return declared
+
+
+def require_rag_ingest_size(request: Request) -> None:
+    """Runs before the CSRF body fallback so no unbounded buffering path remains."""
+    declared = _declared_content_length(request)
+    if declared is None:
+        raise HTTPException(411, "Content-Length required")
+    if declared > RAG_INGEST_MAX_BODY_BYTES:
+        raise HTTPException(413, "Request body exceeds size limit")
+
+
+async def read_json_body_capped(request: Request, max_bytes: int) -> dict[str, Any]:
+    declared = _declared_content_length(request)
+    if declared is not None and declared > max_bytes:
+        raise HTTPException(413, "Request body exceeds size limit")
+    received = 0
+    chunks: list[bytes] = []
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > max_bytes:
+            raise HTTPException(413, "Request body exceeds size limit")
+        chunks.append(chunk)
+    try:
+        body = json.loads(b"".join(chunks) or b"{}")
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(400, "Invalid JSON body") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Invalid JSON body")
+    return body
 
 
 async def rag_answer_payload(
@@ -45,12 +93,27 @@ async def rag_answer_payload(
 
     try:
         llm_client._ensure_provider_configured("anthropic")
+        model = llm_client._resolve_chat_model(None)
+        started = time.perf_counter()
         response = await llm_client._anthropic_client().messages.create(
-            model=llm_client._resolve_chat_model(None),
+            model=model,
             max_tokens=1024,
             system=rag_messages["system"],
             messages=[{"role": "user", "content": rag_messages["user"]}],
         )
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            await token_store.record(
+                "anthropic", model,
+                int(getattr(usage, "input_tokens", 0) or 0),
+                int(getattr(usage, "output_tokens", 0) or 0),
+                int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
+                int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                user_context=user,
+                duration_ms=duration_ms,
+                surface="rag",
+            )
         answer = (
             next(
                 (

@@ -1102,6 +1102,7 @@ async def _run_loop(
             tool_server_map=server_map,
             on_event=emit_event if on_event is not None else None,
             user_context=user,
+            surface="copilot",
         )
     except Exception as exc:                    # noqa: BLE001
         import logging
@@ -1279,6 +1280,7 @@ async def _maybe_extract_facts(
 ) -> None:
     tail = list(history)[-6:] + [{"role": "assistant", "content": reply_text}]
     async def _llm_text(system: str, messages: list[dict]) -> str:
+        # Background fact extraction: kept out of the user-facing latency metric.
         reply, _v, _m = await llm_client.chat(
             system=system,
             messages=messages,
@@ -1287,6 +1289,7 @@ async def _maybe_extract_facts(
             tool_server_map={},
             on_event=None,
             user_context=user_context,
+            surface="other",
         )
         return reply or ""
     await memory_service.extract_facts_from_turn(

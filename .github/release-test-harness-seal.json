@@ -2963,7 +2963,7 @@
     },
     {
       "path": "console/tests/test_data_platform_modules.py",
-      "sha256": "99ca85a4e6fd47cf73d93042e76f7f0c09b13047bd0a5a097fe7672ea140dd66"
+      "sha256": "f871253a82bbcdc35f63345356b2952d1eb8a1a833e57455b10f6740e71e2c78"
     },
     {
       "path": "console/tests/test_data_query_filters.py",
@@ -3108,6 +3108,10 @@
     {
       "path": "console/tests/test_jwt_blacklist.py",
       "sha256": "65d9e1e9661296ba111cf5d02a92aea079ed2959fbc16f480769192f77faea3c"
+    },
+    {
+      "path": "console/tests/test_knowledge_page_access.py",
+      "sha256": "85b2cd2f2325eba4c6a31c1f019ca91a9417cfee92aa674b005305dd80b74d7f"
     },
     {
       "path": "console/tests/test_lineage_payloads.py",
@@ -3439,7 +3443,7 @@
     },
     {
       "path": "console/tests/test_token_store_audit.py",
-      "sha256": "67a3f8fe4230911b760a5f4880596faff9eba18ddbdf12df7a2cdb43622cf777"
+      "sha256": "1d9ea77cac1a55a24a174960656f2f8f12fb032e0d2a12b2aaeeb33eb8ea3c3f"
     },
     {
       "path": "console/tests/test_v1_smoke.py",
@@ -4891,7 +4895,7 @@
     },
     {
       "path": "tests/test_copilot_service.py",
-      "sha256": "7d20f318d53dd17d2f568ed0b325fe65813f4a07d1b8e3b4afb7084dbb3b3291"
+      "sha256": "c20812131ff4ea37b8cdd77895b99281e0aceff00f2b1c6fe570cfaa329a9ca1"
     },
     {
       "path": "tests/test_copilot_turn_page_context.py",
@@ -5271,7 +5275,7 @@
     },
     {
       "path": "tests/test_llm_client_config.py",
-      "sha256": "b5dfbac052605d1556395fad790d19567884dbd7c9232c46ef34bbed1cbee4c4"
+      "sha256": "4b6e7abdd19f718d283d5dff7ee531f99e0caea8a112269808c931199fe3afc6"
     },
     {
       "path": "tests/test_local_bootstrap_reproducibility.py",
@@ -6495,11 +6499,15 @@
     },
     {
       "path": "tests/test_tenant_page_route_permissions.py",
-      "sha256": "6d353bb21441a530af6513422888e13048e26034f1239b182e739b97f90c79b9"
+      "sha256": "57a5acfca297862ae166cf5144fd672d996c13319a6e98f8d89343f0b779a289"
     },
     {
       "path": "tests/test_terraform_backend_config.py",
       "sha256": "a90a2ac1e3bc10d853ad0a0c060b2149683f087bdacd2572283903f9eeb95068"
+    },
+    {
+      "path": "tests/test_token_usage_observability_migration.py",
+      "sha256": "ac2f518087823919ec953c989e7e35150c3c228f5fc874eb8fac48c3e6373c2b"
     },
     {
       "path": "tests/test_tool_manifest.py",
@@ -6652,6 +6660,10 @@
     {
       "path": "workspace/tests/test_strict_csp.py",
       "sha256": "7160a2d1318dc50db619ed6b9fbee091175eecadb5e482bb60fcec010b331f7c"
+    },
+    {
+      "path": "workspace/tests/test_token_store_observability.py",
+      "sha256": "b77020411dbbe5c285cf078d93be6ea35b9052695e625fbaec188b209f032796"
     },
     {
       "path": "workspace/tests/test_users_workspace_scope.py",

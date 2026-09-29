@@ -283,12 +283,15 @@ from app.domains.data_platform.rag_payloads import (
     rag_synthesis_messages as _rag_synthesis_messages,
 )
 from app.domains.data_platform.rag_requests import (
+    RAG_INGEST_MAX_BODY_BYTES as _RAG_INGEST_MAX_BODY_BYTES,
     rag_answer_payload as _rag_answer_payload_impl,
     rag_delete_source_payload as _rag_delete_source_payload_impl,
     rag_ingest_payload as _rag_ingest_payload_impl,
     rag_reindex_payload as _rag_reindex_payload_impl,
     rag_search_payload as _rag_search_payload_impl,
     rag_sources_payload as _rag_sources_payload_impl,
+    read_json_body_capped as _read_json_body_capped,
+    require_rag_ingest_size as _require_rag_ingest_size,
 )
 from app.domains.data_platform.semantic_requests import (
     semantic_enrich_payload as _semantic_enrich_payload_impl,
@@ -6532,6 +6535,11 @@ async def api_vault_delete_secret(
 
 
 # ── RAG proxy ─────────────────────────────────────────────────────────────────
+# RAG write guard mirrors the knowledge page: workspace admins plus every
+# platform admin role (owner/super_admin included by deliberate alignment).
+_require_rag_write_role = require_any_role(ROLE_WORKSPACE_ADMIN, *sorted(PLATFORM_ADMIN_ROLES))
+
+
 def _rag_headers_for_user(user: dict) -> dict[str, str]:
     return {
         **_hdr_for("MCP_INFRA"),
@@ -6557,7 +6565,7 @@ async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permissi
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("datasets.write")),
-        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+        Depends(_require_rag_write_role),
     ],
 )
 async def api_rag_delete_source(
@@ -6593,7 +6601,7 @@ async def api_rag_search(body: dict, user: dict = Depends(require_permission("da
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("datasets.write")),
-        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+        Depends(_require_rag_write_role),
     ],
 )
 async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("datasets.write"))):
@@ -6613,12 +6621,14 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("d
 @app.post(
     "/api/rag/ingest",
     dependencies=[
+        Depends(_require_rag_ingest_size),
         Depends(require_csrf),
         Depends(require_permission("datasets.write")),
-        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+        Depends(_require_rag_write_role),
     ],
 )
-async def api_rag_ingest(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_rag_ingest(request: Request, user: dict = Depends(require_permission("datasets.write"))):
+    body = await _read_json_body_capped(request, _RAG_INGEST_MAX_BODY_BYTES)
     return await _rag_ingest_payload_impl(
         body=body,
         user=user,

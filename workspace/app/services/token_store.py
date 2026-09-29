@@ -11,7 +11,22 @@ _COST_PER_1M: dict[str, dict[str, float]] = {
     "claude-opus-4-6":            {"input": 15.00, "output": 75.00},
 }
 
+ALLOWED_SURFACES = frozenset({"copilot", "studio", "rag", "catalog", "workspace", "other"})
+
 _pool: asyncpg.Pool | None = None
+
+
+def _clean_surface(surface: str | None) -> str | None:
+    value = str(surface or "").strip().lower()
+    return value if value in ALLOWED_SURFACES else None
+
+
+def _clean_duration_ms(duration_ms: int | None) -> int | None:
+    try:
+        value = int(duration_ms) if duration_ms is not None else None
+    except (TypeError, ValueError):
+        return None
+    return value if value is not None and value >= 0 else None
 
 
 def _scope_from_context(user_context: dict | None) -> tuple[int | None, str | None, str | None]:
@@ -52,6 +67,9 @@ async def record(
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
     user_context: dict | None = None,
+    *,
+    duration_ms: int | None = None,
+    surface: str | None = None,
 ) -> None:
     try:
         pool = await _get_pool()
@@ -62,10 +80,11 @@ async def record(
                 await conn.execute(
                     "INSERT INTO token_usage "
                     "(provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
-                    "user_id, tenant_id, workspace_id) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)",
+                    "user_id, tenant_id, workspace_id, duration_ms, surface) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, $10, $11)",
                     provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
                     user_id, tenant_id, workspace_id,
+                    _clean_duration_ms(duration_ms), _clean_surface(surface),
                 )
     except Exception:
         pass

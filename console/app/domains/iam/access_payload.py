@@ -58,7 +58,10 @@ def access_ui_capabilities(
         "can_view_dashboard": True,
         "can_view_workspace": _can("workspace.access"),
         "can_view_copilot": _can("copilot.use"),
-        "can_view_knowledge": _can("mcp.registry.read") and is_platform_admin,
+        "can_view_knowledge": (
+            _can("datasets.write")
+            and (is_platform_admin or workspace_role_resolved == "workspace_admin")
+        ),
         "can_view_tokens": _can("copilot.use"),
         "can_manage_llm_key": _can("llm.keys.write"),
         "can_view_marketplace": _can("marketplace.read"),

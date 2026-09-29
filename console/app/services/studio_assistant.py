@@ -1083,6 +1083,7 @@ async def chat(
             tool_server_map=tool_server_map,
             on_event=on_event,
             user_context=actor_user,
+            surface="studio",
         )
     except llm_client.LLMConfigurationError as exc:
         reply = (

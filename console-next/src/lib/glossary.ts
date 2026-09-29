@@ -65,6 +65,9 @@ export const FORBIDDEN_UI_TERMS = [
   "read_parquet",
   "join_hint",
   "many_to_one",
+  "RAG",
+  "pgvector",
+  "chunk",
 ] as const;
 
 const FORBIDDEN_PATTERNS = FORBIDDEN_UI_TERMS.map((word) => ({

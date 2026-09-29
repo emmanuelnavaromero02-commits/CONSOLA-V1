@@ -10,9 +10,10 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
-from app.dependencies import ROLE_ADMIN, require_admin, require_global_any_role
+from app.dependencies import ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, require_admin, require_global_any_role
 from app.dependencies import require_authenticated
 from app.services.csrf import CSRF_COOKIE_NAME, set_csrf_cookie
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 from app.services.permissions import has_permission, require_permission
 
 
@@ -544,18 +545,30 @@ async def copilot_actions_page(request: Request):
     return _console_next_response(request, "copilot/actions/index.html")
 
 
+def _require_knowledge_manager_role(request: Request) -> dict:
+    """Mirrors the /api/rag write guard: platform admin or workspace admin."""
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(401, "authentication required")
+    role = str(user.get("role") or "")
+    roles = {role, str(user.get("workspace_role") or "")}
+    if role in PLATFORM_ADMIN_ROLES or roles.intersection({ROLE_ADMIN, ROLE_WORKSPACE_ADMIN}):
+        return user
+    raise HTTPException(403, "required role missing")
+
+
 @router.get(
     "/copilot/knowledge",
     dependencies=[
-        Depends(require_permission("mcp.registry.read")),
-        Depends(require_admin),
+        Depends(require_permission("datasets.write")),
+        Depends(_require_knowledge_manager_role),
     ],
 )
 @router.get(
     "/copilot/knowledge/",
     dependencies=[
-        Depends(require_permission("mcp.registry.read")),
-        Depends(require_admin),
+        Depends(require_permission("datasets.write")),
+        Depends(_require_knowledge_manager_role),
     ],
 )
 async def copilot_knowledge_page(request: Request):
