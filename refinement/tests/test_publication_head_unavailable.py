@@ -351,3 +351,115 @@ def test_io_errors_with_the_same_marker_are_still_outages(monkeypatch):
 
     assert (status, detail["code"]) == (503, "storage_unavailable")
     assert is_storage_infra_exception(exc)
+
+
+_DIGEST = "a" * 64
+_DEPENDENCY = "gold/sap_successfactors/sap_successfactors_employee_360"
+_KEY = f"{_DEPENDENCY}/v.parquet"
+_LEGACY_CONDITIONS = {
+    "outside-managed-storage": ({"object_uri": "file:///tmp/x.parquet"}, _DIGEST),
+    "missing-pinned-version": ({"object_version": ""}, _DIGEST),
+    "no-recorded-checksum": ({}, ""),
+    "checksum-mismatch": ({}, "b" * 64),
+}
+
+
+def _legacy_inputs(monkeypatch, overrides: dict, stored_checksum: str):
+    resolve = type(refinement_main.engine).materialize.__globals__[
+        "resolve_input_state"
+    ]
+    inputs = resolve.__globals__
+    head = {
+        "materialization_run_id": "run-1",
+        "generation": 1,
+        "status": "legacy_unverified",
+        "gold_table": None,
+        "object_uri": f"s3://lakehouse/{_KEY}",
+        "object_version": "v1",
+        "object_checksum": _DIGEST,
+        **overrides,
+    }
+    monkeypatch.setitem(
+        inputs,
+        "PublicationSnapshotResolver",
+        _resolver(SimpleNamespace(head=head)),
+    )
+
+    class Storage:
+        @staticmethod
+        def stat(*_args, **_kwargs):
+            return SimpleNamespace(checksum_sha256=stored_checksum)
+
+    engine = SimpleNamespace(
+        storage=Storage(),
+        _s3_object_key=lambda uri: (
+            uri.removeprefix("s3://lakehouse/") if uri.startswith("s3://") else ""
+        ),
+    )
+    return resolve, engine
+
+
+@pytest.mark.parametrize("condition", sorted(_LEGACY_CONDITIONS))
+def test_legacy_dependency_integrity_conditions_raise_integrity_errors(
+    monkeypatch, condition
+):
+    overrides, stored_checksum = _LEGACY_CONDITIONS[condition]
+    resolve, engine = _legacy_inputs(monkeypatch, overrides, stored_checksum)
+
+    with pytest.raises(RuntimeError, match="published dependency") as raised:
+        resolve(engine, {"sources": [_DEPENDENCY]}, CONTEXT)
+
+    assert type(raised.value).__name__ == "PublicationIntegrityError"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("condition", sorted(_LEGACY_CONDITIONS))
+async def test_legacy_dependency_integrity_conditions_return_409_without_fallback(
+    monkeypatch, condition
+):
+    overrides, stored_checksum = _LEGACY_CONDITIONS[condition]
+    resolve, fake_engine = _legacy_inputs(monkeypatch, overrides, stored_checksum)
+    dataset = {
+        "name": TALENT_GOLD,
+        "sql_def": "SELECT 1 AS real_value",
+        "layer": "gold",
+        "cartridge": "sap_successfactors",
+        "sources": [_DEPENDENCY],
+        "tenant_id": TENANT,
+        "workspace_id": WORKSPACE,
+        "created_by_id": 41,
+    }
+    calls: list[str] = []
+
+    def materialize(ds, context):
+        calls.append(str(ds.get("sql_def") or ""))
+        resolve(fake_engine, {"sources": [_DEPENDENCY]}, context)
+        raise AssertionError("integrity failure was not raised")
+
+    update_refresh = MagicMock()
+    monkeypatch.setattr(
+        refinement_main.store, "get_dataset", MagicMock(return_value=dataset)
+    )
+    monkeypatch.setattr(refinement_main.store, "update_refresh", update_refresh)
+    monkeypatch.setattr(refinement_main.engine, "materialize", materialize)
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT", PAIR_KEY)
+    transport = httpx.ASGITransport(app=refinement_main.app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://refinement.test"
+    ) as client:
+        response = await client.post(
+            "/mcp/invoke",
+            headers={"x-api-key": PAIR_KEY, "x-internal-service": "console"},
+            json={
+                "tool": "materialize",
+                "args": {"name": TALENT_GOLD},
+                "security_context": refinement_main._sign_security_context(
+                    _security_context()
+                ),
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "publication_integrity_failed"
+    assert calls == ["SELECT 1 AS real_value"]
+    update_refresh.assert_not_called()

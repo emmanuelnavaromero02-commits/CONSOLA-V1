@@ -53,7 +53,7 @@ def publication_resolution_error(exc: BaseException) -> RuntimeError:
 
 def _require_pinned_version(version: str, subject: str) -> None:
     if not version or version == "null":
-        raise RuntimeError(f"{subject} has no pinned version")
+        raise PublicationIntegrityError(f"{subject} has no pinned version")
 
 
 @dataclass(frozen=True)

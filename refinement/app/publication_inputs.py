@@ -5,6 +5,7 @@ from typing import Any
 try:
     from app.publication_snapshot import (
         PUBLICATION_RESOLUTION_ERRORS,
+        PublicationIntegrityError,
         PublicationSnapshotResolver,
         _require_pinned_version,
         publication_resolution_error,
@@ -12,6 +13,7 @@ try:
 except ModuleNotFoundError:
     from refinement.app.publication_snapshot import (
         PUBLICATION_RESOLUTION_ERRORS,
+        PublicationIntegrityError,
         PublicationSnapshotResolver,
         _require_pinned_version,
         publication_resolution_error,
@@ -63,7 +65,9 @@ def _published_state(
     uri = str(head.get("object_uri") or "")
     key = engine._s3_object_key(uri)
     if not key:
-        raise RuntimeError("published dependency is outside managed storage")
+        raise PublicationIntegrityError(
+            "published dependency is outside managed storage"
+        )
     version = str(head.get("object_version") or "")
     _require_pinned_version(version, "published dependency")
     try:
@@ -72,9 +76,9 @@ def _published_state(
         raise publication_resolution_error(exc) from exc
     actual_checksum = current.checksum_sha256 or ""
     if not actual_checksum:
-        raise RuntimeError("published dependency has no recorded checksum")
+        raise PublicationIntegrityError("published dependency has no recorded checksum")
     if actual_checksum != str(head.get("object_checksum") or ""):
-        raise RuntimeError("published dependency checksum mismatch")
+        raise PublicationIntegrityError("published dependency checksum mismatch")
     return {
         "source": source,
         "published": {

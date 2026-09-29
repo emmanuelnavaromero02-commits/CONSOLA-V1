@@ -3679,7 +3679,7 @@
     },
     {
       "path": "refinement/tests/test_publication_head_unavailable.py",
-      "sha256": "3a3ceccf97034f8f5ceafbc476a091c8a24dac98f1fab64ce943fe3b9452417e"
+      "sha256": "a157c5c4f8795d58d142e7067c9dd14822734c7f1b981f4f65b8142fff0da790"
     },
     {
       "path": "refinement/tests/test_publication_semantics_copilot.py",
