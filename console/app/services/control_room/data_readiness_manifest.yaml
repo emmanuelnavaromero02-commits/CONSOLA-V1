@@ -199,6 +199,18 @@ datasets:
       - refinement/app/successfactors_exposure_materializer.py
       - infra/init/99zzzzzza_talent_attrition_exposure_seed.sql
   - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_succession_coverage
+    readiness: partial
+    reason: "Succession coverage for active positions; a position is critical only from its extracted positionCriticality or criticality value, and critical_without_nominee_total stays NULL while any criticality value, nomination status or nomination target cannot be interpreted."
+    blockers:
+      - "Requires positionCriticality or criticality values on extracted Position rows (selected only when the SuccessFactors metadata lists them), all mapped to critical or not critical; with no critical position, every active position needs a value."
+      - "Requires SuccessionNomination rows whose status is recognised and whose target position matches an extracted Position before counting critical positions without an active successor."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_succession_coverage.sql
+      - cartridges/sap_successfactors/datasets/sap_successfactors_position_latest.sql
+      - refinement/app/successfactors_succession_fallbacks.py
+      - infra/init/99zzzzzzc_talent_succession_coverage.sql
+  - cartridge: sap_successfactors
     dataset: sap_successfactors_talent_promotion_alignment
     readiness: partial
     reason: "Promotion alignment uses observed job movements and 9-box placement; calibration entities are still pending."

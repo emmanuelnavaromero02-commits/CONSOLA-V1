@@ -196,7 +196,13 @@ def _materialize_with_operational_fallback(engine, ds: dict, context: dict) -> t
     try:
         return engine.materialize(ds, context), False, None
     except Exception as exc:
-        fallback = fallback_dataset_for_successfactors(ds, exc)
+        fallback = fallback_dataset_for_successfactors(
+            ds,
+            exc,
+            missing_sources=lambda sources: engine.missing_materialized_dependencies(
+                sources, context
+            ),
+        )
         if not fallback:
             raise
         result = engine.materialize(fallback, context)

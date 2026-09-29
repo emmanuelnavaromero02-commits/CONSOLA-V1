@@ -33,7 +33,6 @@ def _function_body(sql: str, name: str) -> str:
 
 def test_migration_sorts_after_the_previous_latest_in_c_and_glibc_order() -> None:
     names = sorted(p.name for p in INIT_DIR.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
     previous = "99zzzzzza_talent_attrition_exposure_seed.sql"
     assert names.index(previous) < names.index(MIGRATION.name)
     collated = subprocess.run(

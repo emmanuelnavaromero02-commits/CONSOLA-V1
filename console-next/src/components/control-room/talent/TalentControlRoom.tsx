@@ -29,11 +29,13 @@ import type {
   SfTalentAnomaly,
   SfTalentBlocker,
   SfTalentConfianza,
+  SfTalentConfianzaVacantes,
   SfTalentDesempenoCohort,
   SfTalentNineBoxCell,
   SfTalentNineBoxPayload,
   SfTalentOverviewPayload,
   SfTalentRosterPayload,
+  SfTalentVacantesMotivo,
 } from "@/lib/control-room/types";
 import { isApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -669,6 +671,49 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
   );
 }
 
+const VACANTES_ESPERA: Record<SfTalentVacantesMotivo, string> = {
+  sucesion_no_calculada: "Sin información (la cobertura de sucesión aún no se ha calculado)",
+  sucesion_no_disponible: "Sin información (la cobertura de sucesión no está disponible por ahora)",
+  sin_permiso: "Sin información (no tienes permiso para ver este dato)",
+  posiciones_no_extraidas: "Sin información (requiere extracción de posiciones)",
+  sin_posiciones_activas: "Sin información (todas las posiciones extraídas están inactivas)",
+  criticidad_no_encontrada:
+    "Sin información (no se encontró la criticidad de las posiciones en los datos extraídos)",
+  criticidad_no_reconocida:
+    "Sin información (los valores de criticidad de las posiciones aún no se reconocen)",
+  criticidad_incompleta:
+    "Sin información (algunas posiciones no tienen criticidad asignada, así que no se puede confirmar que no haya posiciones críticas sin sucesor)",
+  sucesion_no_extraida: "Sin información (requiere extracción de sucesión)",
+  sin_nominaciones:
+    "Sin información (no se encontraron nominaciones de sucesión a posiciones en los datos extraídos)",
+  nominaciones_sin_cruce:
+    "Sin información (las nominaciones de sucesión no coinciden con las posiciones extraídas)",
+  nominaciones_cruce_parcial:
+    "Sin información (algunas nominaciones de sucesión no coinciden con las posiciones extraídas)",
+  estado_nominacion_no_reconocido:
+    "Sin información (no se pudieron interpretar los estados de las nominaciones de sucesión)",
+};
+
+function vacantesEspera(motivo?: SfTalentVacantesMotivo | null): string {
+  return (motivo && VACANTES_ESPERA[motivo]) || VACANTES_ESPERA.sucesion_no_disponible;
+}
+
+function vacantesDetalle(vacantes: SfTalentConfianzaVacantes): string {
+  if (vacantes.count === 0) return "ninguna posición crítica sin sucesor activo";
+  const roles = vacantes.roles ?? [];
+  if (!roles.length) return "posiciones críticas sin sucesor activo";
+  const shown = roles.slice(0, 4);
+  const more = roles.length > shown.length || vacantes.count > shown.length;
+  return `Posiciones: ${shown.join(", ")}${more ? "…" : ""}`;
+}
+
+function sinCriticidadNota(sinCriticidad?: number | null): string | null {
+  if (!sinCriticidad || sinCriticidad <= 0) return null;
+  return sinCriticidad === 1
+    ? "1 posición no tiene criticidad asignada y no se cuenta"
+    : `${formatNumber(sinCriticidad)} posiciones no tienen criticidad asignada y no se cuentan`;
+}
+
 export function ConfianzaTilesPanel({ confianza }: { confianza?: SfTalentConfianza | null }) {
   const estrellas = confianza?.estrellas_en_riesgo ?? null;
   const vacantes = confianza?.vacantes_criticas_sin_sucesor ?? null;
@@ -699,23 +744,23 @@ export function ConfianzaTilesPanel({ confianza }: { confianza?: SfTalentConfian
       </div>
       <div className={tileClass}>
         <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300/80">
-          Vacantes críticas sin sucesor
+          Posiciones críticas sin sucesor
         </p>
         {vacantes ? (
           <>
             <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground dark:text-white">
               {formatNumber(vacantes.count)}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {vacantes.roles?.length
-                ? `Roles: ${vacantes.roles.slice(0, 4).join(", ")}${vacantes.roles.length > 4 ? "…" : ""}`
-                : "sin roles bloqueados sin sucesor"}
-            </p>
+            <p className="text-xs text-muted-foreground">{vacantesDetalle(vacantes)}</p>
+            {sinCriticidadNota(vacantes.posiciones_sin_criticidad) ? (
+              <p className="text-xs text-muted-foreground">
+                {sinCriticidadNota(vacantes.posiciones_sin_criticidad)}
+              </p>
+            ) : null}
+            <p className="text-xs text-muted-foreground">criticidad según los datos de posiciones extraídos</p>
           </>
         ) : (
-          <p className={emptyClass}>
-            Sin información (requiere proyección de Sucesión publicada y criticidad por rol)
-          </p>
+          <p className={emptyClass}>{vacantesEspera(confianza?.vacantes_criticas_motivo)}</p>
         )}
       </div>
       <div className={tileClass}>

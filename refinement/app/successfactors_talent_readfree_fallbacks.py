@@ -192,4 +192,33 @@ SELECT
     CURRENT_TIMESTAMP AS generated_at
 WHERE FALSE
 """,
+    "sap_successfactors_talent_succession_coverage": """
+SELECT
+    NULL::VARCHAR AS tenant_id,
+    NULL::VARCHAR AS workspace_id,
+    NULL::VARCHAR AS position_id,
+    NULL::VARCHAR AS position_name,
+    NULL::VARCHAR AS department,
+    NULL::VARCHAR AS criticality,
+    NULL::BOOLEAN AS is_critical,
+    NULL::BOOLEAN AS is_vacant,
+    NULL::BOOLEAN AS has_active_nominee,
+    0::BIGINT AS nominee_count,
+    NULL::VARCHAR AS readiness_best,
+    0::BIGINT AS positions_total,
+    0::BIGINT AS positions_inactive_count,
+    FALSE AS criticality_available,
+    0::BIGINT AS criticality_unrecognized_count,
+    0::BIGINT AS criticality_missing_count,
+    0::BIGINT AS critical_total,
+    NULL::BIGINT AS critical_without_nominee_total,
+    0::BIGINT AS critical_coverage_unknown_count,
+    FALSE AS nominations_available,
+    0::BIGINT AS nominations_total,
+    0::BIGINT AS nominations_matched,
+    0::BIGINT AS nominations_unmatched_open,
+    'talent_succession_coverage.v1' AS contract_version,
+    CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
+""",
 }
