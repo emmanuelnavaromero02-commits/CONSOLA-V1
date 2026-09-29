@@ -7,6 +7,7 @@ from typing import Any
 
 
 MATERIALIZATION_LAYERS = frozenset({"silver", "gold"})
+MAX_SKIP_REASON_LENGTH = 300
 
 
 def _slot_id(run_id: str, tenant_id: str, workspace_id: str, dataset: str) -> str:
@@ -22,6 +23,50 @@ def _scope(cur: Any, tenant_id: str, workspace_id: str) -> None:
         "set_config('app.workspace_id', %s, true)",
         (tenant_id, workspace_id),
     )
+
+
+def _durable_result(existing: Any) -> dict[str, Any] | None:
+    if not existing:
+        return None
+    status = str(existing[0])
+    extra = existing[1] if isinstance(existing[1], dict) else {}
+    result = extra.get("result") if isinstance(extra.get("result"), dict) else {}
+    if status == "success":
+        return result
+    if status == "partial" and result.get("degraded") is True:
+        return result
+    return None
+
+
+def _finished_state(
+    success: bool,
+    result: dict[str, Any] | None,
+    degraded: bool,
+    skipped_reason: str | None,
+) -> tuple[str, str | None, dict[str, Any]]:
+    if success:
+        if skipped_reason is not None:
+            raise RuntimeError("a published materialization cannot be skipped")
+        layer = str((result or {}).get("layer") or "").strip()
+        if layer not in MATERIALIZATION_LAYERS:
+            raise RuntimeError("materialization outcome layer is unavailable")
+        safe_result: dict[str, Any] = {
+            "name": str((result or {}).get("name") or ""),
+            "row_count": int((result or {}).get("row_count") or 0),
+            "layer": layer,
+        }
+        if degraded:
+            safe_result["degraded"] = True
+            return "partial", "degraded_fallback_published", {"result": safe_result}
+        return "success", None, {"result": safe_result}
+    if degraded:
+        raise RuntimeError("a failed materialization cannot be degraded")
+    if skipped_reason is not None:
+        reason = str(skipped_reason).strip()[:MAX_SKIP_REASON_LENGTH]
+        if not reason:
+            raise RuntimeError("materialization skip reason is unavailable")
+        return "skipped", reason, {}
+    return "failed", "materialization_failed", {}
 
 
 def reserve_materialization(
@@ -55,13 +100,9 @@ def reserve_materialization(
             (slot, tenant_id, workspace_id),
         )
         existing = cur.fetchone()
-        if existing and str(existing[0]) == "success":
-            extra = existing[1] if isinstance(existing[1], dict) else {}
-            return {
-                "reserved": False,
-                "completed": True,
-                "result": extra.get("result") or {},
-            }
+        durable = _durable_result(existing)
+        if durable is not None:
+            return {"reserved": False, "completed": True, "result": durable}
         if (
             existing
             and str(existing[0]) == "running"
@@ -129,18 +170,14 @@ def finish_materialization(
     lease_token: int,
     success: bool,
     result: dict[str, Any] | None = None,
+    degraded: bool = False,
+    skipped_reason: str | None = None,
 ) -> None:
     import psycopg2
 
-    safe_result = {
-        "name": str((result or {}).get("name") or ""),
-        "row_count": int((result or {}).get("row_count") or 0),
-    }
-    if success:
-        layer = str((result or {}).get("layer") or "").strip()
-        if layer not in MATERIALIZATION_LAYERS:
-            raise RuntimeError("materialization outcome layer is unavailable")
-        safe_result["layer"] = layer
+    status, error_message, extra = _finished_state(
+        success, result, degraded, skipped_reason
+    )
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         _scope(cur, tenant_id, workspace_id)
         cur.execute(
@@ -157,9 +194,9 @@ def finish_materialization(
                AND lease_expires_at > clock_timestamp()
             """,
             (
-                "success" if success else "failed",
-                None if success else "materialization_failed",
-                json.dumps({"result": safe_result} if success else {}),
+                status,
+                error_message,
+                json.dumps(extra),
                 slot_id,
                 tenant_id,
                 workspace_id,

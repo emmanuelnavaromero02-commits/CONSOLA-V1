@@ -20,6 +20,40 @@ def _cartridge_from_seed_raw(seed_raw: str) -> str:
     return parts[1] if len(parts) >= 3 and parts[0].lower() == "raw" else ""
 
 
+def _raw_key(source: object) -> str | None:
+    parts = str(source or "").strip().strip("/").lower().split("/")
+    if len(parts) >= 3 and parts[0] == "raw" and parts[1] and parts[2]:
+        return f"{parts[1]}/{parts[2]}"
+    return None
+
+
+def _extracted_raw(
+    cur: Any, tenant_id: str, workspace_id: str, keys: set[str]
+) -> set[str]:
+    if not keys:
+        return set()
+    cur.execute(
+        """
+        SELECT DISTINCT lower(cartridge_id), lower(entity)
+          FROM pipeline_runs
+         WHERE tenant_id = %s::uuid
+           AND workspace_id = %s::uuid
+           AND lower(cartridge_id) = ANY(%s::text[])
+           AND lower(entity) = ANY(%s::text[])
+           AND dag_id <> 'dataset_refresh_chain'
+           AND lower(status) IN ('success', 'partial')
+           AND (COALESCE(record_count, 0) > 0 OR COALESCE(storage_uri, '') <> '')
+        """,
+        (
+            tenant_id,
+            workspace_id,
+            sorted({key.split("/", 1)[0] for key in keys}),
+            sorted({key.split("/", 1)[1] for key in keys}),
+        ),
+    )
+    return {f"{cartridge}/{entity}" for cartridge, entity in cur.fetchall()} & keys
+
+
 def _load_graph(
     dsn: str,
     *,
@@ -36,7 +70,8 @@ def _load_graph(
         )
         cur.execute(
             """
-            SELECT name, layer, cartridge, COALESCE(sources, '[]'::jsonb)
+            SELECT name, layer, cartridge, COALESCE(sources, '[]'::jsonb),
+                   last_refresh IS NOT NULL
               FROM datasets
              WHERE tenant_id = %s::uuid
                AND workspace_id = %s::uuid
@@ -45,18 +80,34 @@ def _load_graph(
             (tenant_id, workspace_id),
         )
         rows = cur.fetchall()
-    graph: dict[str, dict[str, Any]] = {}
-    for name, layer, cartridge, sources in rows:
-        if isinstance(sources, str):
-            try:
-                sources = json.loads(sources)
-            except (TypeError, json.JSONDecodeError):
-                sources = []
-        graph[str(name)] = {
-            "layer": str(layer),
-            "cartridge": str(cartridge or ""),
-            "sources": list(sources or []),
+        graph: dict[str, dict[str, Any]] = {}
+        for name, layer, cartridge, sources, materialized in rows:
+            if isinstance(sources, str):
+                try:
+                    sources = json.loads(sources)
+                except (TypeError, json.JSONDecodeError):
+                    sources = []
+            graph[str(name)] = {
+                "layer": str(layer),
+                "cartridge": str(cartridge or ""),
+                "sources": list(sources or []),
+                "materialized": materialized is True,
+            }
+        raw_keys = {
+            key
+            for info in graph.values()
+            for source in info["sources"]
+            if (key := _raw_key(source))
         }
+        extracted = _extracted_raw(cur, tenant_id, workspace_id, raw_keys)
+    for info in graph.values():
+        info["unextracted_raw"] = sorted(
+            {
+                f"raw/{key}"
+                for source in info["sources"]
+                if (key := _raw_key(source)) and key not in extracted
+            }
+        )
     return graph
 
 
@@ -73,6 +124,18 @@ def _source_matches(source: str, name: str, cartridge: str) -> bool:
     }
 
 
+def _upstream_datasets(graph: dict[str, dict[str, Any]], name: str) -> list[str]:
+    upstreams: list[str] = []
+    for source in graph[name]["sources"]:
+        if str(source).strip().lower().startswith("raw/"):
+            continue
+        for candidate, candidate_info in graph.items():
+            if _source_matches(str(source), candidate, candidate_info["cartridge"]):
+                upstreams.append(candidate)
+                break
+    return upstreams
+
+
 def _reverse_index(graph: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
     reverse: dict[str, list[str]] = defaultdict(list)
     for downstream, info in graph.items():
@@ -80,12 +143,16 @@ def _reverse_index(graph: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
             source_text = str(source).strip().lower()
             if source_text.startswith("raw/"):
                 reverse[source_text].append(downstream)
-                continue
-            for candidate, candidate_info in graph.items():
-                if _source_matches(str(source), candidate, candidate_info["cartridge"]):
-                    reverse[candidate].append(downstream)
-                    break
+        for upstream in _upstream_datasets(graph, downstream):
+            reverse[upstream].append(downstream)
     return reverse
+
+
+def _never_materialized_upstreams(
+    graph: dict[str, dict[str, Any]], name: str, upstreams: list[str]
+) -> list[str]:
+    datasets = [u for u in upstreams if graph[u].get("materialized") is False]
+    return sorted(set(datasets)) + list(graph[name].get("unextracted_raw") or [])
 
 
 def _resolve_cartridge(
@@ -174,15 +241,23 @@ def _build_plan(
         for child in reverse.get(name, []):
             frontier.append((child, depth + 1))
 
-    return [
-        {
-            "name": name,
-            "layer": graph[name]["layer"],
-            "cartridge": graph[name]["cartridge"],
-            "rank": rank,
-        }
-        for name, rank in sorted(ranks.items(), key=lambda item: (item[1], item[0]))
-    ]
+    plan = []
+    for name, rank in sorted(ranks.items(), key=lambda item: (item[1], item[0])):
+        upstreams = sorted(set(_upstream_datasets(graph, name)))
+        plan.append(
+            {
+                "name": name,
+                "layer": graph[name]["layer"],
+                "cartridge": graph[name]["cartridge"],
+                "rank": rank,
+                "upstreams": upstreams,
+                "materialized": graph[name].get("materialized") is not False,
+                "never_materialized_upstreams": _never_materialized_upstreams(
+                    graph, name, upstreams
+                ),
+            }
+        )
+    return plan
 
 
 def resolve_chain(

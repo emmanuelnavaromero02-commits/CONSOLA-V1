@@ -58,9 +58,11 @@ def _record(
     *,
     task_state: str = "success",
     allow_partial: bool = False,
+    saved: list[str] | None = None,
+    intelligence: list[list[str]] | None = None,
 ) -> tuple[list[str], list[list[str]]]:
-    saved: list[str] = []
-    intelligence: list[list[str]] = []
+    saved = [] if saved is None else saved
+    intelligence = [] if intelligence is None else intelligence
 
     def post(_url: str, *, json: dict, **_kwargs) -> _Response:
         status = str(json["args"]["status"])
@@ -381,8 +383,9 @@ def _classified_materialization(
     plan: list[dict],
     outcomes: dict[str, object],
     allow_partial: bool = False,
-) -> tuple[dict, list[tuple[str, bool]]]:
-    finished: list[tuple[str, bool]] = []
+) -> tuple[dict, dict[str, dict], list[str]]:
+    finished: dict[str, dict] = {}
+    posts: list[str] = []
 
     def reserve(*_args, **kwargs):
         dataset = str(kwargs["dataset"])
@@ -393,12 +396,14 @@ def _classified_materialization(
             "lease_token": 1,
         }
 
-    def finish(_dsn, *, slot_id: str, success: bool, **_kwargs) -> None:
-        finished.append((str(slot_id), bool(success)))
+    def finish(_dsn, *, slot_id: str, **kwargs) -> None:
+        finished[str(slot_id).removeprefix("slot-")] = kwargs
 
     def run_job(_client, _url: str, *, json, **_kwargs):
         body = json() if callable(json) else json
-        outcome = outcomes[str(body["args"]["name"])]
+        name = str(body["args"]["name"])
+        posts.append(name)
+        outcome = outcomes[name]
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
@@ -430,126 +435,456 @@ def _classified_materialization(
         headers=lambda *_args: {},
         admitted_conf=conf,
     )
-    return invocation, finished
+    return invocation, finished, posts
 
 
-def _missing_upstream_error(dataset_refresh_materialize, code: str):
-    return dataset_refresh_materialize.ServiceJobError(
-        f"job j-1 failed with HTTP 409: {code}",
-        status_code=409,
-        result={"detail": {"code": code, "message": "m", "request_id": "r"}},
+def _refinement_error(module, code: str | None, *, status: int = 409):
+    return module.ServiceJobError(
+        f"job j-1 failed with HTTP {status}: {code}",
+        status_code=status,
+        result=(
+            {"detail": {"code": code, "message": "m", "request_id": "r"}}
+            if code
+            else None
+        ),
     )
 
 
-_OK_GOLD_PAYLOAD = {"name": "gold_headcount", "layer": "gold", "row_count": 5}
-_CLASSIFY_PLAN = [
-    {"name": "silver_candidate_latest", "layer": "silver", "cartridge": "replicon"},
-    {"name": "gold_headcount", "layer": "gold", "cartridge": "replicon"},
-]
+def _item(
+    name: str,
+    layer: str,
+    *,
+    upstreams: tuple[str, ...] = (),
+    materialized: bool = True,
+    never_materialized: tuple[str, ...] = (),
+) -> dict:
+    return {
+        "name": name,
+        "layer": layer,
+        "cartridge": "replicon",
+        "upstreams": list(upstreams),
+        "materialized": materialized,
+        "never_materialized_upstreams": list(never_materialized),
+    }
+
+
+def _payload(name: str, layer: str = "gold", rows: int = 5) -> dict:
+    return {"name": name, "layer": layer, "row_count": rows}
+
+
+def _fallback(name: str, *, rows: int, degraded: bool, **extra) -> dict:
+    return {
+        "name": name,
+        "layer": "gold",
+        "row_count": rows,
+        "status": "partial",
+        "fallback": True,
+        "fallback_reason": "missing_materialized_dependency",
+        "original_error": "IO Error: No files found that match the pattern",
+        "degraded": degraded,
+        **extra,
+    }
+
+
+_NEW_SILVER = _item(
+    "silver_candidate_latest",
+    "silver",
+    materialized=False,
+    never_materialized=("raw/replicon/candidate",),
+)
+_READY_GOLD = _item("gold_headcount", "gold")
+
+
+def test_every_class_is_counted_and_only_ok_golds_reach_intelligence(
+    monkeypatch,
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+    plan = [
+        _NEW_SILVER,
+        _READY_GOLD,
+        _item("gold_talent_profile", "gold"),
+        _item("gold_payroll", "gold"),
+    ]
+
+    invocation, finished, posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=plan,
+        outcomes={
+            "silver_candidate_latest": _refinement_error(
+                dataset_refresh_materialize, "source_files_missing"
+            ),
+            "gold_headcount": _payload("gold_headcount"),
+            "gold_talent_profile": _fallback(
+                "gold_talent_profile",
+                rows=0,
+                degraded=True,
+                degraded_reason="upstream_dependency_empty_gold",
+            ),
+            "gold_payroll": _refinement_error(
+                dataset_refresh_materialize, None, status=500
+            ),
+        },
+        allow_partial=True,
+    )
+
+    assert invocation["breakdown"] == {
+        "ok": 1,
+        "degraded": 1,
+        "skipped": 1,
+        "failed": 1,
+    }
+    assert invocation["materialized"] == 2
+    classes = {item["name"]: item["classification"] for item in invocation["results"]}
+    assert classes == {
+        "silver_candidate_latest": "skipped",
+        "gold_headcount": "ok",
+        "gold_talent_profile": "degraded",
+        "gold_payroll": "failed",
+    }
+    assert posts == [item["name"] for item in plan]
+    assert finished["silver_candidate_latest"] == {
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "lease_token": 1,
+        "success": False,
+        "skipped_reason": "upstream_never_materialized:raw/replicon/candidate",
+    }
+    assert finished["gold_headcount"]["success"] is True
+    assert finished["gold_headcount"]["degraded"] is False
+    assert finished["gold_talent_profile"]["success"] is True
+    assert finished["gold_talent_profile"]["degraded"] is True
+    assert finished["gold_payroll"] == {
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "lease_token": 1,
+        "success": False,
+    }
+
+    saved, intelligence = _record(
+        monkeypatch, dataset_refresh_chain, invocation, allow_partial=True
+    )
+
+    assert saved == ["running", "partial"]
+    assert intelligence == [["gold_headcount"]]
+
+
+def test_skip_propagates_transitively_without_calling_refinement(monkeypatch) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+    plan = [
+        _NEW_SILVER,
+        _READY_GOLD,
+        _item(
+            "gold_pipeline",
+            "gold",
+            upstreams=("silver_candidate_latest",),
+            materialized=False,
+            never_materialized=("silver_candidate_latest",),
+        ),
+        _item("gold_funnel", "gold", upstreams=("gold_headcount", "gold_pipeline")),
+    ]
+
+    invocation, finished, posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=plan,
+        outcomes={
+            "silver_candidate_latest": _refinement_error(
+                dataset_refresh_materialize, "source_files_missing"
+            ),
+            "gold_headcount": _payload("gold_headcount"),
+        },
+    )
+
+    assert posts == ["silver_candidate_latest", "gold_headcount"]
+    reasons = {
+        item["name"]: item.get("reason")
+        for item in invocation["results"]
+        if item["classification"] == "skipped"
+    }
+    assert reasons == {
+        "silver_candidate_latest": "upstream_never_materialized:raw/replicon/candidate",
+        "gold_pipeline": "upstream_not_refreshed:silver_candidate_latest",
+        "gold_funnel": "upstream_not_refreshed:gold_pipeline",
+    }
+    assert finished["gold_pipeline"]["skipped_reason"] == (
+        "upstream_not_refreshed:silver_candidate_latest"
+    )
+    assert finished["gold_funnel"]["skipped_reason"] == (
+        "upstream_not_refreshed:gold_pipeline"
+    )
+    assert invocation["breakdown"] == {
+        "ok": 1,
+        "degraded": 0,
+        "skipped": 3,
+        "failed": 0,
+    }
+
+    saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
+
+    assert saved == ["running", "partial"]
+    assert intelligence == [["gold_headcount"]]
+
+
+def test_failed_upstream_skips_its_dependents_and_still_fails_the_run(
+    monkeypatch,
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    plan = [
+        _item("silver_timesheets", "silver"),
+        _item("gold_utilization", "gold", upstreams=("silver_timesheets",)),
+    ]
+
+    with pytest.raises(RuntimeError, match="failed materializations"):
+        _classified_materialization(
+            monkeypatch,
+            dataset_refresh_materialize,
+            plan=plan,
+            outcomes={
+                "silver_timesheets": _refinement_error(
+                    dataset_refresh_materialize, "storage_unavailable", status=503
+                )
+            },
+        )
+
+    invocation, finished, posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=plan,
+        outcomes={
+            "silver_timesheets": _refinement_error(
+                dataset_refresh_materialize, "storage_unavailable", status=503
+            )
+        },
+        allow_partial=True,
+    )
+
+    assert posts == ["silver_timesheets"]
+    assert [item["classification"] for item in invocation["results"]] == [
+        "failed",
+        "skipped",
+    ]
+    assert invocation["results"][1]["reason"] == (
+        "upstream_not_refreshed:silver_timesheets"
+    )
+    assert "skipped_reason" not in finished["silver_timesheets"]
 
 
 @pytest.mark.parametrize(
     "code", ["source_files_missing", "dependency_not_materialized"]
 )
-def test_missing_upstream_silver_is_skipped_not_failed(monkeypatch, code: str) -> None:
+def test_same_missing_source_409_splits_on_materialization_history(
+    monkeypatch, code: str
+) -> None:
     dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
-    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+    previously = _item(
+        "silver_candidate_latest",
+        "silver",
+        materialized=True,
+        never_materialized=("raw/replicon/candidate",),
+    )
 
-    invocation, finished = _classified_materialization(
+    invocation, finished, _posts = _classified_materialization(
         monkeypatch,
         dataset_refresh_materialize,
-        plan=_CLASSIFY_PLAN,
+        plan=[_NEW_SILVER],
         outcomes={
-            "silver_candidate_latest": _missing_upstream_error(
+            "silver_candidate_latest": _refinement_error(
                 dataset_refresh_materialize, code
-            ),
-            "gold_headcount": _OK_GOLD_PAYLOAD,
+            )
         },
     )
-
-    assert invocation["materialized"] == 1
-    assert invocation["breakdown"] == {
-        "ok": 1,
-        "skipped_upstream_missing": 1,
-        "failed": 0,
-    }
-    skipped = invocation["results"][0]
-    assert skipped["ok"] is False
-    assert skipped["classification"] == "skipped_upstream_missing"
-    assert skipped["reason"] == code
-    assert invocation["results"][1]["classification"] == "ok"
-    assert ("slot-silver_candidate_latest", False) in finished
-    assert ("slot-gold_headcount", True) in finished
-
-    saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
-
-    assert saved == ["running", "partial"]
-    assert intelligence == [["gold_headcount"]]
-
-
-def test_fallback_materialization_counts_as_upstream_skip(monkeypatch) -> None:
-    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
-    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
-
-    fallback_payload = {
-        "name": "silver_candidate_latest",
-        "layer": "silver",
-        "row_count": 0,
-        "status": "partial",
-        "fallback": True,
-        "fallback_reason": "missing_materialized_dependency",
-        "original_error": "IO Error: No files found that match the pattern",
-        "degraded": True,
-        "degraded_reason": "upstream_dependency_empty_gold",
-    }
-    invocation, finished = _classified_materialization(
-        monkeypatch,
-        dataset_refresh_materialize,
-        plan=_CLASSIFY_PLAN,
-        outcomes={
-            "silver_candidate_latest": fallback_payload,
-            "gold_headcount": _OK_GOLD_PAYLOAD,
-        },
+    assert invocation["results"][0]["classification"] == "skipped"
+    assert finished["silver_candidate_latest"]["skipped_reason"] == (
+        "upstream_never_materialized:raw/replicon/candidate"
     )
 
-    assert invocation["breakdown"] == {
-        "ok": 1,
-        "skipped_upstream_missing": 1,
-        "failed": 0,
-    }
-    assert invocation["results"][0]["classification"] == "skipped_upstream_missing"
-    assert invocation["results"][0]["reason"] == "missing_materialized_dependency"
-    assert ("slot-silver_candidate_latest", False) in finished
-
-    saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
-
-    assert saved == ["running", "partial"]
-    assert intelligence == [["gold_headcount"]]
+    with pytest.raises(RuntimeError, match="failed materializations"):
+        _classified_materialization(
+            monkeypatch,
+            dataset_refresh_materialize,
+            plan=[previously],
+            outcomes={
+                "silver_candidate_latest": _refinement_error(
+                    dataset_refresh_materialize, code
+                )
+            },
+        )
 
 
-def test_all_skipped_run_records_partial_without_failing(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "item, failure",
+    [
+        pytest.param(
+            _NEW_SILVER,
+            lambda module: _refinement_error(module, "storage_unavailable", status=503),
+            id="never-materialized-storage-503",
+        ),
+        pytest.param(
+            _NEW_SILVER,
+            lambda module: module.ServiceJobError(
+                "job j-9 failed with HTTP 500: no detail", status_code=500
+            ),
+            id="never-materialized-unstructured-500",
+        ),
+        pytest.param(
+            _NEW_SILVER,
+            lambda module: _refinement_error(module, "s3_storage_list_failed"),
+            id="never-materialized-listing-409",
+        ),
+        pytest.param(
+            _NEW_SILVER,
+            lambda module: _refinement_error(
+                module, "source_files_missing", status=502
+            ),
+            id="missing-code-without-409",
+        ),
+        pytest.param(
+            _NEW_SILVER,
+            lambda module: _refinement_error(
+                module, "missing_materialized_dependencies"
+            ),
+            id="dead-refresh-by-source-reason",
+        ),
+        pytest.param(
+            _item("silver_candidate_latest", "silver", materialized=True),
+            lambda module: _refinement_error(module, "source_files_missing"),
+            id="previously-materialized-no-files-found",
+        ),
+        pytest.param(
+            _item("silver_candidate_latest", "silver", materialized=False),
+            lambda module: _refinement_error(module, "source_files_missing"),
+            id="never-materialized-with-materialized-upstreams",
+        ),
+    ],
+)
+def test_storage_and_misroute_failures_are_never_skips(
+    monkeypatch, item: dict, failure
+) -> None:
     dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
-    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
 
-    invocation, _finished = _classified_materialization(
+    invocation, finished, _posts = _classified_materialization(
         monkeypatch,
         dataset_refresh_materialize,
-        plan=_CLASSIFY_PLAN,
+        plan=[item, _READY_GOLD],
         outcomes={
-            "silver_candidate_latest": _missing_upstream_error(
-                dataset_refresh_materialize, "source_files_missing"
-            ),
-            "gold_headcount": _missing_upstream_error(
+            "silver_candidate_latest": failure(dataset_refresh_materialize),
+            "gold_headcount": _payload("gold_headcount"),
+        },
+        allow_partial=True,
+    )
+
+    assert invocation["results"][0]["classification"] == "failed"
+    assert invocation["breakdown"] == {
+        "ok": 1,
+        "degraded": 0,
+        "skipped": 0,
+        "failed": 1,
+    }
+    assert "skipped_reason" not in finished["silver_candidate_latest"]
+
+
+def test_upstream_first_materialized_in_this_run_turns_a_missing_source_into_failure(
+    monkeypatch,
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    plan = [
+        _item("silver_orders", "silver", materialized=False),
+        _item(
+            "gold_revenue",
+            "gold",
+            upstreams=("silver_orders",),
+            materialized=False,
+            never_materialized=("silver_orders",),
+        ),
+    ]
+
+    invocation, _finished, posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=plan,
+        outcomes={
+            "silver_orders": _payload("silver_orders", "silver"),
+            "gold_revenue": _refinement_error(
                 dataset_refresh_materialize, "dependency_not_materialized"
             ),
         },
+        allow_partial=True,
     )
 
+    assert posts == ["silver_orders", "gold_revenue"]
+    assert [item["classification"] for item in invocation["results"]] == [
+        "ok",
+        "failed",
+    ]
+
+
+def test_all_skipped_run_is_blocked_and_raises(monkeypatch) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+    plan = [
+        _NEW_SILVER,
+        _item("gold_pipeline", "gold", upstreams=("silver_candidate_latest",)),
+    ]
+
+    invocation, _finished, posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=plan,
+        outcomes={
+            "silver_candidate_latest": _refinement_error(
+                dataset_refresh_materialize, "source_files_missing"
+            )
+        },
+    )
+
+    assert posts == ["silver_candidate_latest"]
     assert invocation["breakdown"] == {
         "ok": 0,
-        "skipped_upstream_missing": 2,
+        "degraded": 0,
+        "skipped": 2,
         "failed": 0,
     }
+
+    for allow_partial in (False, True):
+        saved: list[str] = []
+        intelligence: list[list[str]] = []
+        with pytest.raises(RuntimeError, match="blocked run") as raised:
+            _record(
+                monkeypatch,
+                dataset_refresh_chain,
+                invocation,
+                allow_partial=allow_partial,
+                saved=saved,
+                intelligence=intelligence,
+            )
+        assert "'skipped': 2" in str(raised.value)
+        assert saved == ["blocked"]
+        assert intelligence == []
+
+
+def test_degraded_only_run_is_partial_and_never_notifies_intelligence(
+    monkeypatch,
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+
+    invocation, finished, _posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=[_item("gold_talent_profile", "gold")],
+        outcomes={
+            "gold_talent_profile": _fallback(
+                "gold_talent_profile", rows=0, degraded=True
+            )
+        },
+    )
+
+    assert invocation["results"][0]["classification"] == "degraded"
+    assert invocation["results"][0]["ok"] is True
+    assert finished["gold_talent_profile"]["degraded"] is True
 
     saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
 
@@ -557,64 +892,99 @@ def test_all_skipped_run_records_partial_without_failing(monkeypatch) -> None:
     assert intelligence == [[]]
 
 
+def test_fallback_with_real_rows_is_ok(monkeypatch) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+
+    invocation, finished, _posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=[_item("gold_talent_profile", "gold")],
+        outcomes={
+            "gold_talent_profile": _fallback(
+                "gold_talent_profile", rows=12, degraded=False
+            )
+        },
+    )
+
+    assert invocation["results"][0]["classification"] == "ok"
+    assert invocation["results"][0]["row_count"] == 12
+    assert finished["gold_talent_profile"]["degraded"] is False
+
+    saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
+
+    assert saved == ["running", "success"]
+    assert intelligence == [["gold_talent_profile"]]
+
+
 @pytest.mark.parametrize(
-    "failure_factory",
+    "payload",
     [
-        lambda module: module.ServiceJobError(
-            "job j-2 failed with HTTP 500: no detail", status_code=500, result=None
+        _fallback(
+            "gold_talent_profile",
+            rows=0,
+            degraded=True,
+            error="successfactors foundation fallback produjo gold vacio",
         ),
-        lambda module: module.ServiceJobError(
-            "job j-3 failed with HTTP 409: s3_storage_list_failed",
-            status_code=409,
-            result={"detail": {"code": "s3_storage_list_failed"}},
-        ),
-        lambda module: module.ServiceJobError(
-            "job j-4 failed with HTTP 502: source_files_missing",
-            status_code=502,
-            result={"detail": {"code": "source_files_missing"}},
-        ),
+        _fallback("gold_talent_profile", rows=0, degraded="yes"),
+        _fallback("gold_talent_profile", rows=-1, degraded=True),
+        _fallback("gold_other", rows=3, degraded=False),
+        {
+            **_fallback("gold_talent_profile", rows=3, degraded=False),
+            "fallback_reason": "x",
+        },
+        {**_fallback("gold_talent_profile", rows=3, degraded=False), "layer": "raw"},
+        {**_fallback("gold_talent_profile", rows=3, degraded=False), "ok": False},
     ],
 )
-def test_real_failure_still_fails_the_run(monkeypatch, failure_factory) -> None:
+def test_invalid_or_strict_fallback_payloads_are_failures(
+    monkeypatch, payload: dict
+) -> None:
     dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
 
-    with pytest.raises(RuntimeError, match="failed materializations"):
-        _classified_materialization(
-            monkeypatch,
-            dataset_refresh_materialize,
-            plan=_CLASSIFY_PLAN,
-            outcomes={
-                "silver_candidate_latest": failure_factory(dataset_refresh_materialize),
-                "gold_headcount": _OK_GOLD_PAYLOAD,
-            },
-        )
+    invocation, finished, _posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=[_item("gold_talent_profile", "gold"), _READY_GOLD],
+        outcomes={
+            "gold_talent_profile": payload,
+            "gold_headcount": _payload("gold_headcount"),
+        },
+        allow_partial=True,
+    )
+
+    assert invocation["results"][0]["classification"] == "failed"
+    assert finished["gold_talent_profile"] == {
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "lease_token": 1,
+        "success": False,
+    }
 
 
 def test_real_failure_partial_still_requires_allow_partial(monkeypatch) -> None:
     dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
     dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
 
-    invocation, _finished = _classified_materialization(
+    invocation, _finished, _posts = _classified_materialization(
         monkeypatch,
         dataset_refresh_materialize,
-        plan=_CLASSIFY_PLAN,
+        plan=[_item("silver_timesheets", "silver"), _READY_GOLD],
         outcomes={
-            "silver_candidate_latest": dataset_refresh_materialize.ServiceJobError(
-                "job j-5 failed with HTTP 500: no detail",
-                status_code=500,
-                result=None,
+            "silver_timesheets": _refinement_error(
+                dataset_refresh_materialize, None, status=500
             ),
-            "gold_headcount": _OK_GOLD_PAYLOAD,
+            "gold_headcount": _payload("gold_headcount"),
         },
         allow_partial=True,
     )
 
     assert invocation["breakdown"] == {
         "ok": 1,
-        "skipped_upstream_missing": 0,
+        "degraded": 0,
+        "skipped": 0,
         "failed": 1,
     }
-    assert invocation["results"][0]["classification"] == "failed"
     assert invocation["results"][0]["error_code"] == "ServiceJobError"
 
     with pytest.raises(RuntimeError, match="failed run"):
@@ -628,28 +998,43 @@ def test_real_failure_partial_still_requires_allow_partial(monkeypatch) -> None:
     assert intelligence == [["gold_headcount"]]
 
 
-def test_strict_fallback_error_payload_stays_a_real_failure(monkeypatch) -> None:
+def test_degraded_reuse_keeps_its_class_on_retry(monkeypatch) -> None:
     dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
 
-    strict_payload = {
-        "name": "silver_candidate_latest",
-        "layer": "silver",
-        "row_count": 0,
-        "status": "partial",
-        "fallback": True,
-        "fallback_reason": "missing_materialized_dependency",
-        "error": "successfactors foundation fallback produjo gold vacio",
+    invocation, posts = _retry_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=_RETRY_PLAN[:1],
+        completed={"gold_headcount": {**_DURABLE_HEADCOUNT, "degraded": True}},
+    )
+
+    assert posts == []
+    assert invocation["results"][0]["classification"] == "degraded"
+    assert invocation["breakdown"] == {
+        "ok": 0,
+        "degraded": 1,
+        "skipped": 0,
+        "failed": 0,
     }
 
-    with pytest.raises(RuntimeError, match="failed materializations"):
+
+@pytest.mark.parametrize(
+    "plan_item",
+    [
+        {**_READY_GOLD, "upstreams": "silver_a"},
+        {**_READY_GOLD, "upstreams": [None]},
+        {**_READY_GOLD, "never_materialized_upstreams": [""]},
+    ],
+)
+def test_malformed_plan_fails_before_reserving(monkeypatch, plan_item: dict) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+
+    with pytest.raises(RuntimeError, match="plan is malformed"):
         _classified_materialization(
             monkeypatch,
             dataset_refresh_materialize,
-            plan=_CLASSIFY_PLAN,
-            outcomes={
-                "silver_candidate_latest": strict_payload,
-                "gold_headcount": _OK_GOLD_PAYLOAD,
-            },
+            plan=[plan_item],
+            outcomes={},
         )
 
 
@@ -659,13 +1044,12 @@ def test_strict_fallback_error_payload_stays_a_real_failure(monkeypatch) -> None
         {
             "status": "completed",
             "materialized": 1,
-            "results": [
-                {
-                    "name": "gold_a",
-                    "ok": True,
-                    "classification": "skipped_upstream_missing",
-                }
-            ],
+            "results": [{"name": "gold_a", "ok": True, "classification": "skipped"}],
+        },
+        {
+            "status": "completed",
+            "materialized": 0,
+            "results": [{"name": "gold_a", "ok": False, "classification": "degraded"}],
         },
         {
             "status": "completed",
@@ -678,19 +1062,19 @@ def test_strict_fallback_error_payload_stays_a_real_failure(monkeypatch) -> None
             "status": "completed",
             "materialized": 1,
             "results": [{"name": "gold_a", "layer": "gold", "ok": True}],
-            "breakdown": {"ok": 0, "skipped_upstream_missing": 1, "failed": 0},
+            "breakdown": {"ok": 0, "degraded": 0, "skipped": 1, "failed": 0},
         },
         {
             "status": "completed",
             "materialized": 0,
-            "results": [
-                {
-                    "name": "gold_a",
-                    "ok": False,
-                    "classification": "skipped_upstream_missing",
-                }
-            ],
-            "breakdown": {"ok": True, "skipped_upstream_missing": 1, "failed": 0},
+            "results": [{"name": "gold_a", "ok": False, "classification": "skipped"}],
+            "breakdown": {"ok": True, "degraded": 0, "skipped": 1, "failed": 0},
+        },
+        {
+            "status": "completed",
+            "materialized": 1,
+            "results": [{"name": "gold_a", "layer": "gold", "ok": True}],
+            "breakdown": {"ok": 1, "skipped_upstream_missing": 0, "failed": 0},
         },
     ],
 )

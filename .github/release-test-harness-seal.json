@@ -47,7 +47,7 @@
     },
     {
       "path": "airflow/dags/dataset_refresh_chain.py",
-      "sha256": "a7af8084c8182aa9073ace11003045b2ae8237a215229e83d553df52a43d2ba0"
+      "sha256": "9afc36697cbe71aa81adb6adcc65a6629f547aa90cf8d4028dc8548d59b79a8f"
     },
     {
       "path": "airflow/dags/dataset_refresh_finalization.py",
@@ -55,19 +55,19 @@
     },
     {
       "path": "airflow/dags/dataset_refresh_graph.py",
-      "sha256": "53d56fb9be410a7bd5bf7b4d2da8821ec2a1585634d583fde1c4b2c248cd0d62"
+      "sha256": "0be662186113ed9b8da0f2143af6a332d5161a264742b1f968702f41ebd17c39"
     },
     {
       "path": "airflow/dags/dataset_refresh_idempotency.py",
-      "sha256": "ba2408408d71cb29e20e4bb41c3be9bcb19668951af507db391b66ff2c7150aa"
+      "sha256": "d9ac34f5fa7ccfeceb0c7a86a8c6f4517eb57faa01219f6be615b2155c7aac4d"
     },
     {
       "path": "airflow/dags/dataset_refresh_materialize.py",
-      "sha256": "4ecb73c78ed2aa805867b0442d8c92abb1f49918b102b0cde27628805a990803"
+      "sha256": "5b0d6ec51b8e54823ad9330b4c9cb14ce0b3ff371c8bae277d5205b6d4267bbf"
     },
     {
       "path": "airflow/dags/dataset_refresh_outcome.py",
-      "sha256": "ea203986eac49885713bc217e19d716b5929ba17c528f25c71c7477699af8b13"
+      "sha256": "84ff646c512dbfd2eb2369af4b5d3e4c1b243088c7ae4b7d26ae9981fc6f961c"
     },
     {
       "path": "airflow/dags/entity_scheduler.py",
@@ -3631,7 +3631,7 @@
     },
     {
       "path": "refinement/tests/test_e11_talent_readfree_fallbacks.py",
-      "sha256": "064ae58970c1cee7e0b0254ccf7a2c2e81f956a34e64b77f438e0d8aaeabbfd2"
+      "sha256": "b4187f7178c33a0fb71f178bbfb45f4ce6f676b894c7c18423165781b4fe6e74"
     },
     {
       "path": "refinement/tests/test_explorer_sql_storage_scope.py",
@@ -3703,7 +3703,7 @@
     },
     {
       "path": "refinement/tests/test_refinement_materialization_errors.py",
-      "sha256": "aaa5525ec83edc2b30a8035cba03bb1642706d00b5da7ac30dc11204299b6ec9"
+      "sha256": "996f1a722ed99fe14c070b689e5f6411c639767f40499bbb3dffb7725f3669cd"
     },
     {
       "path": "refinement/tests/test_refinement_supervisor.py",
@@ -4959,11 +4959,15 @@
     },
     {
       "path": "tests/test_dataset_refresh_chain_fail_closed.py",
-      "sha256": "74eee286b5fb1401eb456c2e35bf25d7c12e002b2ecaedcd9b7dfae787a9ead1"
+      "sha256": "56415bd78521684439272bb1593bd7f7e49de13fa269d27a368b263ce8fc5996"
     },
     {
       "path": "tests/test_dataset_refresh_graph_cartridge_seed.py",
       "sha256": "4198b20841544b050eeb8a9bfaf2fb792ec413057f4ea4f20c2b71f21ed00dca"
+    },
+    {
+      "path": "tests/test_dataset_refresh_structural_state.py",
+      "sha256": "30a276776607105c628e045f2502081dee6ada8e4d6e570626f3ce853c8c2f82"
     },
     {
       "path": "tests/test_datasets_workspace_scoped_catalog.py",
@@ -5251,7 +5255,7 @@
     },
     {
       "path": "tests/test_intelligence_engine_contract.py",
-      "sha256": "d404b2825a441b20bc8621a35afd68fe2237612d77ba2675f3568f6d02e2d1b9"
+      "sha256": "3e429a7de1e89c8a7983fd898f76f8effbf9fffb1b7a229b5b577a496101e0a3"
     },
     {
       "path": "tests/test_intelligence_provenance_resolver.py",
@@ -5615,7 +5619,7 @@
     },
     {
       "path": "tests/test_operational_truth_runtime_leases_live.py",
-      "sha256": "9a99fe5843001c76f13122b159ffffa01f4d31b70dc70dae5a00a610ea7b5b75"
+      "sha256": "128be1bd3e1cae6ffd43506e126e7c11a675e77b10c507f121ce55dfb4416a82"
     },
     {
       "path": "tests/test_operational_truth_runtime_red.py",

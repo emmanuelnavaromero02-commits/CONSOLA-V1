@@ -4,40 +4,62 @@ from collections.abc import Mapping
 from typing import Any
 
 RESULT_OK = "ok"
-RESULT_SKIPPED_UPSTREAM_MISSING = "skipped_upstream_missing"
+RESULT_DEGRADED = "degraded"
+RESULT_SKIPPED = "skipped"
 RESULT_FAILED = "failed"
+RESULT_CLASSES = (RESULT_OK, RESULT_DEGRADED, RESULT_SKIPPED, RESULT_FAILED)
 
-_MISSING_UPSTREAM_ERROR_CODES = {
-    "source_files_missing",
-    "dependency_not_materialized",
-    "missing_materialized_dependencies",
-}
-_MISSING_UPSTREAM_FALLBACK_REASON = "missing_materialized_dependency"
+_MISSING_SOURCE_ERROR_CODES = {"source_files_missing", "dependency_not_materialized"}
+_FALLBACK_REASON = "missing_materialized_dependency"
+PUBLISHED_CLASSES = frozenset({RESULT_OK, RESULT_DEGRADED})
 
 
-def missing_upstream_error_code(exc: Any) -> str | None:
+def missing_source_error_code(exc: Any) -> str | None:
     if getattr(exc, "status_code", None) != 409:
         return None
     result = getattr(exc, "result", None)
     detail = result.get("detail") if isinstance(result, Mapping) else None
     code = str(detail.get("code") or "") if isinstance(detail, Mapping) else ""
-    return code if code in _MISSING_UPSTREAM_ERROR_CODES else None
+    return code if code in _MISSING_SOURCE_ERROR_CODES else None
 
 
-def missing_upstream_fallback_reason(payload: Any, *, expected_name: str) -> str | None:
-    if not isinstance(payload, Mapping) or payload.get("error"):
-        return None
-    if "ok" in payload and payload.get("ok") is not True:
-        return None
-    if payload.get("fallback") is not True:
-        return None
-    if str(payload.get("fallback_reason") or "") != _MISSING_UPSTREAM_FALLBACK_REASON:
-        return None
+def _row_count(payload: Mapping[str, Any]) -> int:
+    row_count = payload.get("row_count")
+    if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count < 0:
+        raise RuntimeError("materialization outcome unavailable")
+    return row_count
+
+
+def _fallback_payload(
+    payload: Mapping[str, Any], *, expected_name: str
+) -> tuple[str, dict[str, Any]]:
+    if str(payload.get("fallback_reason") or "") != _FALLBACK_REASON:
+        raise RuntimeError("materialization outcome unavailable")
     if str(payload.get("name") or "") != expected_name:
-        return None
+        raise RuntimeError("materialization outcome unavailable")
     if payload.get("layer") not in {"silver", "gold"}:
-        return None
-    return _MISSING_UPSTREAM_FALLBACK_REASON
+        raise RuntimeError("materialization outcome unavailable")
+    degraded = payload.get("degraded")
+    if not isinstance(degraded, bool):
+        raise RuntimeError("materialization outcome unavailable")
+    row_count = _row_count(payload)
+    classification = RESULT_OK if not degraded and row_count > 0 else RESULT_DEGRADED
+    return classification, {
+        "name": expected_name,
+        "layer": payload["layer"],
+        "row_count": row_count,
+    }
+
+
+def classify_materialization_payload(
+    payload: Any, *, expected_name: str
+) -> tuple[str, dict[str, Any]]:
+    checked = _checked(payload)
+    if checked.get("fallback") is True:
+        return _fallback_payload(checked, expected_name=expected_name)
+    return RESULT_OK, require_successful_materialization_payload(
+        checked, expected_name=expected_name
+    )
 
 
 def _payload(response: Any) -> Mapping[str, Any]:
@@ -76,9 +98,7 @@ def require_successful_materialization_payload(
         raise RuntimeError("materialization outcome unavailable")
     if payload.get("layer") not in {"silver", "gold"}:
         raise RuntimeError("materialization outcome unavailable")
-    row_count = payload.get("row_count")
-    if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count < 0:
-        raise RuntimeError("materialization outcome unavailable")
+    _row_count(payload)
     return dict(payload)
 
 
@@ -106,7 +126,21 @@ def require_successful_intelligence_response(response: Any) -> dict[str, Any]:
     return dict(payload)
 
 
-def _classified_counts(invocation: object) -> tuple[int, int, int, int] | None:
+def result_classification(item: Mapping[str, Any]) -> str | None:
+    ok = item.get("ok")
+    if not isinstance(ok, bool):
+        return None
+    classification = item.get("classification")
+    if classification is None:
+        return RESULT_OK if ok else RESULT_FAILED
+    if classification not in RESULT_CLASSES:
+        return None
+    if (classification in PUBLISHED_CLASSES) is not ok:
+        return None
+    return classification
+
+
+def _classified_counts(invocation: object) -> tuple[dict[str, int], int] | None:
     if not isinstance(invocation, Mapping) or "error" in invocation:
         return None
     results = invocation.get("results")
@@ -118,33 +152,15 @@ def _classified_counts(invocation: object) -> tuple[int, int, int, int] | None:
         or completed < 0
     ):
         return None
-    succeeded = skipped = failed = 0
+    counts = dict.fromkeys(RESULT_CLASSES, 0)
     for item in results:
-        if not isinstance(item, Mapping):
+        if not isinstance(item, Mapping) or not str(item.get("name") or "").strip():
             return None
-        ok = item.get("ok")
-        if not isinstance(ok, bool):
-            return None
-        if not str(item.get("name") or "").strip():
-            return None
-        classification = item.get("classification")
+        classification = result_classification(item)
         if classification is None:
-            classification = RESULT_OK if ok else RESULT_FAILED
-        if classification == RESULT_OK:
-            if ok is not True:
-                return None
-            succeeded += 1
-        elif classification == RESULT_SKIPPED_UPSTREAM_MISSING:
-            if ok is not False:
-                return None
-            skipped += 1
-        elif classification == RESULT_FAILED:
-            if ok is not False:
-                return None
-            failed += 1
-        else:
             return None
-    if completed != succeeded:
+        counts[classification] += 1
+    if completed != counts[RESULT_OK] + counts[RESULT_DEGRADED]:
         return None
     declared = invocation.get("breakdown")
     if declared is not None:
@@ -155,39 +171,33 @@ def _classified_counts(invocation: object) -> tuple[int, int, int, int] | None:
             for value in declared.values()
         ):
             return None
-        if dict(declared) != {
-            RESULT_OK: succeeded,
-            RESULT_SKIPPED_UPSTREAM_MISSING: skipped,
-            RESULT_FAILED: failed,
-        }:
+        if dict(declared) != counts:
             return None
-    return succeeded, skipped, failed, len(results)
+    return counts, len(results)
 
 
 def materialization_breakdown(invocation: object) -> dict[str, int] | None:
-    counts = _classified_counts(invocation)
-    if counts is None:
-        return None
-    succeeded, skipped, failed, _ = counts
-    return {
-        RESULT_OK: succeeded,
-        RESULT_SKIPPED_UPSTREAM_MISSING: skipped,
-        RESULT_FAILED: failed,
-    }
+    classified = _classified_counts(invocation)
+    return None if classified is None else classified[0]
 
 
 def materialization_status(invocation: object, *, task_state: str) -> str:
     if task_state != "success":
         return "failed"
-    counts = _classified_counts(invocation)
-    if counts is None:
+    classified = _classified_counts(invocation)
+    if classified is None:
         return "failed"
-    succeeded, skipped, failed, total = counts
+    counts, total = classified
     reported = invocation.get("status")
     if reported == "no_downstream_datasets":
         return "noop" if total == 0 else "failed"
     if reported != "completed" or total == 0:
         return "failed"
-    if failed == 0:
-        return "success" if skipped == 0 else "partial"
-    return "partial" if succeeded > 0 else "failed"
+    published = counts[RESULT_OK] + counts[RESULT_DEGRADED]
+    if counts[RESULT_FAILED]:
+        return "partial" if published else "failed"
+    if counts[RESULT_OK] == 0 and counts[RESULT_SKIPPED]:
+        return "blocked"
+    if counts[RESULT_SKIPPED] or counts[RESULT_DEGRADED]:
+        return "partial"
+    return "success"

@@ -13,10 +13,13 @@ from dataset_refresh_graph import _required_scope, resolve_chain as _resolve_cha
 from dataset_refresh_finalization import finalize_pipeline_status
 from dataset_refresh_materialize import materialize_in_order as _materialize_in_order
 from dataset_refresh_outcome import (
+    RESULT_FAILED,
+    RESULT_OK,
     materialization_breakdown,
     materialization_status,
     require_successful_intelligence_response,
     require_successful_registry_response,
+    result_classification,
 )
 from runtime_security_context import build_pipeline_run_context
 from dataset_refresh_admission import validate_dataset_refresh_admission
@@ -110,7 +113,7 @@ def _successful_materialized_datasets(results: list[dict]) -> list[str]:
             str(item.get("name") or "").strip()
             for item in results
             if isinstance(item, dict)
-            and item.get("ok") is True
+            and result_classification(item) == RESULT_OK
             and item.get("layer") == "gold"
             and item.get("name")
         }
@@ -196,8 +199,8 @@ def record_run(**ctx):
     raw_invocation, task_state = _materialization_result(ctx)
     status = materialization_status(raw_invocation, task_state=task_state)
     breakdown = materialization_breakdown(raw_invocation)
-    skips_only_partial = (
-        status == "partial" and breakdown is not None and breakdown["failed"] == 0
+    tolerated_partial = status == "partial" and (
+        allow_partial or (breakdown is not None and breakdown[RESULT_FAILED] == 0)
     )
     invocation = dict(raw_invocation) if isinstance(raw_invocation, dict) else {}
     tenant_id, workspace_id = _required_scope(conf)
@@ -254,16 +257,16 @@ def record_run(**ctx):
 
     finalize_pipeline_status(
         final_status=status,
-        should_trigger_intelligence=(
-            status == "success"
-            or (status == "partial" and (allow_partial or skips_only_partial))
-        ),
+        should_trigger_intelligence=status == "success" or tolerated_partial,
         save_status=save_status,
         trigger_intelligence=trigger_intelligence,
     )
-    if status == "failed" or (
-        status == "partial" and not allow_partial and not skips_only_partial
-    ):
+    if status == "blocked":
+        raise RuntimeError(
+            "dataset_refresh_chain recorded a blocked run: no planned dataset was "
+            f"refreshed ({breakdown})"
+        )
+    if status == "failed" or (status == "partial" and not tolerated_partial):
         raise RuntimeError("dataset_refresh_chain recorded a failed run")
 
 
