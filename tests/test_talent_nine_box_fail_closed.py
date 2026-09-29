@@ -206,6 +206,22 @@ def test_null_raw_score_cannot_be_laundered_by_a_proxy():
     assert control_room_api._sf_talent_nine_box_scores_valid(row) is False
 
 
+def test_null_raw_score_cannot_be_laundered_by_a_trajectory_deduction():
+    row = {
+        "performance_score": None,
+        "performance_proxy_score": 80.0,
+        "potential_score": 80.0,
+        "potential_basis": "trayectoria_observada",
+        "deduced_potential": True,
+        "box_status": "ready",
+        "invalid_score_input": False,
+    }
+    assert control_room_api._sf_talent_nine_box_scores_valid(row) is False
+    masked = control_room_api._sf_talent_masked_roster_row(row)
+    assert masked["potential_basis"] is None
+    assert masked["box_id"] == ""
+
+
 def test_operational_count_never_overrules_invalid_detail():
     operational = {"nine_box_classified_count": 99}
     invalid = {

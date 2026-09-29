@@ -2858,6 +2858,10 @@
       "sha256": "b90196676dcb6cadd8085c15fdd92186e5b271ca462313dea58d6a2c493af1aa"
     },
     {
+      "path": "console/tests/test_control_room_talent_confianza.py",
+      "sha256": "bffd005efd829f14d87f63db1b0af7e80cfc06a973faddb6a48dc8b73fe4aa20"
+    },
+    {
       "path": "console/tests/test_control_room_talent_kpis.py",
       "sha256": "f5f708d459b8c8dd3d7b10329a0ca2fc7ad2c2beac2f33dbd3218c5a1006329b"
     },
@@ -6151,7 +6155,7 @@
     },
     {
       "path": "tests/test_sap_successfactors_datasets.py",
-      "sha256": "0a9ae7cff91768f28915d78fdb389c0291b372d47299692b1c7a76b4bc361072"
+      "sha256": "f161b5622cb6ec1d56e28cabb46b8f1a38f399166127549eb97e514c808838d1"
     },
     {
       "path": "tests/test_sap_successfactors_gold_foundation_schedule.py",
@@ -6163,7 +6167,7 @@
     },
     {
       "path": "tests/test_sap_successfactors_kbs.py",
-      "sha256": "b73bf939173071a00e662a1c7b0ba71580530b633b972fb9c7ab304462778ccb"
+      "sha256": "0525baf42e4e99ed7ead5fafe55a80e0282c530b4a50aba7b39066c75ae3a8ef"
     },
     {
       "path": "tests/test_sap_successfactors_seed_completion.py",
@@ -6466,6 +6470,10 @@
       "sha256": "0dc1581ccde360ec0b7b334fd1cad1246afd2a3d622fac46ba7013d40045cdbd"
     },
     {
+      "path": "tests/test_talent_attrition_exposure_sql.py",
+      "sha256": "eb03d571c987124207d133d1435ab5e3bf40a496338c64eff813f0227f34b38c"
+    },
+    {
       "path": "tests/test_talent_benchmark_approval_authority.py",
       "sha256": "1de666000f5a5ebb6c92335461ff882a7ecd2b424e2932d372b46b2f7e9c8075"
     },
@@ -6475,11 +6483,11 @@
     },
     {
       "path": "tests/test_talent_nine_box_downstream.py",
-      "sha256": "9377b40ba3bdebd71f8631e80fd4ae8d5ba006fbe5a3c0bf8136911b211928f2"
+      "sha256": "3d71100a2f3b4d9eca00abfa70752ea048e1b44268b09f62e99a112dcda2f001"
     },
     {
       "path": "tests/test_talent_nine_box_fail_closed.py",
-      "sha256": "3b96ac30616ceb9f84941bae2dd8b14bf372476c80f4b0fdb89335d9006d8324"
+      "sha256": "32fe076085d9d7c0c3d6a3c998bcd8a1693af75752d1743db9417bce0958857b"
     },
     {
       "path": "tests/test_talent_nine_box_lateral_guards.py",
@@ -6487,7 +6495,7 @@
     },
     {
       "path": "tests/test_talent_nine_box_projection_guards.py",
-      "sha256": "4d8ca9f07fa14b37734c04394caa2034d94ccbab692569e383d31f4dd27d1379"
+      "sha256": "66a24af5352d27af481f3dc941276d738516046a3fea69cad2acafbb31147603"
     },
     {
       "path": "tests/test_talent_readiness_benchmark_guards.py",
@@ -6496,6 +6504,10 @@
     {
       "path": "tests/test_talent_score_type_guards.py",
       "sha256": "59396fa41b5e7d7ec1d13b5c5876110c1749bfc1288881d0f010e3ffa301f402"
+    },
+    {
+      "path": "tests/test_talent_trajectory_potential_sql.py",
+      "sha256": "24adb7b4643e93b50a3ccbec595c71887418392abaf88ad79e16284903ccf502"
     },
     {
       "path": "tests/test_tenant_isolation_20b.py",

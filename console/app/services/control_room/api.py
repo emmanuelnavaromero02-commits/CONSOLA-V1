@@ -1122,7 +1122,19 @@ def _sf_talent_score(value: Any) -> float | None:
 
 
 @_bind_to_core
+def _sf_talent_potential_basis(row: dict[str, Any]) -> str | None:
+    basis = str(row.get("potential_basis") or "").strip().lower()
+    return basis if basis in {"cpa_observado", "trayectoria_observada"} else None
+
+
+@_bind_to_core
 def _sf_talent_nine_box_scores_valid(row: dict[str, Any]) -> bool:
+    deduced = (
+        _sf_talent_bool(row.get("deduced_potential"))
+        or _sf_talent_potential_basis(row) == "trayectoria_observada"
+    )
+    if deduced and _sf_talent_score(row.get("performance_score")) is None:
+        return False
     return (
         row.get("invalid_score_input") is False
         and "performance_score" in row
@@ -1348,6 +1360,7 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
         "potential_band": (
             str(row.get("potential_band") or "unknown") if scores_valid else "unknown"
         ),
+        "potential_basis": _sf_talent_potential_basis(row) if scores_valid else None,
         "fit_band": (
             _sf_talent_fit_band(row.get("fit_score"))
             if provenance_valid
@@ -1520,6 +1533,7 @@ def _sf_talent_9box_cells(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         employee_count = _sf_talent_int(row.get("employee_count"))
         ready_count = _sf_talent_int(row.get("ready_count"))
         benchmark_count = _sf_talent_int(row.get("benchmark_count"))
+        deduced_count = min(_sf_talent_int(row.get("deduced_count")), ready_count)
         blocked_count = _sf_talent_int(row.get("blocked_count"))
         classified_count = ready_count
         status = _sf_talent_status(
@@ -1533,6 +1547,7 @@ def _sf_talent_9box_cells(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "ready_count": classified_count,
                 "cpa_real_count": max(ready_count - benchmark_count, 0),
                 "reference_count": benchmark_count,
+                "deduced_count": deduced_count,
                 "blocked_count": blocked_count,
                 "status": status,
                 "href": f"/control-room/talent?box={definition['box_id']}",
@@ -1547,6 +1562,7 @@ def _sf_talent_9box_totals(cells: list[dict[str, Any]]) -> dict[str, int]:
         "employees": sum(_sf_talent_int(cell["employee_count"]) for cell in cells),
         "ready": sum(_sf_talent_int(cell["ready_count"]) for cell in cells),
         "reference": sum(_sf_talent_int(cell.get("reference_count")) for cell in cells),
+        "deduced": sum(_sf_talent_int(cell.get("deduced_count")) for cell in cells),
         "blocked": sum(_sf_talent_int(cell["blocked_count"]) for cell in cells),
         "cells": len(cells),
     }
@@ -1567,6 +1583,7 @@ def _sf_talent_9box_operational_rows_from_detail(
                 "employee_count": 0,
                 "ready_count": 0,
                 "benchmark_count": 0,
+                "deduced_count": 0,
                 "blocked_count": 0,
             },
         )
@@ -1580,6 +1597,8 @@ def _sf_talent_9box_operational_rows_from_detail(
             counts["ready_count"] += 1
             if source_mode == "benchmark_internal":
                 counts["benchmark_count"] += 1
+            if _sf_talent_potential_basis(row) == "trayectoria_observada":
+                counts["deduced_count"] += 1
         else:
             counts["blocked_count"] += 1
     return [
@@ -1588,6 +1607,7 @@ def _sf_talent_9box_operational_rows_from_detail(
             "employee_count": counts["employee_count"],
             "ready_count": counts["ready_count"],
             "benchmark_count": counts["benchmark_count"],
+            "deduced_count": counts["deduced_count"],
             "blocked_count": counts["blocked_count"],
             "box_status": (
                 "benchmark_internal"
@@ -1606,6 +1626,7 @@ def _sf_talent_9box_blockers(
     result: dict[str, Any],
     *,
     total_ready: int,
+    total_deduced: int = 0,
 ) -> list[dict[str, Any]]:
     blockers = _sf_talent_blockers_from_results([result])
     if total_ready == 0:
@@ -1616,6 +1637,16 @@ def _sf_talent_9box_blockers(
                 "title": "9-box pendiente de C/P/A",
                 "detail": "La matriz se muestra como estructura, pero no clasifica personas hasta contar con competencia, desempeno y aspiracion.",
                 "items": ["KB-COMPETENCIAS", "KB-DESEMPENO", "KB-ASPIRACION"],
+            }
+        )
+    elif total_deduced > 0:
+        blockers.append(
+            {
+                "id": "talent_9box_cpa_incomplete",
+                "status": "informative",
+                "title": "Potencial calculado por trayectoria y desempeño real observado (sin PII expuesta). Conectar Competencias y Aspiración lo sustituirá por C/P/A declarado.",
+                "detail": "Potencial calculado por trayectoria y desempeño real observado (sin PII expuesta). Conectar Competencias y Aspiración lo sustituirá por C/P/A declarado.",
+                "items": ["KB-COMPETENCIAS", "KB-ASPIRACION"],
             }
         )
     return blockers
@@ -1660,6 +1691,125 @@ def _sf_talent_desempeno_cohort(
 
 
 @_bind_to_core
+def _sf_talent_confianza_estrellas(
+    retention_result: dict[str, Any], detail_rows: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    # Empty-but-materialized sources stay "Sin informacion" instead of a
+    # fabricated zero: both feeds must be materialized and non-empty.
+    if retention_result["status"] != "ready" or not detail_rows:
+        return None
+    high_risk_ids = {
+        str(row.get("user_id"))
+        for row in retention_result["rows"]
+        if _sf_talent_status(row.get("risk_band"), "") == "high"
+        and row.get("invalid_score_input") is False
+        and _sf_talent_score(row.get("retention_risk_score")) is not None
+        and row.get("user_id")
+    }
+    star_ids = {
+        str(row.get("user_id"))
+        for row in detail_rows
+        if str(row.get("box_key") or "") == "estrella"
+        and _sf_talent_status(row.get("box_status"), "") == "ready"
+        and _sf_talent_nine_box_scores_valid(row)
+        and row.get("user_id")
+    }
+    matched = sorted(star_ids & high_risk_ids)
+    return {
+        "count": len(matched),
+        "employee_keys": [_sf_talent_employee_key(user_id) for user_id in matched[:20]],
+    }
+
+
+@_bind_to_core
+def _sf_talent_confianza_vacantes() -> None:
+    # Waiting state: needs a published succession gold projection plus a real
+    # per-role criticality signal; anything else would fabricate vacancies.
+    return None
+
+
+@_bind_to_core
+def _sf_talent_confianza_certificaciones(
+    certs_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    if certs_result["status"] != "ready":
+        return None
+    learning_events = sum(
+        _sf_talent_int(row.get("learning_events")) for row in certs_result["rows"]
+    )
+    completed_events = sum(
+        _sf_talent_int(row.get("completed_events")) for row in certs_result["rows"]
+    )
+    if learning_events <= 0:
+        return None
+    return {
+        "coverage_pct": round(completed_events / learning_events * 100, 2),
+        "completed_events": completed_events,
+        "learning_events": learning_events,
+    }
+
+
+@_bind_to_core
+def _sf_talent_confianza_exposicion(
+    exposure_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    if exposure_result["status"] != "ready" or not exposure_result["rows"]:
+        return None
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in exposure_result["rows"]:
+        risk_band = _sf_talent_status(row.get("risk_band"), "")
+        currency = str(row.get("currency") or "").strip().upper()
+        headcount = _sf_talent_int(row.get("headcount"))
+        total = _sf_talent_float(row.get("annualized_comp_total"))
+        if risk_band not in {"high", "medium", "low"} or not currency:
+            continue
+        if headcount < 5 or total is None:
+            continue
+        entry = grouped.setdefault(
+            (risk_band, currency),
+            {"risk_band": risk_band, "currency": currency, "headcount": 0, "annualized_comp_total": 0.0},
+        )
+        entry["headcount"] += headcount
+        entry["annualized_comp_total"] += total
+    if not grouped:
+        return None
+    totals = []
+    for entry in grouped.values():
+        totals.append(
+            {
+                **entry,
+                "annualized_comp_total": round(entry["annualized_comp_total"], 2),
+                "annualized_comp_avg": round(
+                    entry["annualized_comp_total"] / entry["headcount"], 2
+                ),
+            }
+        )
+    totals.sort(key=lambda item: (item["risk_band"], item["currency"]))
+    return {"totals": totals}
+
+
+@_bind_to_core
+async def _sf_talent_confianza_panel(
+    user: dict | None, detail_rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    retention = await _sf_talent_gold_result(
+        "sap_successfactors_talent_retention_risk", user, 5000
+    )
+    certs = await _sf_talent_gold_result(
+        "sap_successfactors_talent_learning_certification_status", user, 100
+    )
+    exposure = await _sf_talent_gold_result(
+        "sap_successfactors_talent_attrition_exposure", user, 1000
+    )
+    return {
+        "estrellas_en_riesgo": _sf_talent_confianza_estrellas(retention, detail_rows),
+        "vacantes_criticas_sin_sucesor": _sf_talent_confianza_vacantes(),
+        "cobertura_certificaciones": _sf_talent_confianza_certificaciones(certs),
+        "exposicion_monetaria": _sf_talent_confianza_exposicion(exposure),
+    }
+
+
+@_bind_to_core
 async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     dataset = "sap_successfactors_talent_9box_operational"
     operational_result = await _sf_talent_gold_result(dataset, user, 100)
@@ -1683,7 +1833,12 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     cells = _sf_talent_9box_cells(detail_rows)
     totals = _sf_talent_9box_totals(cells)
     result = detail_result if raw_detail_rows else operational_result
-    blockers = _sf_talent_9box_blockers(result, total_ready=totals["ready"])
+    blockers = _sf_talent_9box_blockers(
+        result,
+        total_ready=totals["ready"],
+        total_deduced=totals["deduced"],
+    )
+    confianza = await _sf_talent_confianza_panel(user, raw_detail_rows)
 
     desempeno_disponible = _sf_talent_desempeno_cohort(raw_detail_rows)
     cohort_counts = await _sf_talent_desempeno_cohort_counts(user)
@@ -1706,6 +1861,7 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "population_totals_source": population_totals_source,
         "cells": cells,
         "desempeno_disponible": desempeno_disponible,
+        "confianza": confianza,
         "blockers": blockers,
         "privacy": {
             "roster": "masked",

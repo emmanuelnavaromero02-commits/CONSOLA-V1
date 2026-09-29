@@ -188,6 +188,15 @@ datasets:
       - cartridges/sap_successfactors/datasets/sap_successfactors_talent_retention_risk.sql
       - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
   - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_attrition_exposure
+    readiness: stub
+    reason: "Aggregated monetary exposure per unit, risk band and currency (5+ people per group); compensation amounts arrive encrypted from bronze, so the dataset emits zero rows until a privacy-approved clear aggregation exists."
+    blockers:
+      - "Extract compensation amounts under an approved privacy design before treating monetary exposure as available."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_attrition_exposure.sql
+      - infra/init/99zzzzzza_talent_attrition_exposure_seed.sql
+  - cartridge: sap_successfactors
     dataset: sap_successfactors_talent_promotion_alignment
     readiness: partial
     reason: "Promotion alignment uses observed job movements and 9-box placement; calibration entities are still pending."

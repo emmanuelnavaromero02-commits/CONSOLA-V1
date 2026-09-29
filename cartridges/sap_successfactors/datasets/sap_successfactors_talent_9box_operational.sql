@@ -38,6 +38,13 @@ metrics AS (
               AND talent_percent_is_valid(potential_score)
         ) AS benchmark_count,
         COUNT(*) FILTER (
+            WHERE box_status = 'ready'
+              AND invalid_score_input IS FALSE
+              AND talent_percent_is_valid(performance_score)
+              AND talent_percent_is_valid(potential_score)
+              AND COALESCE(deduced_potential, FALSE)
+        ) AS deduced_count,
+        COUNT(*) FILTER (
             WHERE box_status <> 'ready'
                OR invalid_score_input IS DISTINCT FROM FALSE
                OR NOT talent_percent_is_valid(performance_score)
@@ -55,6 +62,7 @@ SELECT
     COALESCE(metrics.employee_count, 0) AS employee_count,
     COALESCE(metrics.ready_count, 0) AS ready_count,
     COALESCE(metrics.benchmark_count, 0) AS benchmark_count,
+    COALESCE(metrics.deduced_count, 0) AS deduced_count,
     COALESCE(metrics.blocked_count, 0) AS blocked_count,
     CASE
         WHEN COALESCE(metrics.ready_count, 0) > 0 AND COALESCE(metrics.benchmark_count, 0) > 0 THEN 'benchmark_internal'

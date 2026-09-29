@@ -403,11 +403,17 @@ async def query_nine_box_cell_counts(user: dict | None) -> NineBoxCellCounts:
                 if "source_mode" in columns
                 else "FALSE"
             )
+            deduced_pred = (
+                f"{ready_pred} AND potential_basis = 'trayectoria_observada'"
+                if "potential_basis" in columns
+                else "FALSE"
+            )
             cells_sql = f"""
                 SELECT box_key,
                        COUNT(*)::bigint AS employee_count,
                        COUNT(*) FILTER (WHERE {ready_pred})::bigint AS ready_count,
-                       COUNT(*) FILTER (WHERE {benchmark_pred})::bigint AS benchmark_count
+                       COUNT(*) FILTER (WHERE {benchmark_pred})::bigint AS benchmark_count,
+                       COUNT(*) FILTER (WHERE {deduced_pred})::bigint AS deduced_count
                   FROM {relation.sql}
                  WHERE workspace_id::text = $3 AND tenant_id::text = $4
                    AND box_key IS NOT NULL
@@ -433,12 +439,14 @@ async def query_nine_box_cell_counts(user: dict | None) -> NineBoxCellCounts:
         employee_count = int(row["employee_count"])
         ready_count = int(row["ready_count"])
         benchmark_count = int(row["benchmark_count"])
+        deduced_count = int(row["deduced_count"])
         cells.append(
             {
                 "box_key": str(row["box_key"]),
                 "employee_count": employee_count,
                 "ready_count": ready_count,
                 "benchmark_count": benchmark_count,
+                "deduced_count": deduced_count,
                 "blocked_count": max(employee_count - ready_count, 0),
                 "box_status": (
                     "benchmark_internal"

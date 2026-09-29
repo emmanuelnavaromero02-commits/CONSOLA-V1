@@ -60,29 +60,35 @@ def test_invalid_9box_never_creates_promotion_candidate_or_signal(tmp_path):
         _copy(con, "readiness_src", readiness)
 
         con.execute(
-            "CREATE TABLE nine_box AS "
-            + _dataset_sql(
-                "sap_successfactors_talent_9box",
-                {"sap_successfactors_talent_readiness": readiness},
-            )
-        )
-        assert con.execute(
-            "SELECT invalid_score_input, box_status, box_key FROM nine_box "
-            "ORDER BY user_id"
-        ).fetchall() == [
-            (True, "blocked", "insufficient_data"),
-            (True, "blocked", "insufficient_data"),
-        ]
-        nine_box_path = tmp_path / "nine_box.parquet"
-        _copy(con, "nine_box", nine_box_path)
-
-        con.execute(
             "CREATE TABLE mobility AS SELECT user_id, "
-            "'PROMOTION'::VARCHAR latest_event_reason, 0::BIGINT movement_events "
+            "'PROMOTION'::VARCHAR latest_event_reason, 0::BIGINT movement_events, "
+            "3::BIGINT distinct_job_codes, 3::BIGINT distinct_departments, "
+            "DATE '2018-01-01' first_assignment_date, "
+            "CURRENT_DATE latest_assignment_date "
             "FROM readiness_src"
         )
         mobility = tmp_path / "mobility.parquet"
         _copy(con, "mobility", mobility)
+
+        con.execute(
+            "CREATE TABLE nine_box AS "
+            + _dataset_sql(
+                "sap_successfactors_talent_9box",
+                {
+                    "sap_successfactors_talent_readiness": readiness,
+                    "sap_successfactors_talent_mobility_history": mobility,
+                },
+            )
+        )
+        assert con.execute(
+            "SELECT invalid_score_input, box_status, box_key, potential_basis "
+            "FROM nine_box ORDER BY user_id"
+        ).fetchall() == [
+            (True, "blocked", "insufficient_data", None),
+            (True, "blocked", "insufficient_data", None),
+        ]
+        nine_box_path = tmp_path / "nine_box.parquet"
+        _copy(con, "nine_box", nine_box_path)
         con.execute(
             "CREATE TABLE promotion AS "
             + _dataset_sql(
