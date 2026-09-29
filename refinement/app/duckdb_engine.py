@@ -1823,6 +1823,20 @@ class DuckDBEngine:
 
             if name in SEC_DATASETS:
                 return materialize_sec_dataset(self, ds, user_context)
+        if cartridge == "sap_successfactors":
+            try:
+                from app.successfactors_exposure_materializer import (
+                    EXPOSURE_DATASET,
+                    materialize_exposure_dataset,
+                )
+            except ModuleNotFoundError:
+                from refinement.app.successfactors_exposure_materializer import (
+                    EXPOSURE_DATASET,
+                    materialize_exposure_dataset,
+                )
+
+            if name == EXPOSURE_DATASET:
+                return materialize_exposure_dataset(self, ds, user_context)
         sql = ds["sql_def"]
         self._validate_safe_sql(sql)
         sources = ds.get("sources") or []

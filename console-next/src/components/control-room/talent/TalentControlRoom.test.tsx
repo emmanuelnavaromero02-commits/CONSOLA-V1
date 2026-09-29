@@ -300,6 +300,7 @@ describe("ConfianzaTilesPanel", () => {
     expect(markup).toContain("Exposición monetaria");
     expect(markup).toContain("riesgo Alto");
     expect(markup).toContain("grupos de 5+ personas");
+    expect(markup).toContain("cifras redondeadas para proteger la privacidad");
     expect(markup).not.toContain("Sin información");
   });
 

@@ -758,7 +758,7 @@ export function ConfianzaTilesPanel({ confianza }: { confianza?: SfTalentConfian
         )}
         {exposicion?.totals?.length ? (
           <p className="mt-1 text-xs text-muted-foreground">
-            compensación anualizada agregada · grupos de 5+ personas
+            compensación anualizada agregada · grupos de 5+ personas · cifras redondeadas para proteger la privacidad
           </p>
         ) : null}
       </div>

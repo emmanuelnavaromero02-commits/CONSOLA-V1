@@ -299,6 +299,7 @@ services:
       INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA: ${INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA:-}
       INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT: ${INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT:-}
       INTERNAL_API_KEY_REFINEMENT_TO_VAULT: ${INTERNAL_API_KEY_REFINEMENT_TO_VAULT:-}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:-}
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:-}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:-}@postgres_gold:5433/modecissions_gold"
       GOLD_PUBLISHER_DATABASE_URL: "postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD:?OMEGA_GOLD_PUBLISHER_PASSWORD is required}@postgres_gold:5433/modecissions_gold"

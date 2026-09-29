@@ -27,6 +27,14 @@ class PublicationIntegrityError(RuntimeError):
     pass
 
 
+class PublicationInputOutdated(ValueError):
+    def __init__(self, source: str) -> None:
+        super().__init__(
+            "published input is missing or predates the current dataset contract"
+        )
+        self.dependency = str(source).strip("/").rsplit("/", 1)[-1]
+
+
 PUBLICATION_RESOLUTION_ERRORS = (PublicationHeadUnavailable, PublicationIntegrityError)
 
 
