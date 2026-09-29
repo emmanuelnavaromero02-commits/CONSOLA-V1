@@ -1,7 +1,7 @@
 "use client";
 
 import { useSapB1View } from "@/lib/sap-b1/hooks";
-import { formatCount, formatPct } from "@/lib/sap-b1/present";
+import { formatCount, formatPct, metricReason } from "@/lib/sap-b1/present";
 import type { FinanceReconciliationKpi, Num } from "@/lib/sap-b1/types";
 
 import { Pill, type PillTone } from "./ui";
@@ -12,6 +12,7 @@ export interface ReconciliationBadgeState {
   tone: PillTone;
   label: string;
   detail: string | null;
+  note: string | null;
 }
 
 function finite(value: Num): value is number {
@@ -21,21 +22,35 @@ function finite(value: Num): value is number {
 export function reconciliationBadgeState(
   metric: FinanceReconciliationKpi | null | undefined,
 ): ReconciliationBadgeState {
+  const status = String(metric?.status ?? "").trim().toLowerCase();
+  if (metric && (status === "unavailable" || status === "error")) {
+    return { tone: "neutral", label: "No disponible por ahora.", detail: metricReason(metric), note: null };
+  }
   const rows = metric?.rows;
   if (!metric || !finite(rows) || rows <= 0) {
-    return { tone: "neutral", label: "Sin corrida de Finanzas cargada", detail: null };
+    return { tone: "neutral", label: "Sin corrida de Finanzas cargada", detail: null, note: null };
   }
   const within = finite(metric.within) ? metric.within : 0;
-  const okPct = finite(metric.within_pct) ? metric.within_pct : (100 * within) / rows;
+  const outside = finite(metric.outside) ? metric.outside : Math.max(0, rows - within);
   const tolerance =
     finite(metric.tolerance_pct) && metric.tolerance_pct > 0
       ? metric.tolerance_pct
       : DEFAULT_RECONCILIATION_TOLERANCE_PCT;
-  const outsidePct = 100 - okPct;
+  const parts = [
+    `${formatCount(within)} de ${formatCount(rows)} filas de Finanzas dentro de la tolerancia de ${formatPct(tolerance)}`,
+  ];
+  if (finite(metric.without_platform) && metric.without_platform > 0) {
+    parts.push(`${formatCount(metric.without_platform)} sin dato de plataforma`);
+  }
+  const note = status === "degraded" || status === "stale" ? "Datos posiblemente desactualizados" : null;
+  if (outside <= 0) {
+    return { tone: "good", label: "Conciliación dentro de tolerancia", detail: parts.join(" · "), note };
+  }
   return {
-    tone: outsidePct < tolerance ? "good" : "warning",
-    label: `Conciliación ${formatPct(okPct)}`,
-    detail: `${formatCount(within)} de ${formatCount(rows)} filas de Finanzas dentro de la tolerancia de ${formatPct(tolerance)}`,
+    tone: "warning",
+    label: `${formatPct((100 * outside) / rows)} fuera de tolerancia`,
+    detail: parts.join(" · "),
+    note,
   };
 }
 
@@ -54,6 +69,7 @@ export function ReconciliationBadge() {
       {view.isError ? <span className="text-muted-foreground">No disponible por ahora.</span> : null}
       {state ? <Pill tone={state.tone}>{state.label}</Pill> : null}
       {state?.detail ? <span className="text-muted-foreground">{state.detail}</span> : null}
+      {state?.note ? <span className="text-xs font-medium text-amber-700 dark:text-amber-300">{state.note}</span> : null}
       {metric?.period ? <span className="text-xs text-muted-foreground">Periodo: {metric.period}</span> : null}
     </div>
   );

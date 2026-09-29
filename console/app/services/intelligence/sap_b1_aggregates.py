@@ -486,7 +486,7 @@ async def query_reconciliacion_finanzas(user: dict | None, *, as_of: date | None
                    COUNT(*) FILTER (WHERE status = 'fuera_tolerancia')::bigint AS outside,
                    COUNT(*) FILTER (WHERE status = 'sin_dato_plataforma')::bigint AS missing,
                    COUNT(*) FILTER (WHERE status = 'solo_plataforma')::bigint AS platform_only,
-                   MAX(tolerance_pct) FILTER (WHERE status <> 'solo_plataforma')::float8 AS tolerance_pct,
+                   MIN(tolerance_pct) FILTER (WHERE status <> 'solo_plataforma')::float8 AS tolerance_pct,
                    array_agg(DISTINCT period ORDER BY period) FILTER (WHERE status <> 'solo_plataforma') AS periods
               FROM {rel.sql}
              WHERE {GOLD_SCOPE_PREDICATE}

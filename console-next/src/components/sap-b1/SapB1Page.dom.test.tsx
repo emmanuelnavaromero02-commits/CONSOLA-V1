@@ -333,6 +333,7 @@ describe("SapB1Page", () => {
       status: "ready",
       rows: 10,
       within: 8,
+      outside: 2,
       within_pct: 80,
       tolerance_pct: 1.5,
       period: "2026-08",
@@ -340,9 +341,19 @@ describe("SapB1Page", () => {
     window.history.replaceState(null, "", "#finanzas");
     await render(<SapB1Page />);
     const badge = container.querySelector('[aria-label="Conciliación con Finanzas"]');
-    expect(badge?.textContent).toContain("Conciliación 80 %");
+    expect(badge?.textContent).toContain("20 % fuera de tolerancia");
     expect(badge?.textContent).toContain("8 de 10 filas de Finanzas dentro de la tolerancia de 1.5 %");
     expect(badge?.textContent).toContain("Periodo: 2026-08");
+  });
+
+  it("says the reconciliation read failed instead of claiming there is no Finance run", async () => {
+    const margin = state.views.sap_b1_margin_kpis as { data: { metrics: Record<string, unknown> } };
+    margin.data.metrics.reconciliacion_finanzas = { status: "unavailable", error: "unavailable: sin datos" };
+    window.history.replaceState(null, "", "#finanzas");
+    await render(<SapB1Page />);
+    const badge = container.querySelector('[aria-label="Conciliación con Finanzas"]');
+    expect(badge?.textContent).toContain("No disponible por ahora.");
+    expect(badge?.textContent).not.toContain("Sin corrida de Finanzas cargada");
   });
 
   it("shows Ventas with sell-out and the batch expiry indicator", async () => {
