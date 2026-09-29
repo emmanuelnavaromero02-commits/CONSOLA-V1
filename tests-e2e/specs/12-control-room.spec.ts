@@ -66,14 +66,23 @@ test.describe("Control Room Business Experience", () => {
     assertReadOnlyRequests(observation, 1);
   });
 
-  test("renders the neutral empty state", async ({ authedPage: page }) => {
+  test("renders the preliminary diagnostic on an empty experience", async ({
+    authedPage: page,
+  }) => {
     const observation = await openControlRoom(page, [
       { status: 200, body: emptyExperience },
     ]);
 
+    await expect(page.getByText("Diagnóstico preliminar de fuentes")).toBeVisible();
+    await expect(page.getByText("Plan de acción sugerido")).toBeVisible();
+    await expect(page.getByText("La fuente no ha materializado filas.")).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Revisar Fuentes de datos" }),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Ir a extracción" })).toBeVisible();
     await expect(
       page.getByText("No hay observaciones empresariales para mostrar."),
-    ).toBeVisible();
+    ).toHaveCount(0);
     assertReadOnlyRequests(observation, 1);
   });
 
