@@ -59,6 +59,7 @@ from app.staged_publication_engine import StagedPublicationEngine
 from app.successfactors_fallbacks import (
     annotate_operational_fallback,
     fallback_dataset_for_successfactors,
+    is_storage_infra_failure,
     readfree_empty_dataset_for_successfactors,
 )
 
@@ -999,10 +1000,11 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
     request_id = _log_internal_error(
         exc, f"duckdb materialization failed for dataset {dataset_name}"
     )
+    not_found = "http 404" in lower or "404 (not found)" in lower
     missing_parquet = (
         "no files found" in lower and ("read_parquet" in lower or "s3://" in lower)
     ) or (
-        "404" in lower
+        not_found
         and ("lakehouse/" in lower or "http://minio" in lower or "minio:" in lower)
     )
     s3_listing_error = (
@@ -1018,6 +1020,16 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
                 f"Dataset '{dataset_name}' no pudo listar Parquet en S3. "
                 "Verifica que la extracción haya escrito archivos para este workspace "
                 "y que bucket, región y permisos del lakehouse estén disponibles."
+            ),
+            "detail": "Error interno",
+            "request_id": request_id,
+        }
+    if is_storage_infra_failure(lower):
+        return 503, {
+            "code": "storage_unavailable",
+            "message": (
+                f"Dataset '{dataset_name}' no pudo leer el lakehouse: el "
+                "almacenamiento rechazó el acceso o no estuvo disponible."
             ),
             "detail": "Error interno",
             "request_id": request_id,
