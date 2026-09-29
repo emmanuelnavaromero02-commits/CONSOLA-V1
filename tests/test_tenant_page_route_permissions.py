@@ -53,6 +53,15 @@ def test_knowledge_page_role_gate_matches_rag_write_guard():
     helper = helper[: helper.index("\n@router")]
     assert "PLATFORM_ADMIN_ROLES" in helper
     assert "ROLE_ADMIN" in helper and "ROLE_WORKSPACE_ADMIN" in helper
+    main_src = _read(MAIN_PY)
+    assert (
+        "_require_rag_write_role = require_any_role(ROLE_WORKSPACE_ADMIN, *sorted(PLATFORM_ADMIN_ROLES))"
+        in main_src
+    )
+    for route in ("/api/rag/ingest", "/api/rag/reindex", '/api/rag/sources/{source_id}'):
+        start = main_src.index(f'"{route}"')
+        block = main_src[start : start + 400]
+        assert "_require_rag_write_role" in block, route
 
 
 def test_internal_pages_keep_platform_admin_gate():

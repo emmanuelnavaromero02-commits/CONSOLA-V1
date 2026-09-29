@@ -53,6 +53,7 @@ from app.domains.data_platform.rag_requests import (
     rag_search_payload,
     rag_sources_payload,
     read_json_body_capped,
+    require_rag_ingest_size,
 )
 from app.domains.data_platform.refinement_errors import (
     payload_error_detail,
@@ -1361,3 +1362,71 @@ async def test_rag_answer_payload_records_usage_with_rag_surface(monkeypatch):
     assert recorded["surface"] == "rag"
     assert isinstance(recorded["duration_ms"], int)
     assert recorded["user_context"] == SCOPED_USER
+
+
+class BodylessRequest:
+    def __init__(self, content_length: str | None):
+        self.headers = {}
+        if content_length is not None:
+            self.headers["content-length"] = content_length
+
+    def stream(self):
+        raise AssertionError("size gate must not touch the body")
+
+    async def body(self):
+        raise AssertionError("size gate must not touch the body")
+
+    async def json(self):
+        raise AssertionError("size gate must not touch the body")
+
+
+def test_rag_ingest_size_gate_requires_content_length_without_buffering():
+    with pytest.raises(HTTPException) as exc:
+        require_rag_ingest_size(BodylessRequest(None))
+
+    assert exc.value.status_code == 411
+
+
+def test_rag_ingest_size_gate_rejects_oversize_before_any_read():
+    with pytest.raises(HTTPException) as exc:
+        require_rag_ingest_size(BodylessRequest(str(RAG_INGEST_MAX_BODY_BYTES + 1)))
+
+    assert exc.value.status_code == 413
+
+
+def test_rag_ingest_size_gate_rejects_invalid_content_length():
+    with pytest.raises(HTTPException) as exc:
+        require_rag_ingest_size(BodylessRequest("nope"))
+
+    assert exc.value.status_code == 400
+
+
+def test_rag_ingest_size_gate_accepts_bodies_at_the_cap():
+    assert require_rag_ingest_size(BodylessRequest(str(RAG_INGEST_MAX_BODY_BYTES))) is None
+
+
+def test_rag_ingest_cap_matches_mcp_infra_request_limit():
+    from pathlib import Path
+
+    upstream = Path("mcp-infra/app/rag/ingest.py").read_text(encoding="utf-8")
+    assert "MAX_INGEST_REQUEST_BYTES = 15 * 1024 * 1024" in upstream
+    assert RAG_INGEST_MAX_BODY_BYTES == 15 * 1024 * 1024
+
+
+def test_rag_ingest_routes_run_size_gate_before_csrf():
+    from pathlib import Path
+    import re
+
+    for path in ("console/app/main.py", "console/app/routers/v1/rag.py"):
+        source = Path(path).read_text(encoding="utf-8")
+        match = re.search(
+            r'"/api/rag/ingest",\s*dependencies=\[(?P<deps>[^]]+)\]',
+            source,
+        )
+        assert match, f"{path}: ingest route dependencies not found"
+        deps = match.group("deps")
+        assert "require_rag_ingest_size" in deps, path
+        assert "require_csrf" in deps, path
+        assert deps.index("require_rag_ingest_size") < deps.index("require_csrf"), (
+            f"{path}: size gate must run before the CSRF body fallback"
+        )

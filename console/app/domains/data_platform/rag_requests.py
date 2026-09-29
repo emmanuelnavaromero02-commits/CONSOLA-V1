@@ -8,20 +8,35 @@ from fastapi import HTTPException, Request
 
 from app.services import token_store
 
-RAG_INGEST_MAX_BODY_BYTES = 16 * 1024 * 1024
+RAG_INGEST_MAX_BODY_BYTES = 15 * 1024 * 1024
+
+
+def _declared_content_length(request: Request) -> int | None:
+    raw_length = request.headers.get("content-length")
+    if raw_length is None:
+        return None
+    try:
+        declared = int(raw_length)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid Content-Length") from exc
+    if declared < 0:
+        raise HTTPException(400, "Invalid Content-Length")
+    return declared
+
+
+def require_rag_ingest_size(request: Request) -> None:
+    """Runs before the CSRF body fallback so no unbounded buffering path remains."""
+    declared = _declared_content_length(request)
+    if declared is None:
+        raise HTTPException(411, "Content-Length required")
+    if declared > RAG_INGEST_MAX_BODY_BYTES:
+        raise HTTPException(413, "Request body exceeds size limit")
 
 
 async def read_json_body_capped(request: Request, max_bytes: int) -> dict[str, Any]:
-    raw_length = request.headers.get("content-length")
-    if raw_length is not None:
-        try:
-            declared = int(raw_length)
-        except ValueError as exc:
-            raise HTTPException(400, "Invalid Content-Length") from exc
-        if declared < 0:
-            raise HTTPException(400, "Invalid Content-Length")
-        if declared > max_bytes:
-            raise HTTPException(413, "Request body exceeds size limit")
+    declared = _declared_content_length(request)
+    if declared is not None and declared > max_bytes:
+        raise HTTPException(413, "Request body exceeds size limit")
     received = 0
     chunks: list[bytes] = []
     async for chunk in request.stream():

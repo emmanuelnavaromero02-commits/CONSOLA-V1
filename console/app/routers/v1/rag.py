@@ -46,7 +46,7 @@ async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permissi
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("datasets.write")),
-        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+        Depends(_require_rag_write_role),
     ],
 )
 @_bind_to_main
@@ -77,7 +77,7 @@ async def api_rag_search(body: dict, user: dict = Depends(require_permission("da
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("datasets.write")),
-        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+        Depends(_require_rag_write_role),
     ],
 )
 @_bind_to_main
@@ -92,9 +92,10 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("d
 @router.post(
     "/api/rag/ingest",
     dependencies=[
+        Depends(_require_rag_ingest_size),
         Depends(require_csrf),
         Depends(require_permission("datasets.write")),
-        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+        Depends(_require_rag_write_role),
     ],
 )
 @_bind_to_main

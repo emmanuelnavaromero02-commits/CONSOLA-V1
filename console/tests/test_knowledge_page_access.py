@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 
@@ -61,6 +61,48 @@ def test_knowledge_page_requires_authentication(monkeypatch):
     app.include_router(pages.router)
     client = TestClient(app)
     assert client.get("/copilot/knowledge").status_code == 401
+
+
+def _rag_write_probe_client(user: Mapping[str, object]) -> TestClient:
+    import app.main as console_main
+    from app import dependencies as deps
+
+    probe_app = FastAPI()
+
+    @probe_app.post("/probe", dependencies=[Depends(console_main._require_rag_write_role)])
+    async def probe():
+        return {"ok": True}
+
+    probe_app.dependency_overrides[deps.get_current_user] = lambda: dict(user)
+    return TestClient(probe_app)
+
+
+@pytest.mark.parametrize(
+    "user",
+    (
+        {"id": 1, "role": "owner"},
+        {"id": 2, "role": "super_admin"},
+        {"id": 3, "role": "admin"},
+        {"id": 4, "role": "user", "workspace_role": "workspace_admin"},
+    ),
+    ids=("owner", "super_admin", "admin", "workspace_admin"),
+)
+def test_rag_write_guard_accepts_platform_and_workspace_admins(user):
+    assert _rag_write_probe_client(user).post("/probe").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "user",
+    (
+        {"id": 5, "role": "user"},
+        {"id": 6, "role": "user", "workspace_role": "tenant_admin"},
+        {"id": 7, "role": "analyst"},
+        {"id": 8, "role": "viewer"},
+    ),
+    ids=("user", "tenant_admin", "analyst", "viewer"),
+)
+def test_rag_write_guard_rejects_non_admin_roles(user):
+    assert _rag_write_probe_client(user).post("/probe").status_code == 403
 
 
 def test_knowledge_capability_matches_page_guard():
