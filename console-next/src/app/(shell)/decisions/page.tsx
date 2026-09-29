@@ -1,52 +1,40 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { Suspense, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 
-import { ActionCouncil } from "@/components/decisions/ActionCouncil";
-import { DecisionsBoard } from "@/components/decisions/DecisionsBoard";
-import {
-  DecisionsTabs,
-  resolveDecisionsTab,
-  resolveFocusedProposal,
-} from "@/components/decisions/DecisionsTabs";
-import { usePageContextPublisher } from "@/lib/copilot/use-page-context";
+import { decisionsRedirectTarget } from "./redirect-target";
 
-function DecisionsShell() {
+function DecisionsRedirect() {
   const params = useSearchParams();
-  const router = useRouter();
-  const tab = resolveDecisionsTab(params.get("tab"));
-  const focus = resolveFocusedProposal(params.get("propuesta"));
+  const target = decisionsRedirectTarget(params);
 
-  usePageContextPublisher(useMemo(() => ({
-    surface: "decisions",
-    active_tab: tab,
-    ...(focus ? { focused_decision_id: focus } : {}),
-  }), [tab, focus]));
+  useEffect(() => {
+    window.location.replace(target);
+  }, [target]);
 
   return (
-    <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Decisiones</h1>
-        <p className="text-sm text-muted-foreground">
-          Propuestas por aprobar, compromisos, seguimiento y cierre.
-        </p>
-      </header>
-      <DecisionsTabs
-        active={tab}
-        onChange={(next) => router.replace(`/decisions?tab=${next}`, { scroll: false })}
-      />
-      <div role="tabpanel" id={`decisions-panel-${tab}`} aria-labelledby={`decisions-tab-${tab}`}>
-        {tab === "consejo" ? <ActionCouncil focusDecisionId={focus} /> : <DecisionsBoard />}
-      </div>
+    <main className="mx-auto flex min-h-[60vh] max-w-3xl flex-col items-center justify-center gap-4 px-6 py-12 text-center">
+      <p className="text-xs font-semibold uppercase text-primary">Control Room</p>
+      <h1 className="text-2xl font-semibold tracking-tight">Las decisiones ahora viven en el Control Room</h1>
+      <p className="text-sm text-muted-foreground">
+        Redirigiendo a su fase del ciclo operativo.
+      </p>
+      <Link
+        href={target}
+        className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        Abrir Control Room
+      </Link>
     </main>
   );
 }
 
-export default function DecisionsPage() {
+export default function DecisionsRedirectPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Cargando decisiones…</div>}>
-      <DecisionsShell />
+    <Suspense fallback={null}>
+      <DecisionsRedirect />
     </Suspense>
   );
 }

@@ -1,94 +1,32 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import OperationalIntelligencePage from "./page";
-
-interface MockQueryState {
-  data: unknown;
-  isLoading: boolean;
-  isError: boolean;
-  error: unknown;
-  refetch: () => Promise<unknown>;
-}
-
-const queryState = vi.hoisted(() => ({
-  current: {
-    data: undefined,
-    isLoading: true,
-    isError: false,
-    error: null,
-    refetch: async () => undefined,
-  } as MockQueryState,
+vi.mock("next/link", () => ({
+  default: ({ href, children, ...props }: { href: string; children: ReactNode }) => (
+    <a href={href} {...props}>{children}</a>
+  ),
 }));
 
-vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => queryState.current,
-  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-}));
+import OperationalIntelligenceRedirectPage from "./page";
 
-vi.mock("@/lib/operational-intelligence/client", () => ({
-  createDecisionPlan: vi.fn(),
-  getConfidenceHistory: vi.fn(),
-  listDecisionPlans: vi.fn(),
-  listHistoricalValidations: vi.fn(),
-  listOperationalHistory: vi.fn(),
-  listOperationalRuns: vi.fn(),
-  listScenarioAnalyses: vi.fn(),
-  runHistoricalValidation: vi.fn(),
-}));
+describe("/operational-intelligence redirect shell", () => {
+  it("points at the Decide phase of the Control Room", () => {
+    const markup = renderToStaticMarkup(<OperationalIntelligenceRedirectPage />);
 
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
-}));
-
-beforeEach(() => {
-  queryState.current = {
-    data: undefined,
-    isLoading: true,
-    isError: false,
-    error: null,
-    refetch: async () => undefined,
-  };
-});
-
-describe("OperationalIntelligencePage summary tiles", () => {
-  it("shows — instead of 0 while queries are loading", () => {
-    const markup = renderToStaticMarkup(<OperationalIntelligencePage />);
-
-    expect(markup).toContain('font-semibold">—<');
-    expect(markup).not.toContain('font-semibold">0<');
+    expect(markup).toContain('href="/control-room?fase=decide"');
+    expect(markup).toContain("Redirigiendo");
+    expect(markup).toContain("Abrir Control Room");
+    expect(markup).toContain("<h1");
   });
 
-  it("shows — instead of 0 when queries failed without data", () => {
-    queryState.current = {
-      data: undefined,
-      isLoading: false,
-      isError: true,
-      error: new Error("backend down"),
-      refetch: async () => undefined,
-    };
+  it("replaces the location transparently in the shell source", () => {
+    const source = readFileSync(join(__dirname, "page.tsx"), "utf8");
 
-    const markup = renderToStaticMarkup(<OperationalIntelligencePage />);
-
-    expect(markup).toContain('font-semibold">—<');
-    expect(markup).not.toContain('font-semibold">0<');
-    expect(markup).toContain('role="alert"');
-    expect(markup).toContain("No se pudo cargar la información.");
-  });
-
-  it("shows real counts once data arrives", () => {
-    queryState.current = {
-      data: { items: [{ id: "a" }, { id: "b" }] },
-      isLoading: false,
-      isError: false,
-      error: null,
-      refetch: async () => undefined,
-    };
-
-    const markup = renderToStaticMarkup(<OperationalIntelligencePage />);
-
-    expect(markup).toContain('font-semibold">2<');
-    expect(markup).not.toContain('font-semibold">—<');
+    expect(source).toContain('window.location.replace(TARGET)');
+    expect(source).toContain('const TARGET = "/control-room?fase=decide"');
   });
 });

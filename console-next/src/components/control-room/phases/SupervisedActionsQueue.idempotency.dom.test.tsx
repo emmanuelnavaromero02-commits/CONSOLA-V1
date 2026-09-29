@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SupervisedAction } from "@/lib/supervised-actions/types";
 
-import SupervisedActionsPage from "./page";
+import { SupervisedActionsQueue } from "./SupervisedActionsQueue";
 
 const clientBoundary = vi.hoisted(() => ({
   listSupervisedActions: vi.fn(),
@@ -15,10 +15,6 @@ const clientBoundary = vi.hoisted(() => ({
   validateSupervisedAction: vi.fn(),
   rejectSupervisedAction: vi.fn(),
   cancelSupervisedAction: vi.fn(),
-}));
-
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
 vi.mock("@/lib/supervised-actions/client", () => clientBoundary);
@@ -45,7 +41,7 @@ async function renderPage() {
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <SupervisedActionsPage />
+        <SupervisedActionsQueue />
       </QueryClientProvider>,
     );
   });
@@ -81,7 +77,7 @@ afterEach(async () => {
   container.remove();
 });
 
-describe("SupervisedActionsPage: idempotencia por intención lógica", () => {
+describe("SupervisedActionsQueue: idempotencia por intención lógica", () => {
   it("timeout ambiguo + reintento conserva exactamente la misma clave", async () => {
     clientBoundary.validateSupervisedAction
       .mockRejectedValueOnce(new Error("timeout"))

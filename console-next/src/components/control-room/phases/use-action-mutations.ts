@@ -1,8 +1,7 @@
 "use client";
 
-import { useRef, type MutableRefObject } from "react";
+import { useRef, useState, type MutableRefObject } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 
 import {
   cancelSupervisedAction,
@@ -14,6 +13,11 @@ import type { ActionMutationRequest, SupervisedAction } from "@/lib/supervised-a
 
 type MutationFn = (id: string, request: ActionMutationRequest) => Promise<SupervisedAction>;
 
+export interface MutationNotice {
+  kind: "success" | "error";
+  text: string;
+}
+
 interface ActionMutation {
   run: () => void;
   isPending: boolean;
@@ -24,6 +28,7 @@ export interface SupervisedActionMutations {
   reject: ActionMutation;
   cancel: ActionMutation;
   busy: boolean;
+  notice: MutationNotice | null;
 }
 
 function useActionMutation(
@@ -33,6 +38,7 @@ function useActionMutation(
   currentId: string,
   registry: MutableRefObject<IntentKeyRegistry>,
   inFlightRef: MutableRefObject<boolean>,
+  onNotice: (notice: MutationNotice) => void,
 ): ActionMutation {
   const queryClient = useQueryClient();
   const mutation = useMutation({
@@ -43,11 +49,14 @@ function useActionMutation(
     onSuccess: async () => {
       registry.current.complete(`${op}:${currentId}`);
       await queryClient.invalidateQueries({ queryKey: ["supervised-actions"] });
-      toast.success(label);
+      onNotice({ kind: "success", text: label });
     },
     onError: async (error) => {
       await queryClient.invalidateQueries({ queryKey: ["supervised-actions"] });
-      toast.error(error instanceof Error ? error.message : "No se pudo completar la acción.");
+      onNotice({
+        kind: "error",
+        text: error instanceof Error ? error.message : "No se pudo completar la acción.",
+      });
     },
     onSettled: () => {
       inFlightRef.current = false;
@@ -66,15 +75,17 @@ function useActionMutation(
 export function useSupervisedActionMutations(currentId: string): SupervisedActionMutations {
   const registryRef = useRef(createIntentKeyRegistry());
   const inFlightRef = useRef(false);
+  const [notice, setNotice] = useState<MutationNotice | null>(null);
 
-  const validate = useActionMutation("validate", "Acción validada.", validateSupervisedAction, currentId, registryRef, inFlightRef);
-  const reject = useActionMutation("reject", "Acción rechazada.", rejectSupervisedAction, currentId, registryRef, inFlightRef);
-  const cancel = useActionMutation("cancel", "Acción cancelada.", cancelSupervisedAction, currentId, registryRef, inFlightRef);
+  const validate = useActionMutation("validate", "Acción validada.", validateSupervisedAction, currentId, registryRef, inFlightRef, setNotice);
+  const reject = useActionMutation("reject", "Acción rechazada.", rejectSupervisedAction, currentId, registryRef, inFlightRef, setNotice);
+  const cancel = useActionMutation("cancel", "Acción cancelada.", cancelSupervisedAction, currentId, registryRef, inFlightRef, setNotice);
 
   return {
     validate,
     reject,
     cancel,
     busy: validate.isPending || reject.isPending || cancel.isPending,
+    notice,
   };
 }

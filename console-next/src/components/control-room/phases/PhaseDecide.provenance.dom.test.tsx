@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import OperationalIntelligencePage from "./page";
+import { PhaseDecide } from "./PhaseDecide";
 
 interface MockQueryState {
   data: unknown;
@@ -41,27 +41,15 @@ vi.mock("@/lib/operational-intelligence/client", () => ({
   runHistoricalValidation: vi.fn(),
 }));
 
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
-}));
-
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let container: HTMLDivElement;
 let root: Root;
 
-async function renderPage() {
+async function renderPhase() {
   await act(async () => {
-    root.render(<OperationalIntelligencePage />);
+    root.render(<PhaseDecide />);
   });
-}
-
-async function openTab(label: string) {
-  const tab = [...container.querySelectorAll('button[role="tab"]')].find(
-    (candidate) => candidate.textContent?.trim() === label,
-  );
-  expect(tab, `tab ${label}`).toBeDefined();
-  await act(async () => (tab as HTMLButtonElement).click());
 }
 
 beforeEach(() => {
@@ -92,24 +80,23 @@ afterEach(async () => {
   container.remove();
 });
 
-describe("Inteligencia Operativa: procedencia veraz", () => {
+describe("PhaseDecide: procedencia veraz", () => {
   it("los escenarios se rotulan como simulación, nunca como evidencia agregada", async () => {
-    await renderPage();
+    await renderPhase();
 
     expect(container.textContent).toContain("Simulación de escenarios");
     expect(container.textContent).not.toContain("evidencia agregada");
   });
 
   it("los planes no se rotulan como fuente operativa fabricada", async () => {
-    await renderPage();
-    await openTab("Planes de decisión");
+    await renderPhase();
 
     expect(container.textContent).not.toContain("fuente operativa");
     expect(container.textContent).toContain("Preparación supervisada");
   });
 
   it("la cabecera no presenta las simulaciones como datos observados", async () => {
-    await renderPage();
+    await renderPhase();
 
     expect(container.textContent).not.toContain(
       "validaciones conectadas a datos reales de la consola",
@@ -117,8 +104,7 @@ describe("Inteligencia Operativa: procedencia veraz", () => {
   });
 
   it("validaciones sin result_count no fabrican '0 resultados'", async () => {
-    await renderPage();
-    await openTab("Validación histórica");
+    await renderPhase();
 
     expect(container.textContent).not.toContain("0 resultados");
     expect(container.textContent).toContain("Resultados: N/D");
@@ -139,25 +125,20 @@ describe("Inteligencia Operativa: procedencia veraz", () => {
         ],
       },
     };
-    await renderPage();
-    await openTab("Validación histórica");
+    await renderPhase();
 
     expect(container.textContent).toContain("42 resultados");
   });
 
   it("los paneles vacíos usan el estado vacío compartido sin inventar filas", async () => {
     queryState.current = { ...queryState.current, data: { items: [] } };
-    await renderPage();
-    expect(container.querySelector('[data-testid="empty-state"]')).not.toBeNull();
-    await openTab("Planes de decisión");
-    const plans = [...container.querySelectorAll('[data-testid="empty-state"]')].map(
+    await renderPhase();
+
+    const empties = [...container.querySelectorAll('[data-testid="empty-state"]')].map(
       (node) => node.textContent,
     );
-    expect(plans).toContain("Sin planes preparados.");
-    await openTab("Validación histórica");
-    const validations = [...container.querySelectorAll('[data-testid="empty-state"]')].map(
-      (node) => node.textContent,
-    );
-    expect(validations).toContain("Sin validaciones históricas.");
+    expect(empties.length).toBeGreaterThan(0);
+    expect(empties).toContain("Sin planes preparados.");
+    expect(empties).toContain("Sin validaciones históricas.");
   });
 });

@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.control_room.business_access import expected_item_owner
+from app.services.control_room.business_council_impact import council_impact
 from app.services.control_room.business_repository import (
     decision_provenance,
     link_control_room_decision,
@@ -28,6 +29,18 @@ from app.services.control_room.business_workflow_quarantine import (
 
 
 ItemWriter = Callable[..., Awaitable[None]]
+
+
+def _impact_snapshot(item: Mapping[str, Any]) -> dict[str, Any] | None:
+    impact = council_impact(dict(item), None)
+    if impact.kind != "money" or impact.value is None:
+        return None
+    estimate: dict[str, Any] = {"valor": impact.value, "moneda": impact.currency}
+    if impact.basis:
+        estimate["base"] = impact.basis
+    if impact.formula:
+        estimate["formula"] = impact.formula
+    return {"impacto_estimado": estimate, "regla": impact.label}
 
 
 def _decision_fields(
@@ -57,6 +70,9 @@ def _decision_fields(
         },
         decision_provenance("control_room", item_id=str(item["id"])),
     ]
+    snapshot = _impact_snapshot(item)
+    if snapshot is not None:
+        kpis.append(snapshot)
     return title, description, kpis
 
 

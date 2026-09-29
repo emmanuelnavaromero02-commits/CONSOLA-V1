@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -84,7 +85,7 @@ describe("ControlRoomExperienceContent", () => {
 
     expect(markup).toContain("Decisión registrada");
     expect(markup).toContain("Ver en el Consejo de Acciones");
-    expect(markup).toContain('href="/decisions?tab=consejo"');
+    expect(markup).toContain('href="/control-room?fase=ejecuta"');
     expect(markup).not.toContain("propuesta=");
     expect(markup).not.toContain("reference");
     expect(markup).not.toContain("Aprobar");
@@ -199,12 +200,27 @@ describe("ControlRoomExperienceContent", () => {
     );
   });
 
-  it("renders the single neutral empty state", () => {
-    const markup = renderContent({
-      experience: { ...experience, sections: [] },
+  it("renders the source diagnostic instead of the retired neutral empty state", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, enabled: false } },
     });
+    const markup = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <ControlRoomExperienceContent
+          experience={{ ...experience, sections: [] }}
+          refreshing={false}
+          refreshFailed={false}
+          onRefresh={vi.fn()}
+          onAction={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
 
-    expect(markup).toContain("No hay observaciones empresariales para mostrar.");
+    expect(markup).not.toContain("No hay observaciones empresariales para mostrar.");
+    expect(markup).toContain("Diagnóstico preliminar de fuentes");
+    expect(markup).toContain("Plan de acción sugerido");
+    expect(markup).toContain('href="/marketplace?tab=conectadas"');
+    expect(markup).toContain('href="/studio"');
     expect(markup).toContain('role="status"');
   });
 });

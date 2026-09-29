@@ -20,6 +20,25 @@ const shellReads = new Set(["/api/me/access", "/auth/me"]);
 export const EXPERIENCE_PATH = "/api/control-room/experience/v2";
 export const FRESHNESS_PATH = "/api/control-room/experience/v2/freshness";
 export const REFRESH_PATH = "/api/control-room/refresh";
+export const DIAGNOSTICS_PATH = "/api/control-room/diagnostics";
+export const emptyDiagnostics = {
+  schema_version: "control-room-diagnostics/v1",
+  generated_at: "2026-07-25T12:30:00Z",
+  sources: [
+    {
+      domain: "people",
+      status: "empty",
+      operationally_ready: false,
+      reason: "La fuente no ha materializado filas.",
+      blockers: [],
+      warnings: [],
+    },
+  ],
+  diagnostic_items: [],
+  installations: [
+    { status: "pending_connection", label: "SAP SuccessFactors", category: "hr" },
+  ],
+};
 export const liveFreshness = {
   schema_version: "control-room-freshness/v1",
   fingerprint: "e".repeat(64),
@@ -130,6 +149,14 @@ export async function installExperienceMock(
       });
       return;
     }
+    if (route.request().method() === "GET" && requestUrl.pathname === DIAGNOSTICS_PATH) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(emptyDiagnostics),
+      });
+      return;
+    }
     if (requestUrl.pathname !== EXPERIENCE_PATH) {
       await route.fulfill({ status: 410, body: "legacy endpoint disabled" });
       return;
@@ -152,7 +179,10 @@ export function assertReadOnlyRequests(
   expectedHttpFailures = 0,
 ) {
   const pageRequests = observation.requests.filter(
-    ({ pathname }) => !shellReads.has(pathname) && pathname !== FRESHNESS_PATH,
+    ({ pathname }) =>
+      !shellReads.has(pathname)
+      && pathname !== FRESHNESS_PATH
+      && pathname !== DIAGNOSTICS_PATH,
   );
   expect(pageRequests).toEqual(
     Array.from({ length: expectedReads }, () => ({
@@ -162,7 +192,8 @@ export function assertReadOnlyRequests(
   );
   expect(
     observation.requests.filter(
-      ({ method, pathname }) => pathname === FRESHNESS_PATH && method !== "GET",
+      ({ method, pathname }) =>
+        (pathname === FRESHNESS_PATH || pathname === DIAGNOSTICS_PATH) && method !== "GET",
     ),
   ).toEqual([]);
   expect(

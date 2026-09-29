@@ -4,42 +4,42 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolveDecisionsTab, resolveFocusedProposal } from "@/components/decisions/DecisionsTabs";
-
-import DecisionsPage from "./page";
+import DecisionsRedirectPage from "./page";
+import { decisionsRedirectTarget } from "./redirect-target";
 
 const navigation = vi.hoisted(() => ({
   params: new URLSearchParams(),
-  replace: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => navigation.params,
-  useRouter: () => ({ replace: navigation.replace, push: vi.fn() }),
 }));
-vi.mock("@/components/decisions/ActionCouncil", () => ({
-  ActionCouncil: ({ focusDecisionId }: { focusDecisionId: number | null }) => (
-    <div data-testid="council">{`consejo:${focusDecisionId ?? "none"}`}</div>
+
+vi.mock("next/link", () => ({
+  default: ({ href, children, ...props }: { href: string; children: React.ReactNode }) => (
+    <a href={href} {...props}>{children}</a>
   ),
-}));
-vi.mock("@/components/decisions/DecisionsBoard", () => ({
-  DecisionsBoard: () => <div data-testid="registro">registro</div>,
 }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let container: HTMLDivElement;
 let root: Root;
+const replaceSpy = vi.fn();
 
 async function render(query: string) {
   navigation.params = new URLSearchParams(query);
   await act(async () => {
-    root.render(<DecisionsPage />);
+    root.render(<DecisionsRedirectPage />);
   });
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  replaceSpy.mockClear();
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...window.location, replace: replaceSpy },
+  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -50,45 +50,45 @@ afterEach(async () => {
   container.remove();
 });
 
-describe("DecisionsPage", () => {
-  it("opens the council by default and honours the proposal link", async () => {
-    await render("");
-    const tabs = [...container.querySelectorAll('[role="tab"]')];
-    expect(tabs.map((tab) => tab.textContent)).toEqual([
-      "Consejo de Acciones Sugeridas",
-      "Registro",
-    ]);
-    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
-    expect(container.querySelector('[data-testid="council"]')?.textContent).toBe("consejo:none");
-
-    await render("tab=consejo&propuesta=41");
-    expect(container.querySelector('[data-testid="council"]')?.textContent).toBe("consejo:41");
-  });
-
-  it("switches to the register tab through the URL, also with the keyboard", async () => {
-    await render("tab=registro");
-    expect(container.querySelector('[data-testid="registro"]')).not.toBeNull();
-    expect(container.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby")).toBe(
-      "decisions-tab-registro",
+describe("/decisions redirect shell", () => {
+  it("maps the council tab (and the default) to the Ejecuta phase", () => {
+    expect(decisionsRedirectTarget(new URLSearchParams(""))).toBe("/control-room?fase=ejecuta");
+    expect(decisionsRedirectTarget(new URLSearchParams("tab=consejo"))).toBe(
+      "/control-room?fase=ejecuta",
     );
-    const council = container.querySelector("#decisions-tab-consejo") as HTMLButtonElement;
-    await act(async () => council.click());
-    expect(navigation.replace).toHaveBeenLastCalledWith("/decisions?tab=consejo", { scroll: false });
-    const registro = container.querySelector("#decisions-tab-registro") as HTMLButtonElement;
-    await act(async () => {
-      registro.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    });
-    expect(navigation.replace).toHaveBeenLastCalledWith("/decisions?tab=consejo", { scroll: false });
+    expect(decisionsRedirectTarget(new URLSearchParams("tab=otro"))).toBe(
+      "/control-room?fase=ejecuta",
+    );
   });
 
-  it("parses only safe tab and proposal values", () => {
-    expect(resolveDecisionsTab(null)).toBe("consejo");
-    expect(resolveDecisionsTab("otro")).toBe("consejo");
-    expect(resolveDecisionsTab("registro")).toBe("registro");
-    expect(resolveFocusedProposal("41")).toBe(41);
-    expect(resolveFocusedProposal("0")).toBeNull();
-    expect(resolveFocusedProposal("-3")).toBeNull();
-    expect(resolveFocusedProposal("4e2")).toBeNull();
-    expect(resolveFocusedProposal("99999999999999999999")).toBeNull();
+  it("maps the register tab to the Supervisa phase", () => {
+    expect(decisionsRedirectTarget(new URLSearchParams("tab=registro"))).toBe(
+      "/control-room?fase=supervisa",
+    );
+  });
+
+  it("preserves only safe proposal deep links", () => {
+    expect(decisionsRedirectTarget(new URLSearchParams("tab=consejo&propuesta=41"))).toBe(
+      "/control-room?fase=ejecuta&propuesta=41",
+    );
+    expect(decisionsRedirectTarget(new URLSearchParams("propuesta=0"))).toBe(
+      "/control-room?fase=ejecuta",
+    );
+    expect(decisionsRedirectTarget(new URLSearchParams("propuesta=4e2"))).toBe(
+      "/control-room?fase=ejecuta",
+    );
+    expect(decisionsRedirectTarget(new URLSearchParams("tab=registro&propuesta=41"))).toBe(
+      "/control-room?fase=supervisa",
+    );
+  });
+
+  it("replaces the location and renders the fallback link for the resolved target", async () => {
+    await render("tab=consejo&propuesta=41");
+
+    expect(replaceSpy).toHaveBeenCalledWith("/control-room?fase=ejecuta&propuesta=41");
+    const anchor = container.querySelector("a");
+    expect(anchor?.getAttribute("href")).toBe("/control-room?fase=ejecuta&propuesta=41");
+    expect(container.textContent).toContain("Redirigiendo");
+    expect(container.textContent).toContain("Abrir Control Room");
   });
 });
