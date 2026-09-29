@@ -2254,6 +2254,10 @@
       "sha256": "a2983852c7171d13f2da5f8b6117c8b009b22ea629532f1b1db2809c8961dfb5"
     },
     {
+      "path": "console/tests/test_control_room_decision_impact_snapshot.py",
+      "sha256": "d69d5da639904af4109f6ce75d0aeac2b6a2d2487dee797df0e5f5f126f51529"
+    },
+    {
       "path": "console/tests/test_control_room_decision_link_exploits.py",
       "sha256": "1e317318cbfe9ecb504282602a4455bbe0e898fa7e18ea33f35a150fe58a6a4e"
     },
@@ -3951,7 +3955,7 @@
     },
     {
       "path": "tests-e2e/specs/12-control-room.spec.ts",
-      "sha256": "97d08cc97890ce2c33abbb6af20dee2fd680963d2c02325874096d0cf96353e3"
+      "sha256": "7a984c6aff0c15c20421482872c6d248f94d662adf53df8822448c63ae04cb13"
     },
     {
       "path": "tests-e2e/specs/13-control-room-talent-action-boundary.spec.ts",
@@ -3967,7 +3971,7 @@
     },
     {
       "path": "tests-e2e/specs/helpers/control-room-experience.ts",
-      "sha256": "9a382ea1bd365c8110d2a522f192d4b3c7b873538414b72899d65b37c402b7cc"
+      "sha256": "c38ccb198e8a348a502de89bcb7909d3ad657b0a211ffa2fa79e5a7e06ce475b"
     },
     {
       "path": "tests/__init__.py",
