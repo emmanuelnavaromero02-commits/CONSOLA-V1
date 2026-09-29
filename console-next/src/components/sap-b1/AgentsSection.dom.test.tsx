@@ -130,13 +130,13 @@ describe("AgentsSection alerts", () => {
     expect(row(NEW)?.textContent).toContain("Lote por caducar");
     expect(row(NEW)?.textContent).toContain("Crítica");
     expect(row(NEW)?.textContent).toContain("Decisión registrada");
-    expect(row(NEW)?.querySelector('a[href="/decisions"]')?.textContent).toBe("Ver en Decisiones");
+    expect(row(NEW)?.querySelector('a[href="/control-room?fase=ejecuta"]')?.textContent).toBe("Ver en Decisiones");
     expect(rowButton(NEW, "Registrar decisión")?.disabled).toBe(true);
     expect(rowButton(NEW, "Marcar falso positivo")?.disabled).toBe(false);
 
     expect(row(OLD)?.textContent).toContain("Alta");
     expect(row(OLD)?.textContent).toContain("Abierta");
-    expect(row(OLD)?.querySelector('a[href="/decisions"]')).toBeNull();
+    expect(row(OLD)?.querySelector('a[href="/control-room?fase=ejecuta"]')).toBeNull();
     expect(rowButton(OLD, "Registrar decisión")?.disabled).toBe(false);
   });
 
@@ -150,7 +150,7 @@ describe("AgentsSection alerts", () => {
     expect(boundary.createItemDecision).toHaveBeenCalledTimes(1);
     expect(boundary.createItemDecision.mock.calls[0][0]).toBe(OLD);
     expect(row(OLD)?.textContent).toContain("Decisión registrada");
-    expect(row(OLD)?.querySelector('a[href="/decisions"]')).not.toBeNull();
+    expect(row(OLD)?.querySelector('a[href="/control-room?fase=ejecuta"]')).not.toBeNull();
     expect(rowButton(OLD, "Registrar decisión")?.disabled).toBe(true);
     expect(boundary.listAlerts).toHaveBeenCalledTimes(2);
     expect(boundary.getControlRoomDashboard).toHaveBeenCalledTimes(2);

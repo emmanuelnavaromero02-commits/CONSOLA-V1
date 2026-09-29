@@ -59,7 +59,7 @@ function LearningPanel() {
           <a className="font-medium text-primary underline-offset-2 hover:underline" href="/control-room">Control Room</a>, donde se ve si ya
           tiene una decisión registrada. Este registro cuenta, por agente, las alertas, las decisiones tomadas sobre ellas, los resultados
           medidos y los falsos positivos de los últimos 90 días: ahí quedan documentadas las 3 decisiones por caso. Las decisiones también se
-          consultan en <a className="font-medium text-primary underline-offset-2 hover:underline" href="/decisions">Decisiones</a>.
+          consultan en <a className="font-medium text-primary underline-offset-2 hover:underline" href="/control-room?fase=ejecuta">Decisiones</a>.
         </>
       }
       actions={
@@ -194,7 +194,7 @@ function AgentAlertsPanel({ canWrite }: { canWrite: boolean }) {
         <>
           Alertas activas de los agentes de SAP Business One, de la más reciente a la más antigua. Registra la decisión tomada sobre cada una
           o márcala como falso positivo: las dos cuentan en el registro de aprendizaje. El resultado (lograda o no lograda) se cierra en{" "}
-          <a className={LINK} href="/decisions">Decisiones</a>.
+          <a className={LINK} href="/control-room?fase=ejecuta">Decisiones</a>.
         </>
       }
       actions={
@@ -254,7 +254,7 @@ function AgentAlertsPanel({ canWrite }: { canWrite: boolean }) {
                       <div className="flex flex-col items-start gap-1">
                         <Pill tone={STATE_TONES[row.state]}>{AGENT_ALERT_STATE_LABELS[row.state]}</Pill>
                         {row.hasDecision ? (
-                          <a className={`${LINK} text-xs`} href="/decisions">Ver en Decisiones</a>
+                          <a className={`${LINK} text-xs`} href="/control-room?fase=ejecuta">Ver en Decisiones</a>
                         ) : null}
                       </div>
                     </td>

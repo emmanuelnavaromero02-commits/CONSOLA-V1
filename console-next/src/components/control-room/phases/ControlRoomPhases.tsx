@@ -9,6 +9,7 @@ import {
   GitBranch,
   Gavel,
   Loader2,
+  RefreshCw,
   Sprout,
   Telescope,
 } from "lucide-react";
@@ -124,9 +125,28 @@ export function ControlRoomPhases({ entiende }: { entiende: ReactNode }) {
     );
   }
 
-  const visible = access.isSuccess
-    ? CONTROL_ROOM_PHASES.filter((phase) => canViewPhase(phase, access.data))
-    : [];
+  if (access.isError) {
+    return (
+      <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
+        <div
+          role="alert"
+          className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm"
+        >
+          <p className="font-medium text-destructive">No se pudo cargar tu acceso.</p>
+          <button
+            type="button"
+            onClick={() => access.refetch()}
+            className="mt-2 inline-flex min-h-[44px] items-center gap-2 rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+          >
+            <RefreshCw aria-hidden className="h-4 w-4" />
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const visible = CONTROL_ROOM_PHASES.filter((phase) => canViewPhase(phase, access.data));
   const active = visible.some((phase) => phase.id === requested)
     ? requested
     : visible[0]?.id ?? "entiende";

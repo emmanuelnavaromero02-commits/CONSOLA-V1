@@ -144,13 +144,26 @@ describe("ControlRoomPhases", () => {
     expect(container.querySelector('[data-testid="phase-ejecuta-stub"]')).not.toBeNull();
   });
 
-  it("falls back to the Entiende content when the access read fails", async () => {
-    accessBoundary.getMeAccess.mockRejectedValue(new Error("boom"));
+  it("renders a retryable error state when the access read fails", async () => {
+    accessBoundary.getMeAccess.mockRejectedValueOnce(new Error("boom"));
     await render("fase=decide");
 
     expect(container.querySelector('[role="tablist"]')).toBeNull();
-    expect(container.querySelector('[data-testid="entiende-stub"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="phase-decide-stub"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "No se pudo cargar tu acceso.",
+    );
+
+    accessBoundary.getMeAccess.mockResolvedValue(FULL_ACCESS);
+    const retry = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Reintentar",
+    );
+    expect(retry).toBeDefined();
+    await act(async () => retry?.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector('[data-testid="phase-decide-stub"]')).not.toBeNull();
   });
 
   it("uses roving tabIndex and exposes the accessible tablist contract", async () => {

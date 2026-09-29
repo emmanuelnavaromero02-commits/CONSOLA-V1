@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { BadgeCheck, Inbox, Loader2 } from "lucide-react";
+import { BadgeCheck, Inbox, Loader2, SlidersHorizontal } from "lucide-react";
 
 import { EmptyState } from "@/components/EmptyState";
 import { getControlRoomLessons } from "@/lib/control-room/client";
@@ -90,8 +91,10 @@ function LessonsSection() {
   );
 }
 
+export const PARAMETERS_HREF = "/control-room/sap-b1#parametros";
+
 function SuggestionsSection() {
-  const { installed, access } = useSapB1Access();
+  const { installed, access, canWrite } = useSapB1Access();
   const learning = useQuery({
     queryKey: ["control-room", "sap-b1", "learning"],
     queryFn: () => getSapB1View("sap_b1_learning_kpis"),
@@ -137,6 +140,15 @@ function SuggestionsSection() {
                     <p className="mt-1 break-words text-xs text-muted-foreground">
                       {`Umbrales: ${(suggestion.thresholds ?? []).join(", ")}`}
                     </p>
+                  ) : null}
+                  {canWrite ? (
+                    <Link
+                      href={PARAMETERS_HREF}
+                      className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      <SlidersHorizontal aria-hidden className="h-3.5 w-3.5" />
+                      Ajustar en Parámetros
+                    </Link>
                   ) : null}
                 </div>
                 <CandidateBadge />

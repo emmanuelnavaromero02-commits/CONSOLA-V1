@@ -15,6 +15,7 @@ const sapB1Boundary = vi.hoisted(() => ({
   getSapB1View: vi.fn(),
   access: {
     installed: true,
+    canWrite: true,
     access: { isSuccess: true, isPending: false },
   },
 }));
@@ -56,6 +57,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   sapB1Boundary.access = {
     installed: true,
+    canWrite: true,
     access: { isSuccess: true, isPending: false },
   };
   lessonsBoundary.getControlRoomLessons.mockResolvedValue({
@@ -122,11 +124,37 @@ describe("PhaseEvoluciona", () => {
     expect(container.textContent).toContain("5 de 6 alertas se marcaron como falso positivo.");
     expect(container.textContent).toContain("Umbrales: margin_min_pct");
     expect(container.textContent).toContain(CANDIDATE_COPY);
+    const bridge = [...container.querySelectorAll("a")].find(
+      (anchor) => anchor.textContent?.trim() === "Ajustar en Parámetros",
+    );
+    expect(bridge?.getAttribute("href")).toBe("/control-room/sap-b1#parametros");
+  });
+
+  it("hides the Parámetros bridge for readers without control_room.write", async () => {
+    sapB1Boundary.access = {
+      installed: true,
+      canWrite: false,
+      access: { isSuccess: true, isPending: false },
+    };
+    sapB1Boundary.getSapB1View.mockResolvedValue({
+      metrics: {
+        aprendizaje: {
+          suggestions: [
+            { source: "WB-B1-MARGEN", thresholds: ["margin_min_pct"], reason: "revisar" },
+          ],
+        },
+      },
+    });
+    await renderPhase();
+
+    expect(container.textContent).toContain(CANDIDATE_COPY);
+    expect(container.textContent).not.toContain("Ajustar en Parámetros");
   });
 
   it("declares the missing SAP Business One installation instead of inventing suggestions", async () => {
     sapB1Boundary.access = {
       installed: false,
+      canWrite: false,
       access: { isSuccess: true, isPending: false },
     };
     await renderPhase();
