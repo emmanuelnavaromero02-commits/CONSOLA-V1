@@ -7,25 +7,34 @@ import { useSapB1Access } from "@/lib/sap-b1/hooks";
 import { cn } from "@/lib/utils";
 
 import { AgentsSection } from "./AgentsSection";
+import { AprendizajeSection } from "./AprendizajeSection";
 import { EntityModelSection } from "./EntityModelSection";
-import { IndicatorsSection } from "./IndicatorsSection";
+import { CaseIndicatorsSection } from "./IndicatorsSection";
 import { InfoBitSection } from "./InfoBitSection";
 import { ParametersSection } from "./ParametersSection";
+import { ReconciliationBadge } from "./ReconciliationBadge";
 import { SemaforoSection } from "./SemaforoSection";
 import { SetupSection } from "./SetupSection";
 import { Notice } from "./ui";
 
 export const SAP_B1_TABS = [
   { id: "puesta-en-marcha", label: "Puesta en marcha" },
-  { id: "infobit", label: "InfoBit" },
-  { id: "wisdombit", label: "WisdomBit" },
-  { id: "knowledgebit", label: "KnowledgeBit" },
+  { id: "finanzas", label: "Finanzas" },
+  { id: "ventas", label: "Ventas" },
+  { id: "compras", label: "Compras" },
+  { id: "aprendizaje", label: "Aprendizaje" },
   { id: "agentes", label: "Agentes" },
   { id: "semaforo", label: "Semáforo" },
   { id: "parametros", label: "Parámetros", writeOnly: true },
 ] as const;
 
 export type SapB1TabId = (typeof SAP_B1_TABS)[number]["id"];
+
+export const SAP_B1_LEGACY_HASHES: Record<string, SapB1TabId> = {
+  infobit: "finanzas",
+  wisdombit: "ventas",
+  knowledgebit: "compras",
+};
 
 function subscribeHash(onChange: () => void) {
   window.addEventListener("hashchange", onChange);
@@ -43,12 +52,19 @@ function selectHash(id: string) {
 
 function TabPanel({ tab, canWrite, canReadAgents }: { tab: SapB1TabId; canWrite: boolean; canReadAgents: boolean | null }) {
   switch (tab) {
-    case "infobit":
-      return <InfoBitSection />;
-    case "wisdombit":
-      return <EntityModelSection />;
-    case "knowledgebit":
-      return <IndicatorsSection />;
+    case "finanzas":
+      return (
+        <div className="space-y-4">
+          <ReconciliationBadge />
+          <CaseIndicatorsSection caseId="finanzas" />
+        </div>
+      );
+    case "ventas":
+      return <CaseIndicatorsSection caseId="ventas" />;
+    case "compras":
+      return <CaseIndicatorsSection caseId="compras" />;
+    case "aprendizaje":
+      return <AprendizajeSection />;
     case "agentes":
       return <AgentsSection canReadAgents={canReadAgents} canWrite={canWrite} />;
     case "semaforo":
@@ -56,15 +72,27 @@ function TabPanel({ tab, canWrite, canReadAgents }: { tab: SapB1TabId; canWrite:
     case "parametros":
       return <ParametersSection canWrite={canWrite} />;
     default:
-      return <SetupSection />;
+      return (
+        <div className="space-y-4">
+          <SetupSection />
+          <InfoBitSection />
+          <EntityModelSection />
+        </div>
+      );
   }
 }
 
 export function SapB1Page() {
   const { access, installed, canWrite, canReadAgents } = useSapB1Access();
   const hash = useSyncExternalStore(subscribeHash, readHash, () => "");
+  const requested = SAP_B1_LEGACY_HASHES[hash] ?? hash;
   const tabs = SAP_B1_TABS.filter((tab) => !("writeOnly" in tab) || canWrite);
-  const active = (tabs.find((tab) => tab.id === hash)?.id ?? "puesta-en-marcha") as SapB1TabId;
+  const active = (tabs.find((tab) => tab.id === requested)?.id ?? "puesta-en-marcha") as SapB1TabId;
+
+  useEffect(() => {
+    const target = SAP_B1_LEGACY_HASHES[hash];
+    if (target) selectHash(target);
+  }, [hash]);
 
   useEffect(() => {
     document.getElementById(`tab-${active}`)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
@@ -87,7 +115,8 @@ export function SapB1Page() {
         </a>
         <h1 className="mt-1 text-2xl font-semibold text-foreground dark:text-white">SAP Business One</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Puesta en marcha, cargas, modelo de entidades, indicadores, agentes y semáforo del día. Solo recomendaciones: nada se escribe en Business One.
+          Puesta en marcha y los indicadores de Finanzas, Ventas y Compras, con agentes, aprendizaje y el semáforo del día. Solo
+          recomendaciones: nada se escribe en Business One.
         </p>
       </div>
 

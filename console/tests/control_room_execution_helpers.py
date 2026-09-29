@@ -28,7 +28,7 @@ USER = {
     "active_workspace_id": "workspace-A",
     "tenant_id": "tenant-A",
     "role": "admin",
-    "allowed_cartridges": ["sap_hcm", "sap_s4hana", "sap_successfactors", "replicon"],
+    "allowed_cartridges": ["sap_hcm", "sap_s4hana", "sap_successfactors", "replicon", "sap_b1"],
     "_effective_permissions": [
         "control_room.read",
         "control_room.write",

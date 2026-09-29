@@ -1863,7 +1863,7 @@
     },
     {
       "path": "console/tests/control_room_execution_helpers.py",
-      "sha256": "f2904fd09ca2c8f364a879362e7849a3a7331f65828e72cca404eda4980a6880"
+      "sha256": "abb936b99f23da17b2171f0f0c4f78c75e44bddab75864881fac0493c4a7f95d"
     },
     {
       "path": "console/tests/control_room_execution_router_helpers.py",
@@ -2798,6 +2798,10 @@
       "sha256": "12b346210f71a1e0fbddb1f7048879a6f12f7756611b90c0eab70a724bb05a4c"
     },
     {
+      "path": "console/tests/test_control_room_sap_b1_module.py",
+      "sha256": "b4af2b3f3d8f5bab586130fa67179ce0df95b0be3579a310ea52e07c5fd0349a"
+    },
+    {
       "path": "console/tests/test_control_room_sap_hcm_ambiguous_outcome.py",
       "sha256": "6925e49f1dd72a6cbbb60154441673e98ad99726dd1b6ca8d24a07b9aa33707a"
     },
@@ -2807,7 +2811,7 @@
     },
     {
       "path": "console/tests/test_control_room_service.py",
-      "sha256": "5630978b3d29341a49243b5946ee54d60d680f42f1ff4192da29fdd72420b215"
+      "sha256": "fd862ef623394e1aaaaf627fd4a9f1c310390e65a9de903a8591f8ab290a2a23"
     },
     {
       "path": "console/tests/test_control_room_sql_business_instruction_boundaries.py",
@@ -6027,7 +6031,7 @@
     },
     {
       "path": "tests/test_sap_b1_aggregates.py",
-      "sha256": "646db489ac5a5487a82cc0ed982fbf6a8f4187bedf6efcff55398cca96cc57da"
+      "sha256": "e624e2fe398420e6f0d61a5cdc575ddc00e6e6acbd7aad4ef04c6a3ef48a281c"
     },
     {
       "path": "tests/test_sap_b1_apps.py",

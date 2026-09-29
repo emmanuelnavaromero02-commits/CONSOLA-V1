@@ -241,6 +241,182 @@ datasets:
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_talent_signals.sql
       - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_b1
+    dataset: sap_b1_margin_kpis_month
+    readiness: partial
+    reason: "Requiere extraccion de SAP Business One: sin las facturas, notas de credito y costos del cliente no hay margen mensual real."
+    blockers:
+      - "Conectar el agente de SAP Business One y completar la carga de facturas, notas de credito y costos por empresa."
+    evidence:
+      - cartridges/sap_b1/datasets/sap_b1_margin_kpis_month.sql
+  - cartridge: sap_b1
+    dataset: sap_b1_kpi_reconciliation
+    readiness: partial
+    reason: "Requiere extraccion de SAP Business One y la corrida manual de Finanzas: sin las dos no hay filas que conciliar."
+    blockers:
+      - "Conectar el agente de SAP Business One y cargar la corrida manual de Finanzas desde Parametros."
+    evidence:
+      - cartridges/sap_b1/datasets/sap_b1_kpi_reconciliation.sql
+  - cartridge: sap_b1
+    dataset: sap_b1_batch_expiry
+    readiness: partial
+    reason: "Requiere extraccion de SAP Business One: sin lotes, caducidades y existencias del cliente no hay riesgo de caducidad real."
+    blockers:
+      - "Conectar el agente de SAP Business One y completar la carga de lotes, existencias y facturas de venta."
+    evidence:
+      - cartridges/sap_b1/datasets/sap_b1_batch_expiry.sql
+  - cartridge: sap_b1
+    dataset: sap_b1_item_coverage
+    readiness: partial
+    reason: "Requiere extraccion de SAP Business One: sin existencias, ordenes de compra y ordenes de produccion no hay cobertura real."
+    blockers:
+      - "Conectar el agente de SAP Business One y completar la carga de existencias, ordenes de compra y ordenes de produccion."
+    evidence:
+      - cartridges/sap_b1/datasets/sap_b1_item_coverage.sql
+  - cartridge: sap_hcm
+    dataset: sap_hcm_contractdata_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: los elementos de contrato del personal (ContractData) no se ha extraído de SAP HCM."
+    blockers:
+      - "Conectar SAP HCM y extraer los contratos del personal (ContractData)."
+    evidence:
+      - cartridges/sap_hcm/datasets/sap_hcm_contractdata_latest.sql
+  - cartridge: sap_hcm
+    dataset: sap_hcm_employeeactions_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las altas, bajas y traslados del personal (EmployeeActions) no se ha extraído de SAP HCM."
+    blockers:
+      - "Conectar SAP HCM y extraer las acciones de personal (EmployeeActions)."
+    evidence:
+      - cartridges/sap_hcm/datasets/sap_hcm_employeeactions_latest.sql
+  - cartridge: sap_hcm
+    dataset: sap_hcm_employeemaster_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: el maestro de empleados (EmployeeMaster) no se ha extraído de SAP HCM."
+    blockers:
+      - "Conectar SAP HCM y extraer el maestro de empleados (EmployeeMaster)."
+    evidence:
+      - cartridges/sap_hcm/datasets/sap_hcm_employeemaster_latest.sql
+  - cartridge: sap_hcm
+    dataset: sap_hcm_leaveabsence_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las ausencias del personal (LeaveAbsence) no se ha extraído de SAP HCM."
+    blockers:
+      - "Conectar SAP HCM y extraer las ausencias por empleado (LeaveAbsence)."
+    evidence:
+      - cartridges/sap_hcm/datasets/sap_hcm_leaveabsence_latest.sql
+  - cartridge: sap_hcm
+    dataset: sap_hcm_personaldata_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: los datos personales protegidos del personal (PersonalData) no se ha extraído de SAP HCM."
+    blockers:
+      - "Conectar SAP HCM y extraer los datos personales protegidos (PersonalData)."
+    evidence:
+      - cartridges/sap_hcm/datasets/sap_hcm_personaldata_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_billingdocument_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las cabeceras de factura de venta (BillingDocument) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer las facturas de venta (BillingDocument)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_billingdocument_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_billingdocumentitem_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las líneas de factura de venta (BillingDocumentItem) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer las líneas de factura de venta (BillingDocumentItem)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_billingdocumentitem_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_businesspartner_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: el maestro de business partners (BusinessPartner) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer el maestro de business partners (BusinessPartner)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_businesspartner_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_businesspartneraddress_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las direcciones de business partner (BusinessPartnerAddress) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer las direcciones de business partner (BusinessPartnerAddress)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_businesspartneraddress_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_costcenter_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: el maestro de centros de costo (CostCenter) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer el maestro de centros de costo (CostCenter)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_costcenter_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_customer_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: el maestro de clientes (Customer) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer el maestro de clientes (Customer)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_customer_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_product_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: el maestro de productos (Product) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer el maestro de productos (Product)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_product_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_purchaseorder_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las cabeceras de orden de compra (PurchaseOrder) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer las órdenes de compra (PurchaseOrder)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_purchaseorder_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_purchaseorderitem_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las líneas de orden de compra (PurchaseOrderItem) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer las líneas de orden de compra (PurchaseOrderItem)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_purchaseorderitem_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_salesorder_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las cabeceras de pedido de venta (SalesOrder) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer los pedidos de venta (SalesOrder)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_salesorder_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_salesorderitem_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las líneas de pedido de venta (SalesOrderItem) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer las líneas de pedido de venta (SalesOrderItem)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_salesorderitem_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_supplier_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: el maestro de proveedores (Supplier) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer el maestro de proveedores (Supplier)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_supplier_latest.sql
+  - cartridge: sap_s4hana
+    dataset: sap_s4hana_supplierinvoice_latest
+    readiness: stub
+    reason: "Fuente aún no conectada: las facturas de proveedor (SupplierInvoice) no se ha extraído de SAP S/4HANA."
+    blockers:
+      - "Conectar SAP S/4HANA y extraer las facturas de proveedor (SupplierInvoice)."
+    evidence:
+      - cartridges/sap_s4hana/datasets/sap_s4hana_supplierinvoice_latest.sql
 knowledge_bits:
   - cartridge: sap_hcm
     id: kb_sap_hcm_employees_anomalies_active

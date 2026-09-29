@@ -128,7 +128,7 @@ export function InfoBitSection() {
   return (
     <div className="space-y-4">
       <Panel
-        eyebrow="InfoBit"
+        eyebrow="Puesta en marcha"
         title="Conexión y cargas"
         description="El agente dentro de la red del cliente toma los datos de Business One y los sube; aquí se ve si está vivo y qué tanto de cada tabla ya llegó."
         actions={
@@ -178,7 +178,7 @@ export function InfoBitSection() {
       </Panel>
 
       <Panel
-        eyebrow="InfoBit"
+        eyebrow="Puesta en marcha"
         title="Mapeo de tablas"
         description="Qué tabla de Business One se toma, cómo se extrae, qué campos y qué datasets la usan, contra lo que ya está en la plataforma. Es el documento que se firma."
         actions={
