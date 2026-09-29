@@ -78,6 +78,11 @@ async def test_deduced_rows_make_the_cpa_blocker_informative(monkeypatch):
     assert informative[0]["status"] == "informative"
     assert "trayectoria y desempeño real observado" in informative[0]["title"]
     assert "sin PII expuesta" in informative[0]["title"]
+    projected = project_public_control_room_response(
+        ControlRoomTalentNineBoxResponse, result
+    ).model_dump()
+    projected_titles = [blocker["title"] for blocker in projected["blockers"]]
+    assert informative[0]["title"] in projected_titles
 
 
 @pytest.mark.asyncio

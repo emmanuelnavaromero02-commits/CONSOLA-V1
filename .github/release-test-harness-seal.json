@@ -2859,7 +2859,7 @@
     },
     {
       "path": "console/tests/test_control_room_talent_confianza.py",
-      "sha256": "66f627ded4f45f6a236b8dfd0c0dcb22208cce3f0d56b6d72ce8c5b2fe37b153"
+      "sha256": "927d481a2d118e58803224ac96bd3ebf86e1f00a9e7aaaefc56e915a9bcdbe3a"
     },
     {
       "path": "console/tests/test_control_room_talent_kpis.py",
