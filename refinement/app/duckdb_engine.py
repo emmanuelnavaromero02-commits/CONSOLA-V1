@@ -506,25 +506,25 @@ class DuckDBEngine:
             return None
         try:
             from app.publication_snapshot import (
-                PublicationHeadUnavailable,
+                PUBLICATION_RESOLUTION_ERRORS,
                 PublicationSnapshotResolver,
-                publication_head_unavailable,
+                publication_resolution_error,
             )
         except ModuleNotFoundError:
             from refinement.app.publication_snapshot import (
-                PublicationHeadUnavailable,
+                PUBLICATION_RESOLUTION_ERRORS,
                 PublicationSnapshotResolver,
-                publication_head_unavailable,
+                publication_resolution_error,
             )
         try:
             snapshot = PublicationSnapshotResolver(self.storage).published_snapshot(
                 {"name": name, "layer": layer, "cartridge": cartridge},
                 {"tenant_id": tenant, "workspace_id": workspace},
             )
-        except PublicationHeadUnavailable:
+        except PUBLICATION_RESOLUTION_ERRORS:
             raise
         except Exception as exc:
-            raise publication_head_unavailable(exc) from exc
+            raise publication_resolution_error(exc) from exc
         uri = str((snapshot.head if snapshot else {}).get("object_uri") or "")
         return uri or None
 

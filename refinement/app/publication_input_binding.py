@@ -9,17 +9,17 @@ try:
     from app.publication_contract import canonical_digest
     from app.publication_inputs import resolve_input_state
     from app.publication_snapshot import (
-        PublicationHeadUnavailable,
+        PUBLICATION_RESOLUTION_ERRORS,
         PublicationSnapshotResolver,
-        publication_head_unavailable,
+        publication_resolution_error,
     )
 except ModuleNotFoundError:
     from refinement.app.publication_contract import canonical_digest
     from refinement.app.publication_inputs import resolve_input_state
     from refinement.app.publication_snapshot import (
-        PublicationHeadUnavailable,
+        PUBLICATION_RESOLUTION_ERRORS,
         PublicationSnapshotResolver,
-        publication_head_unavailable,
+        publication_resolution_error,
     )
 
 
@@ -53,10 +53,10 @@ class PublicationInputBindingMixin:
             snapshot = PublicationSnapshotResolver(self.storage).published_snapshot(
                 {"name": name, "layer": layer, "cartridge": cartridge}, context
             )
-        except PublicationHeadUnavailable:
+        except PUBLICATION_RESOLUTION_ERRORS:
             raise
         except Exception as exc:
-            raise publication_head_unavailable(exc) from exc
+            raise publication_resolution_error(exc) from exc
         return str((snapshot.head if snapshot else {}).get("object_uri") or "") or None
 
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:

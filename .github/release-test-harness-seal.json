@@ -3679,7 +3679,7 @@
     },
     {
       "path": "refinement/tests/test_publication_head_unavailable.py",
-      "sha256": "b0c39302091b702c6d39954d37e407990ebf1e3916fd3ef5a31e63079f5a15d1"
+      "sha256": "3a3ceccf97034f8f5ceafbc476a091c8a24dac98f1fab64ce943fe3b9452417e"
     },
     {
       "path": "refinement/tests/test_publication_semantics_copilot.py",
@@ -3695,7 +3695,7 @@
     },
     {
       "path": "refinement/tests/test_publication_verify_by_version.py",
-      "sha256": "1b45dc2f0f162aba80f2006fbe20b95b1a6efbdb43a26ce26f2f9dbb95d8cdb6"
+      "sha256": "bf90fc61bec6b159ff35e7d786896155bafb896c792d99307e44de921fe0e83c"
     },
     {
       "path": "refinement/tests/test_publish_app_workspace_scope.py",
@@ -4963,7 +4963,7 @@
     },
     {
       "path": "tests/test_dataset_refresh_chain_fail_closed.py",
-      "sha256": "71297f83884dd8a55844906f5112f8d90939bd5b3d9f92458f81a563239ef5d3"
+      "sha256": "045bf46a223ab62632ec434584634f271cefec3d8f29c0e7546edf370f5d0604"
     },
     {
       "path": "tests/test_dataset_refresh_graph_cartridge_seed.py",

@@ -863,6 +863,11 @@ def test_same_missing_source_409_splits_on_materialization_history(
         ),
         pytest.param(
             _NEW_SILVER,
+            lambda module: _refinement_error(module, "publication_integrity_failed"),
+            id="never-materialized-publication-integrity",
+        ),
+        pytest.param(
+            _NEW_SILVER,
             lambda module: _refinement_error(module, "s3_storage_list_failed"),
             id="never-materialized-listing-409",
         ),

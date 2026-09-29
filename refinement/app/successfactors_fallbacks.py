@@ -4,6 +4,8 @@ import os
 import re
 from typing import Any
 
+import duckdb
+
 from .successfactors_foundation_fallbacks import FOUNDATION_GOLD_FALLBACK_SQL
 from .successfactors_talent_core_fallbacks import TALENT_CORE_FALLBACK_SQL
 from .successfactors_talent_empty_fallbacks import TALENT_EMPTY_FALLBACK_SQL
@@ -63,6 +65,24 @@ _HTTP_STATUS_PATTERNS = (
 )
 
 
+_SQL_OR_DATA_ERRORS = (
+    duckdb.BinderException,
+    duckdb.CatalogException,
+    duckdb.ConversionException,
+    duckdb.ParserException,
+)
+
+
+def _error_text(exc: Exception | Any) -> str:
+    return " ".join(str(part) for part in getattr(exc, "args", ()) or (str(exc),))
+
+
+def is_storage_infra_exception(exc: Exception | Any) -> bool:
+    if isinstance(exc, _SQL_OR_DATA_ERRORS):
+        return False
+    return is_storage_infra_failure(_error_text(exc))
+
+
 def is_storage_infra_failure(text: str) -> bool:
     lower = str(text or "").lower()
     if any(marker in lower for marker in _INFRA_FAILURE_MARKERS):
@@ -119,11 +139,9 @@ SUCCESSFACTORS_GOLD_FALLBACK_SQL: dict[str, str] = {
 
 
 def is_missing_successfactors_dependency_error(exc: Exception | Any) -> bool:
-    text = " ".join(
-        str(part) for part in getattr(exc, "args", ()) or (str(exc),)
-    ).lower()
-    if is_storage_infra_failure(text):
+    if is_storage_infra_exception(exc):
         return False
+    text = _error_text(exc).lower()
     return any(marker in text for marker in _MISSING_DEPENDENCY_MARKERS)
 
 

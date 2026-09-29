@@ -4,17 +4,17 @@ from typing import Any
 
 try:
     from app.publication_snapshot import (
-        PublicationHeadUnavailable,
+        PUBLICATION_RESOLUTION_ERRORS,
         PublicationSnapshotResolver,
         _require_pinned_version,
-        publication_head_unavailable,
+        publication_resolution_error,
     )
 except ModuleNotFoundError:
     from refinement.app.publication_snapshot import (
-        PublicationHeadUnavailable,
+        PUBLICATION_RESOLUTION_ERRORS,
         PublicationSnapshotResolver,
         _require_pinned_version,
-        publication_head_unavailable,
+        publication_resolution_error,
     )
 
 
@@ -53,10 +53,10 @@ def _published_state(
         snapshot = PublicationSnapshotResolver(engine.storage).published_snapshot(
             {"name": dataset, "layer": layer, "cartridge": cartridge}, context or {}
         )
-    except PublicationHeadUnavailable:
+    except PUBLICATION_RESOLUTION_ERRORS:
         raise
     except Exception as exc:
-        raise publication_head_unavailable(exc) from exc
+        raise publication_resolution_error(exc) from exc
     head = snapshot.head if snapshot else None
     if not head:
         return {"source": source, "published": None}
@@ -69,7 +69,7 @@ def _published_state(
     try:
         current = engine.storage.stat(key, expected_version=version)
     except Exception as exc:
-        raise publication_head_unavailable(exc) from exc
+        raise publication_resolution_error(exc) from exc
     actual_checksum = current.checksum_sha256 or ""
     if not actual_checksum:
         raise RuntimeError("published dependency has no recorded checksum")

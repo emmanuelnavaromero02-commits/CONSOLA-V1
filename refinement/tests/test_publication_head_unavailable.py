@@ -4,22 +4,47 @@ import importlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import duckdb
 import httpx
 import psycopg2
 import pytest
 
+from omega_lakehouse.errors import ChecksumMismatch, ObjectNotFound, StorageError
 from refinement.app import main as refinement_main
 from refinement.app import publication_input_binding, publication_inputs
 from refinement.app import publication_snapshot
 from refinement.app.duckdb_engine import DuckDBEngine
+from refinement.app.successfactors_fallbacks import (
+    is_missing_successfactors_dependency_error,
+    is_storage_infra_exception,
+)
 
 HEAD_UNAVAILABLE = r"publication head unavailable \(http 503\)"
-
+INTEGRITY_FAILED = r"publication integrity failed"
 TENANT = "tenant-a"
 WORKSPACE = "workspace-a"
 CONTEXT = {"tenant_id": TENANT, "workspace_id": WORKSPACE}
 PAIR_KEY = "head-console-refinement-pair-key-more-than-32-characters"
 TALENT_GOLD = "sap_successfactors_talent_employee_profile"
+
+OUTAGES = [
+    psycopg2.OperationalError("connection to server failed: timeout expired"),
+    psycopg2.InterfaceError("connection already closed"),
+    ConnectionResetError("connection reset by peer"),
+    TimeoutError("read timed out"),
+    StorageError("object stat failed", provider="s3", bucket="lakehouse"),
+]
+INTEGRITY = [
+    RuntimeError("published snapshot object checksum mismatch"),
+    RuntimeError("published snapshot authority mismatch"),
+    ObjectNotFound("object not found", provider="s3", bucket="lakehouse"),
+    ChecksumMismatch("checksum mismatch", provider="s3", bucket="lakehouse"),
+    KeyError("tenant_id"),
+    RuntimeError("GOLD_DATABASE_URL is required for publication snapshots"),
+]
+EXPECTED = [
+    (failure, HEAD_UNAVAILABLE, "PublicationHeadUnavailable") for failure in OUTAGES
+] + [(failure, INTEGRITY_FAILED, "PublicationIntegrityError") for failure in INTEGRITY]
 
 
 def _resolver(outcome):
@@ -47,25 +72,16 @@ def _patch_snapshot_resolver(monkeypatch, outcome) -> None:
         monkeypatch.setattr(module, "PublicationSnapshotResolver", _resolver(outcome))
 
 
-def _assert_head_unavailable(raised) -> None:
-    assert type(raised.value).__name__ == "PublicationHeadUnavailable"
-
-
-_TRANSIENT = [
-    psycopg2.OperationalError("connection to server failed: timeout expired"),
-    RuntimeError("published snapshot object checksum mismatch"),
-    OSError("stat failed"),
-]
-
-
-@pytest.mark.parametrize("failure", _TRANSIENT)
-def test_engine_head_resolution_failure_is_never_a_missing_head(monkeypatch, failure):
+@pytest.mark.parametrize("failure, message, kind", EXPECTED)
+def test_engine_head_resolution_separates_outages_from_integrity(
+    monkeypatch, failure, message, kind
+):
     _patch_snapshot_resolver(monkeypatch, failure)
 
-    with pytest.raises(RuntimeError, match=HEAD_UNAVAILABLE) as raised:
+    with pytest.raises(RuntimeError, match=message) as raised:
         DuckDBEngine()._latest_materialized_uri("silver", "hubspot", "x", CONTEXT)
 
-    _assert_head_unavailable(raised)
+    assert type(raised.value).__name__ == kind
     assert raised.value.__cause__ is failure
 
 
@@ -78,14 +94,13 @@ def test_engine_genuine_missing_head_is_none(monkeypatch):
     )
 
 
-def test_scoped_sql_never_falls_back_to_the_legacy_path_on_head_failure(monkeypatch):
-    _patch_snapshot_resolver(monkeypatch, _TRANSIENT[0])
-    engine = DuckDBEngine()
+@pytest.mark.parametrize("failure", [OUTAGES[0], INTEGRITY[0]])
+def test_scoped_sql_never_falls_back_to_the_legacy_path(monkeypatch, failure):
+    _patch_snapshot_resolver(monkeypatch, failure)
     sql = "SELECT * FROM read_parquet('s3://lakehouse/silver/hubspot/x/data.parquet')"
 
-    with pytest.raises(RuntimeError, match=HEAD_UNAVAILABLE) as raised:
-        engine._scope_storage_sql(sql, ["silver/hubspot/x"], CONTEXT)
-    _assert_head_unavailable(raised)
+    with pytest.raises(RuntimeError, match=f"{HEAD_UNAVAILABLE}|{INTEGRITY_FAILED}"):
+        DuckDBEngine()._scope_storage_sql(sql, ["silver/hubspot/x"], CONTEXT)
 
 
 class _BindingEngine(publication_input_binding.PublicationInputBindingMixin):
@@ -96,15 +111,17 @@ class _BindingEngine(publication_input_binding.PublicationInputBindingMixin):
         return None
 
 
-@pytest.mark.parametrize("failure", _TRANSIENT)
-def test_staged_binding_head_failure_is_storage_unavailable(monkeypatch, failure):
+@pytest.mark.parametrize("failure, message, kind", EXPECTED)
+def test_staged_binding_separates_outages_from_integrity(
+    monkeypatch, failure, message, kind
+):
     monkeypatch.setattr(
         publication_input_binding, "PublicationSnapshotResolver", _resolver(failure)
     )
 
-    with pytest.raises(RuntimeError, match=HEAD_UNAVAILABLE) as raised:
+    with pytest.raises(RuntimeError, match=message) as raised:
         _BindingEngine()._latest_materialized_uri("gold", "hubspot", "x", CONTEXT)
-    _assert_head_unavailable(raised)
+    assert type(raised.value).__name__ == kind
 
 
 def test_staged_binding_genuine_missing_head_is_none(monkeypatch):
@@ -118,26 +135,40 @@ def test_staged_binding_genuine_missing_head_is_none(monkeypatch):
     )
 
 
-def test_input_state_head_failure_is_storage_unavailable(monkeypatch):
+@pytest.mark.parametrize("failure, message, kind", EXPECTED)
+def test_input_state_separates_outages_from_integrity(
+    monkeypatch, failure, message, kind
+):
     monkeypatch.setattr(
-        publication_inputs, "PublicationSnapshotResolver", _resolver(_TRANSIENT[0])
+        publication_inputs, "PublicationSnapshotResolver", _resolver(failure)
     )
-    engine = SimpleNamespace(storage=None)
 
-    with pytest.raises(RuntimeError, match=HEAD_UNAVAILABLE) as raised:
-        publication_inputs._published_state(engine, "gold/hubspot/x", CONTEXT)
-    _assert_head_unavailable(raised)
+    with pytest.raises(RuntimeError, match=message) as raised:
+        publication_inputs._published_state(
+            SimpleNamespace(storage=None), "gold/hubspot/x", CONTEXT
+        )
+    assert type(raised.value).__name__ == kind
 
+
+def test_input_state_genuine_missing_head_is_unpublished(monkeypatch):
     monkeypatch.setattr(
         publication_inputs, "PublicationSnapshotResolver", _resolver(None)
     )
-    assert publication_inputs._published_state(engine, "gold/hubspot/x", CONTEXT) == {
-        "source": "gold/hubspot/x",
-        "published": None,
-    }
+
+    assert publication_inputs._published_state(
+        SimpleNamespace(storage=None), "gold/hubspot/x", CONTEXT
+    ) == {"source": "gold/hubspot/x", "published": None}
 
 
-def test_snapshot_object_stat_failure_is_storage_unavailable():
+@pytest.mark.parametrize(
+    "failure, message, kind",
+    [
+        (OUTAGES[4], HEAD_UNAVAILABLE, "PublicationHeadUnavailable"),
+        (OUTAGES[2], HEAD_UNAVAILABLE, "PublicationHeadUnavailable"),
+        (INTEGRITY[2], INTEGRITY_FAILED, "PublicationIntegrityError"),
+    ],
+)
+def test_snapshot_object_stat_separates_outages_from_integrity(failure, message, kind):
     class Storage:
         @staticmethod
         def uri_for(key):
@@ -145,7 +176,7 @@ def test_snapshot_object_stat_failure_is_storage_unavailable():
 
         @staticmethod
         def stat(*_args, **_kwargs):
-            raise OSError("connection reset by peer")
+            raise failure
 
     resolver = publication_snapshot.PublicationSnapshotResolver.__new__(
         publication_snapshot.PublicationSnapshotResolver
@@ -160,24 +191,33 @@ def test_snapshot_object_stat_failure_is_storage_unavailable():
         }
     )
 
-    with pytest.raises(RuntimeError, match=HEAD_UNAVAILABLE) as raised:
+    with pytest.raises(RuntimeError, match=message) as raised:
         resolver._validate_object(snapshot)
-    _assert_head_unavailable(raised)
+    assert type(raised.value).__name__ == kind
 
 
 @pytest.mark.parametrize("dataset", [TALENT_GOLD, "sap_successfactors_movement_events"])
-def test_head_outage_never_publishes_a_fallback(monkeypatch, dataset):
+@pytest.mark.parametrize(
+    "error",
+    [
+        lambda: refinement_main.PublicationHeadUnavailable(
+            "publication head unavailable (http 503): OperationalError"
+        ),
+        lambda: refinement_main.PublicationIntegrityError(
+            "publication integrity failed: ObjectNotFound 404 (Not Found)"
+        ),
+    ],
+)
+def test_head_failures_never_publish_a_fallback(monkeypatch, dataset, error):
     calls: list[str] = []
 
     def materialize(ds, _context):
         calls.append(str(ds.get("sql_def") or ""))
-        raise refinement_main.PublicationHeadUnavailable(
-            "publication head unavailable (http 503): X"
-        )
+        raise error()
 
     monkeypatch.setattr(refinement_main.engine, "materialize", materialize)
 
-    with pytest.raises(refinement_main.PublicationHeadUnavailable):
+    with pytest.raises(RuntimeError):
         refinement_main._materialize_with_operational_fallback(
             {"name": dataset, "sql_def": "SELECT real", "description": "d"}, CONTEXT
         )
@@ -201,8 +241,27 @@ def _security_context() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_materialize_tool_reports_head_outage_as_storage_unavailable(
-    monkeypatch,
+@pytest.mark.parametrize(
+    "error, status, code",
+    [
+        (
+            lambda: refinement_main.PublicationHeadUnavailable(
+                "publication head unavailable (http 503): OperationalError"
+            ),
+            503,
+            "storage_unavailable",
+        ),
+        (
+            lambda: refinement_main.PublicationIntegrityError(
+                "publication integrity failed: ObjectNotFound"
+            ),
+            409,
+            "publication_integrity_failed",
+        ),
+    ],
+)
+async def test_materialize_tool_reports_head_failures_by_class(
+    monkeypatch, error, status, code
 ):
     dataset = {
         "name": TALENT_GOLD,
@@ -218,9 +277,7 @@ async def test_materialize_tool_reports_head_outage_as_storage_unavailable(
 
     def materialize(ds, _context):
         calls.append(str(ds.get("sql_def") or ""))
-        raise refinement_main.PublicationHeadUnavailable(
-            "publication head unavailable (http 503): OperationalError"
-        )
+        raise error()
 
     update_refresh = MagicMock()
     monkeypatch.setattr(
@@ -245,7 +302,52 @@ async def test_materialize_tool_reports_head_outage_as_storage_unavailable(
             },
         )
 
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "storage_unavailable"
+    assert response.status_code == status
+    assert response.json()["detail"]["code"] == code
     assert calls == ["SELECT 1 AS real_value"]
     update_refresh.assert_not_called()
+
+
+def _duckdb_error(sql: str) -> duckdb.Error:
+    try:
+        duckdb.connect().execute(sql)
+    except duckdb.Error as exc:
+        return exc
+    raise AssertionError("query unexpectedly succeeded")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT CAST('ServiceUnavailable' AS INTEGER)",
+        "SELECT internalerror_count FROM (SELECT 1 AS a)",
+        "SELECT * FROM accessdenied_events",
+        "SELECT 1 a accessdenied",
+    ],
+)
+def test_sql_and_data_errors_echoing_markers_are_not_outages(monkeypatch, sql):
+    monkeypatch.setattr(
+        refinement_main, "_log_internal_error", lambda *_args, **_kwargs: "req-4"
+    )
+    exc = _duckdb_error(sql)
+
+    status, detail = refinement_main._friendly_duckdb_error(exc, "silver_a")
+
+    assert detail["code"] != "storage_unavailable"
+    assert status != 503
+    assert not is_storage_infra_exception(exc)
+    assert not is_missing_successfactors_dependency_error(exc)
+
+
+def test_io_errors_with_the_same_marker_are_still_outages(monkeypatch):
+    monkeypatch.setattr(
+        refinement_main, "_log_internal_error", lambda *_args, **_kwargs: "req-5"
+    )
+    exc = duckdb.IOException(
+        "HTTP GET error on '/lakehouse/x.parquet' ServiceUnavailable"
+    )
+
+    status, detail = refinement_main._friendly_duckdb_error(exc, "silver_a")
+
+    assert (status, detail["code"]) == (503, "storage_unavailable")
+    assert is_storage_infra_exception(exc)
