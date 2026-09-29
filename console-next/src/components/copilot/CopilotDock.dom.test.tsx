@@ -87,11 +87,18 @@ describe("CopilotDock", () => {
   });
 
   it("renders closed on first paint and reopens from sessionStorage afterwards", async () => {
-    window.sessionStorage.setItem("omega-copilot-dock-open", "1");
-    await render();
-    expect(drawer()).toBeNull();
-    await flushTimers();
-    expect(drawer()).not.toBeNull();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      window.sessionStorage.setItem("omega-copilot-dock-open", "1");
+      await render();
+      expect(drawer()).toBeNull();
+      await act(async () => {
+        vi.runOnlyPendingTimers();
+      });
+      expect(drawer()).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("moves focus into the drawer when it opens", async () => {
