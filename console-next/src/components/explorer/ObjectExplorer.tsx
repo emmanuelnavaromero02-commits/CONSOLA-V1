@@ -259,7 +259,7 @@ export function ObjectExplorer() {
             <table className="w-full min-w-[780px] text-sm">
               <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2 font-medium">Key</th>
+                  <th className="px-4 py-2 font-medium">Llave</th>
                   <th className="px-4 py-2 font-medium">Tamaño</th>
                   <th className="px-4 py-2 font-medium">Última modificación</th>
                   <th className="px-4 py-2 font-medium"></th>

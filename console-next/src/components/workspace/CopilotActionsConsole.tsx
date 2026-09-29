@@ -40,6 +40,8 @@ import type {
   CopilotRecommendation,
   CopilotWatchdog,
 } from "@/lib/copilot/types";
+import { dataSourceName } from "@/lib/glossary";
+import { statusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 
 const QUICK_GOALS = [
@@ -47,6 +49,24 @@ const QUICK_GOALS = [
   "Detecta riesgos operativos urgentes y prioriza qué atender primero.",
   "Cruza pipeline, costos y facturación para explicar qué cambió esta semana.",
 ];
+
+const RISK_LEVEL_COPY: Record<string, string> = {
+  read: "solo lectura",
+  write: "escritura",
+  high: "alto impacto",
+  destructive: "alto impacto",
+};
+const LESSON_SOURCE_COPY: Record<string, string> = {
+  approval: "por aprobación",
+  decline: "por rechazo",
+  manual: "manual",
+  system: "del sistema",
+};
+const SEVERITY_COPY: Record<string, string> = {
+  critical: "Crítico",
+  warning: "Advertencia",
+  info: "Informativo",
+};
 
 function statusLabel(status?: string) {
   switch (status) {
@@ -56,7 +76,7 @@ function statusLabel(status?: string) {
     case "completed": return "completado";
     case "failed": return "falló";
     case "cancelled": return "cancelado";
-    default: return status || "sin estado";
+    default: return status ? "sin información" : "sin estado";
   }
 }
 
@@ -384,7 +404,7 @@ export function CopilotActionsConsole() {
                 <div key={`${watchdog.cartridge_id}:${watchdog.slug}`} className="rounded-md border bg-background p-2">
                   <div className="text-sm font-medium">{watchdog.name}</div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
-                    {watchdog.cartridge_id} · {watchdog.risk_level || "read"}
+                    {dataSourceName(watchdog.cartridge_id)} · {statusCopy(watchdog.risk_level || "read", RISK_LEVEL_COPY)}
                   </div>
                 </div>
               ))}
@@ -411,7 +431,7 @@ export function CopilotActionsConsole() {
                 <div key={lesson.id} className="rounded-md border bg-background p-2 text-sm">
                   <div className="font-medium">{lesson.lesson_text || lesson.trigger_pattern || "Lección"}</div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
-                    {lesson.source_kind || "manual"} · {lesson.confidence ?? "?"}
+                    {statusCopy(lesson.source_kind || "manual", LESSON_SOURCE_COPY)} · {lesson.confidence ?? "?"}
                   </div>
                 </div>
               ))}
@@ -495,7 +515,7 @@ function LiveContextPanel({
               {sources.slice(0, 4).map((source, index) => (
                 <div key={String(source.id || source.key || index)} className="flex items-center justify-between gap-2 rounded-md border bg-background px-2 py-1.5 text-xs">
                   <span className="truncate">{source.label || source.key || source.id || "Fuente"}</span>
-                  <span className="shrink-0 text-muted-foreground">{source.status || "sin estado"}</span>
+                  <span className="shrink-0 text-muted-foreground">{source.status ? statusCopy(source.status) : "sin estado"}</span>
                 </div>
               ))}
             </div>
@@ -601,7 +621,7 @@ function BriefingMiniRow({ item }: { item: BriefingV2Highlight }) {
           item.severity === "warning" && "bg-warning/10 text-warning",
           item.severity === "info" && "bg-primary/10 text-primary",
         )}>
-          {item.severity}
+          {statusCopy(item.severity, SEVERITY_COPY)}
         </span>
       </div>
       {item.next_action ? (

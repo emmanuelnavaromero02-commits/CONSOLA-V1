@@ -24,6 +24,7 @@ import type {
   UploadSpecResult,
 } from "@/lib/studio/types";
 import { changedEntityFields, identifierError, type EntityDraft as EditDraft } from "@/lib/studio/validation";
+import { statusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 
 import { DataTable } from "./DataTable";
@@ -37,6 +38,7 @@ import {
 import { buttonClass, ConfirmDialog, inputClass, Notice, primaryButtonClass, Spinner } from "./ui";
 
 const MODES = ["full", "incremental"];
+const MODE_COPY: Record<string, string> = { full: "Carga completa", incremental: "Incremental" };
 
 function manifestEntity(manifest: StudioManifest | undefined, name: string): StudioManifestEntity | undefined {
   return (manifest?.entities ?? []).find((entity) => (entity?.entity || entity?.name) === name);
@@ -372,7 +374,7 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
                       ) : null}
                       {entity.description ? <p className="text-xs text-muted-foreground">{entity.description}</p> : null}
                     </td>
-                    <td className="px-3 py-2 text-xs">{entity.mode || "—"}</td>
+                    <td className="px-3 py-2 text-xs">{statusCopy(entity.mode, MODE_COPY)}</td>
                     <td className="break-all px-3 py-2 font-mono text-xs">{entity.dag_id || "—"}</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{entity.source || "—"}</td>
                     <td className="px-3 py-2">

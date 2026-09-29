@@ -270,7 +270,7 @@ export function UsersTable() {
               <th className="px-4 py-2 font-medium">Email</th>
               <th className="px-4 py-2 font-medium">Nombre</th>
               <th className="px-4 py-2 font-medium">Rol</th>
-              <th className="px-4 py-2 font-medium">Workspace</th>
+              <th className="px-4 py-2 font-medium">Espacio de trabajo</th>
               <th className="px-4 py-2 font-medium">Estado</th>
               <th className="px-4 py-2 font-medium">Último login</th>
               <th className="px-4 py-2 text-right font-medium">Acciones</th>

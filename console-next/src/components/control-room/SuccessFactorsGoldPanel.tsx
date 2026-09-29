@@ -2,7 +2,18 @@ import { Activity, AlertTriangle, ArrowRight, BookOpen, BriefcaseBusiness, Build
 import type { LucideIcon } from "lucide-react";
 
 import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SfGoldWidgetRow, SfTalentKpisPayload, SourceStatus } from "@/lib/control-room/types";
+import { statusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
+
+const SIGNAL_SEVERITY_COPY: Record<string, string> = {
+  info: "Informativa",
+  low: "Baja",
+  medium: "Media",
+  warning: "Advertencia",
+  high: "Alta",
+  critical: "Crítica",
+};
+const SIGNAL_STATUS_COPY: Record<string, string> = { recommendation_only: "Solo recomendación" };
 
 import { businessLabel } from "./successFactorsBusinessLabels";
 import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, Sparkline } from "./StatusBadge";
@@ -657,12 +668,12 @@ export function SuccessFactorsGoldPanel({
                       <div className="flex items-start justify-between gap-2">
                         <strong className="text-foreground dark:text-white">{signal.title || "Señal de talento"}</strong>
                         <span className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground dark:border-violet-400/15">
-                          {signal.severity || "info"}
+                          {statusCopy(signal.severity || "info", SIGNAL_SEVERITY_COPY)}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{signal.recommendation || "Revisar cobertura antes de decidir."}</p>
                       <p className="mt-2 text-xs font-medium text-violet-700 dark:text-violet-300">
-                        {formatNumber(signal.affected_count ?? 0)} afectados · {signal.status || "recommendation_only"}
+                        {formatNumber(signal.affected_count ?? 0)} afectados · {statusCopy(signal.status || "recommendation_only", SIGNAL_STATUS_COPY)}
                       </p>
                     </div>
                   ))}

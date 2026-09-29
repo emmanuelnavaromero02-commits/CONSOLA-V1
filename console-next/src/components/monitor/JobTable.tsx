@@ -25,7 +25,7 @@ export function JobTable({ jobs }: { jobs: JobRun[] }) {
           <tr>
             <th className="px-3 py-2 font-medium">Job</th>
             <th className="px-3 py-2 font-medium">Estado</th>
-            <th className="px-3 py-2 font-medium">Tool</th>
+            <th className="px-3 py-2 font-medium">Herramienta</th>
             <th className="px-3 py-2 font-medium">Creado</th>
             <th className="px-3 py-2 font-medium">Detalle</th>
           </tr>

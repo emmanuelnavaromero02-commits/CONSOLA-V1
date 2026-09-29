@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
 
 import { changeOwnPassword, getMeAccess, getMeProfile } from "@/lib/admin-surfaces";
+import { installationStatusCopy } from "@/lib/status-copy";
 
 const MIN_PASSWORD_LENGTH = 12;
 
@@ -219,7 +220,7 @@ export function MeAccessPanel() {
                   {allowed.map((item) => (
                     <li key={item.cartridge_id} className="rounded-md bg-muted/30 p-3 text-sm">
                       <span className="font-medium">{item.product_name || item.cartridge_id}</span>
-                      <span className="ml-2 text-xs text-muted-foreground">{item.status || "—"}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">{installationStatusCopy(item.status)}</span>
                     </li>
                   ))}
                 </ul>

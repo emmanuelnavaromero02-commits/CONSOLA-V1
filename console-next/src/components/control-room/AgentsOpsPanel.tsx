@@ -13,7 +13,7 @@ import {
   Wrench,
 } from "lucide-react";
 
-import { CommandMetric, MiniBar, OperationalNotice } from "./StatusBadge";
+import { CommandMetric, MiniBar, OperationalNotice, originLabels } from "./StatusBadge";
 import type { AgentRunRecord } from "@/lib/admin-surfaces";
 import type {
   ControlRoomAgentsOpsAgent,
@@ -24,9 +24,9 @@ import { nextDailyRun, scheduleLabel, type WisdomBitMonitor } from "@/lib/contro
 import { cn } from "@/lib/utils";
 
 function labelForOrigin(origin?: string | null): string {
-  const key = (origin || "").replaceAll("_", " ").trim();
+  const key = (origin || "").trim();
   if (!key || key === "unknown") return "Sin origen";
-  return key.replace(/\b\w/g, (char) => char.toUpperCase());
+  return originLabels[key] ?? "Sin información";
 }
 
 function statusTone(status?: string | null): string {
@@ -43,14 +43,14 @@ function engineLabel(engine?: string | null): string {
     bayesian_calibration: "Historial operativo",
     decision_orchestrator: "Decisión",
   };
-  return engine ? labels[engine] || engine.replaceAll("_", " ") : "Capacidad operativa";
+  return engine ? labels[engine] || "Capacidad operativa" : "Capacidad operativa";
 }
 
 function engineStatusLabel(status?: string | null): string {
   if (status === "ready") return "Listo";
   if (status === "configured") return "En espera de datos";
   if (status === "missing") return "No configurado";
-  return status ? status.replaceAll("_", " ") : "En espera";
+  return status ? "Sin información" : "En espera";
 }
 
 function engineStatusTone(status?: string | null): string {
@@ -101,7 +101,7 @@ function runStatusLabel(status?: string | null): string {
     running: "en curso",
     queued: "en cola",
   };
-  return status ? labels[status] || status : "sin run";
+  return status ? labels[status] || "sin información" : "sin corrida";
 }
 
 function localTime(value?: string | null): string | null {

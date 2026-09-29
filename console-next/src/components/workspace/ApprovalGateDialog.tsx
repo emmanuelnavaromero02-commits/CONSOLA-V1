@@ -3,6 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { PendingAction } from "@/lib/copilot/types";
+import { statusCopy } from "@/lib/status-copy";
+
+const RISK_BADGE_COPY: Record<string, string> = {
+  read: "Lectura",
+  write: "Escritura",
+  high: "Alto impacto",
+  destructive: "Alto impacto",
+};
 
 interface Props {
   open:        boolean;
@@ -25,7 +33,7 @@ function PendingActionDetail({ action }: { action: PendingAction }) {
         </p>
         {action.risk_level ? (
           <span className="inline-flex items-center rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-destructive">
-            {action.risk_level}
+            {statusCopy(action.risk_level, RISK_BADGE_COPY)}
           </span>
         ) : null}
       </div>

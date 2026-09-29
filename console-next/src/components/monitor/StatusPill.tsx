@@ -1,3 +1,4 @@
+import { statusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 
 const OK = new Set(["done", "success", "fresh", "operational", "completed"]);
@@ -22,11 +23,16 @@ const LABEL: Record<string, string> = {
   error:       "Error",
   very_stale:  "Muy antigua",
   offline:     "Fuera de línea",
+  info:        "Informativo",
+  warning:     "Advertencia",
+  warn:        "Advertencia",
+  debug:       "Depuración",
+  critical:    "Crítico",
 };
 
 export function StatusPill({ status }: { status?: string | null }) {
   const value = (status || "unknown").toLowerCase();
-  const label = LABEL[value] ?? (status || "unknown");
+  const label = statusCopy(value, LABEL);
   return (
     <span
       title={value}

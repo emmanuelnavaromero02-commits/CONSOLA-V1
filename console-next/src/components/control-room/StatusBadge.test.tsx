@@ -8,9 +8,9 @@ describe("Control Room readiness states", () => {
     ["ready", "Listo"],
     ["available", "Disponible"],
     ["partial", "Datos parciales"],
-    ["stub", "Fuera de alcance actual"],
+    ["stub", "En espera de conexión"],
     ["empty", "Sin datos configurados"],
-    ["missing", "Dataset no materializado"],
+    ["missing", "En espera de conexión"],
     ["unavailable", "Dependencia no configurada"],
     ["blocked", "Bloqueado"],
     ["no_permission", "Requiere permisos OData"],
@@ -21,6 +21,13 @@ describe("Control Room readiness states", () => {
     expect(readinessLabels[status]).toBe(label);
     expect(markup).toContain(label);
     expect(markup).not.toContain("undefined");
+  });
+
+  it("never renders a raw machine status", () => {
+    expect(readinessLabels.blocked_by_sap).toBe("Requiere permisos en SAP");
+    const markup = renderToStaticMarkup(<ReadinessBadge status={"weird_internal_state" as never} />);
+    expect(markup).toContain("Sin información");
+    expect(markup).not.toContain("weird_internal_state");
   });
 
   it("keeps blocked and no_permission visually distinct from ready", () => {

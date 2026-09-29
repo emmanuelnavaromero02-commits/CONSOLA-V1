@@ -31,6 +31,7 @@ import {
   useTenants,
 } from "@/lib/operations/hooks";
 import type { BootstrapTenantAdminResponse, TenantSummary, WorkspaceSummary } from "@/lib/operations/types";
+import { installationStatusCopy, statusCopy } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 
 
@@ -99,23 +100,22 @@ function actionLabel(action: AdminInstallationAction): string {
   return "Revocar";
 }
 
+const TENANT_STATUS_COPY: Record<string, string> = {
+  active: "Activa",
+  inactive: "Inactiva",
+  suspended: "Suspendida",
+};
+
+const INSTALL_STEP_COPY: Record<string, string> = {
+  approved_ready: "Aprobada y lista",
+  reactivated_ready: "Reactivada",
+  paused_by_admin: "Pausada por administración",
+  revoked_by_admin: "Revocada por administración",
+  retry_requested: "Reintento solicitado",
+};
+
 function statusLabel(status: MarketplaceStatus | null | undefined): string {
-  const value = String(status || "available");
-  const labels: Record<string, string> = {
-    available: "Disponible",
-    active: "Activo",
-    ready: "Activo",
-    pending_approval: "Pendiente",
-    requested: "Solicitado",
-    pending_connection: "Pendiente conexión",
-    waiting_credentials: "Requiere credenciales",
-    failed: "Falló",
-    paused: "Pausado",
-    revoked: "Revocado",
-    expired: "Expirado",
-    suspended: "Suspendido",
-  };
-  return labels[value] ?? value;
+  return installationStatusCopy(String(status || "available"));
 }
 
 function StatusPill({ status }: { status: MarketplaceStatus | null | undefined }) {
@@ -439,7 +439,7 @@ export function CompaniesConsole() {
             </div>
             <div className="rounded-md border bg-background p-3">
               <p className="text-xs uppercase text-muted-foreground">Estado</p>
-              <p className="truncate text-lg font-semibold">{selectedTenant?.status ?? "-"}</p>
+              <p className="truncate text-lg font-semibold">{statusCopy(selectedTenant?.status, TENANT_STATUS_COPY)}</p>
             </div>
           </div>
         </div>
@@ -642,7 +642,7 @@ export function CompaniesConsole() {
                             <p className="font-medium">{installation.product_name || installation.cartridge_id}</p>
                             <p className="break-all font-mono text-xs text-muted-foreground">{installation.cartridge_id}</p>
                             <p className="text-xs text-muted-foreground">
-                              {installation.current_step || "sin paso"} · {fmtDate(installation.updated_at)}
+                              {statusCopy(installation.current_step, INSTALL_STEP_COPY)} · {fmtDate(installation.updated_at)}
                             </p>
                           </div>
                           <StatusPill status={status} />
