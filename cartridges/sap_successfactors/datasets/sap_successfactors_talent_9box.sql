@@ -1,6 +1,6 @@
 -- sap_successfactors_talent_9box  (gold)  cartridge: sap_successfactors
 -- sources: ["gold/sap_successfactors/sap_successfactors_talent_readiness", "gold/sap_successfactors/sap_successfactors_talent_mobility_history"]
--- description: 9-box con desempeno, competencia y aspiracion observados; sin C/A, deduce potencial desde trayectoria observada (etiquetado) solo con desempeno valido.
+-- description: 9-box con desempeno, competencia y aspiracion observados; con C/A ausentes (nunca invalidos), deduce potencial desde trayectoria observada (etiquetado) solo con desempeno valido.
 -- benchmark_performance_percentile/benchmark_potential_percentile: no disponibles; no se materializan como proxy.
 -- trajectory weights (0-5 scale): 0.35 breadth + 0.25 recency + 0.15 tenure + 0.25 performance_scale.
 -- breadth: LEAST(5, 1.25*(distinct_job_codes-1 + distinct_departments-1)); recency: <12m=5, <24m=3, <36m=2, else 1; tenure: LEAST(5, months/24).
@@ -19,6 +19,10 @@ mobility AS (
         TRY_CAST(distinct_departments AS BIGINT) AS mob_distinct_departments
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_mobility_history/**/*.parquet',
                       hive_partitioning = true, union_by_name = true)
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY user_id
+        ORDER BY TRY_CAST(latest_assignment_date AS DATE) DESC NULLS LAST
+    ) = 1
 ),
 scored AS (
     -- Readiness scores are percentages. Convert that explicit domain to 0..5
@@ -37,6 +41,9 @@ scored AS (
         CASE
             WHEN invalid_score_input IS DISTINCT FROM FALSE THEN NULL
             WHEN talent_percent_scale(performance_score) IS NULL THEN NULL
+            -- Declared C/A values (even out-of-range ones) stay a data-quality
+            -- pending state; the deduction only covers truly absent C/A.
+            WHEN competency_score IS NOT NULL OR aspiration_score IS NOT NULL THEN NULL
             WHEN mobility.mob_user_id IS NULL
               OR mobility.mob_first_assignment_date IS NULL
               OR mobility.mob_latest_assignment_date IS NULL

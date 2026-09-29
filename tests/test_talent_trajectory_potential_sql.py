@@ -37,6 +37,8 @@ def _readiness_rows(con: duckdb.DuckDBPyConnection) -> None:
           ('invalid-performance', -1.0::DOUBLE, NULL::DOUBLE, NULL::DOUBLE, TRUE::BOOLEAN),
           ('null-performance', NULL::DOUBLE, NULL::DOUBLE, NULL::DOUBLE, FALSE::BOOLEAN),
           ('cpa-complete', 80.0::DOUBLE, 80.0::DOUBLE, 80.0::DOUBLE, FALSE::BOOLEAN),
+          ('invalid-cpa-values', 100.0::DOUBLE, 250.0::DOUBLE, -5.0::DOUBLE, FALSE::BOOLEAN),
+          ('partial-cpa', 100.0::DOUBLE, 80.0::DOUBLE, NULL::DOUBLE, FALSE::BOOLEAN),
           ('flat-trajectory', 60.0::DOUBLE, NULL::DOUBLE, NULL::DOUBLE, FALSE::BOOLEAN)
         ) source(user_id, performance_score, competency_score, aspiration_score, invalid_score_input)
         """
@@ -49,11 +51,17 @@ def _mobility_rows(con: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE mobility_src AS SELECT * FROM (VALUES
           ('deduced-star', 3::BIGINT, 2::BIGINT,
            CURRENT_DATE - INTERVAL 60 MONTH, CURRENT_DATE - INTERVAL 6 MONTH),
+          ('deduced-star', 9::BIGINT, 9::BIGINT,
+           CURRENT_DATE - INTERVAL 90 MONTH, CURRENT_DATE - INTERVAL 30 MONTH),
           ('invalid-performance', 4::BIGINT, 4::BIGINT,
            CURRENT_DATE - INTERVAL 60 MONTH, CURRENT_DATE - INTERVAL 6 MONTH),
           ('null-performance', 4::BIGINT, 4::BIGINT,
            CURRENT_DATE - INTERVAL 60 MONTH, CURRENT_DATE - INTERVAL 6 MONTH),
           ('cpa-complete', 1::BIGINT, 1::BIGINT,
+           CURRENT_DATE - INTERVAL 60 MONTH, CURRENT_DATE - INTERVAL 6 MONTH),
+          ('invalid-cpa-values', 4::BIGINT, 4::BIGINT,
+           CURRENT_DATE - INTERVAL 60 MONTH, CURRENT_DATE - INTERVAL 6 MONTH),
+          ('partial-cpa', 4::BIGINT, 4::BIGINT,
            CURRENT_DATE - INTERVAL 60 MONTH, CURRENT_DATE - INTERVAL 6 MONTH),
           ('flat-trajectory', 1::BIGINT, 1::BIGINT,
            CURRENT_DATE - INTERVAL 40 MONTH, CURRENT_DATE - INTERVAL 40 MONTH)
@@ -117,6 +125,25 @@ def test_deduction_never_resurrects_invalid_or_missing_performance(con, tmp_path
         assert box_key == "insufficient_data"
         assert potential is None
     assert _row(con, "invalid-performance")[5] is True
+
+
+def test_duplicate_mobility_rows_never_double_classify_an_employee(con, tmp_path):
+    _nine_box(con, tmp_path)
+    count, potential = con.execute(
+        "SELECT COUNT(*), MAX(potential_score) FROM nine_box WHERE user_id = 'deduced-star'"
+    ).fetchone()
+    assert count == 1
+    # The freshest mobility row (6 months ago) wins over the stale duplicate.
+    assert potential == pytest.approx(83.75, abs=0.01)
+
+
+def test_declared_but_invalid_cpa_values_stay_pending_never_deduced(con, tmp_path):
+    _nine_box(con, tmp_path)
+    for user_id in ("invalid-cpa-values", "partial-cpa"):
+        basis, deduced, pending, status, box_key, _invalid, potential = _row(con, user_id)
+        assert (basis, deduced, pending, status) == (None, False, True, "blocked"), user_id
+        assert box_key == "insufficient_data"
+        assert potential is None
 
 
 def test_cpa_basis_wins_over_trajectory_when_scores_exist(con, tmp_path):
