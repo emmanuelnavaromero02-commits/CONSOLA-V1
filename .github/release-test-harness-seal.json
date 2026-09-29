@@ -63,7 +63,7 @@
     },
     {
       "path": "airflow/dags/dataset_refresh_materialize.py",
-      "sha256": "5b0d6ec51b8e54823ad9330b4c9cb14ce0b3ff371c8bae277d5205b6d4267bbf"
+      "sha256": "4aee0e8cd3d65f119ffb4511f34a35c8744c8edd28bd7d5db0d94d3b01a9db78"
     },
     {
       "path": "airflow/dags/dataset_refresh_outcome.py",
@@ -4959,7 +4959,7 @@
     },
     {
       "path": "tests/test_dataset_refresh_chain_fail_closed.py",
-      "sha256": "56415bd78521684439272bb1593bd7f7e49de13fa269d27a368b263ce8fc5996"
+      "sha256": "71297f83884dd8a55844906f5112f8d90939bd5b3d9f92458f81a563239ef5d3"
     },
     {
       "path": "tests/test_dataset_refresh_graph_cartridge_seed.py",

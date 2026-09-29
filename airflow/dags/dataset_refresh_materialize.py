@@ -68,16 +68,22 @@ def _plan_names(item: dict[str, Any], key: str) -> list[str]:
 
 def _structural_absence(
     item: dict[str, Any],
+    upstreams: list[str],
     never_materialized: list[str],
     refreshed: set[str],
+    structurally_skipped: set[str],
     exc: Exception,
 ) -> str | None:
-    if item.get("materialized") is not False:
+    if missing_source_error_code(exc) is None:
         return None
-    absent = [source for source in never_materialized if source not in refreshed]
-    if not absent or missing_source_error_code(exc) is None:
-        return None
-    return f"upstream_never_materialized:{absent[0]}"
+    absent = [upstream for upstream in upstreams if upstream in structurally_skipped]
+    for source in never_materialized:
+        if source in refreshed or source in absent:
+            continue
+        if source.startswith("raw/") and item.get("materialized") is not False:
+            continue
+        absent.append(source)
+    return f"upstream_never_materialized:{absent[0]}" if absent else None
 
 
 def _reused_layer(item: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -170,7 +176,8 @@ def materialize_in_order(
     allow_partial = bool(conf.get("allow_partial"))
     results: list[dict[str, Any]] = []
     refreshed: set[str] = set()
-    not_refreshed: set[str] = set()
+    failure_chain: set[str] = set()
+    structurally_skipped: set[str] = set()
     for item in plan:
         name = str(item["name"])
         upstreams = _plan_names(item, "upstreams")
@@ -209,12 +216,12 @@ def materialize_in_order(
             workspace_id=workspace_id,
             lease_token=lease_token,
         )
-        blocking = next((up for up in upstreams if up in not_refreshed), None)
+        blocking = next((up for up in upstreams if up in failure_chain), None)
         if blocking is not None:
             reason = f"upstream_not_refreshed:{blocking}"
             finish(success=False, skipped_reason=reason)
             results.append(_skipped_result(name, reason))
-            not_refreshed.add(name)
+            failure_chain.add(name)
             continue
         try:
             security_context = build_materialize_context(
@@ -269,10 +276,18 @@ def materialize_in_order(
                 raise RuntimeError(
                     "runtime materialization authority failed closed"
                 ) from exc
-            reason = _structural_absence(item, never_materialized, refreshed, exc)
+            reason = _structural_absence(
+                item,
+                upstreams,
+                never_materialized,
+                refreshed,
+                structurally_skipped,
+                exc,
+            )
             if reason is not None:
                 finish(success=False, skipped_reason=reason)
                 results.append(_skipped_result(name, reason))
+                structurally_skipped.add(name)
             else:
                 finish(success=False)
                 results.append(
@@ -283,7 +298,7 @@ def materialize_in_order(
                         "error_code": type(exc).__name__,
                     }
                 )
-            not_refreshed.add(name)
+                failure_chain.add(name)
     breakdown = dict.fromkeys(RESULT_CLASSES, 0)
     for entry in results:
         breakdown[entry["classification"]] += 1
