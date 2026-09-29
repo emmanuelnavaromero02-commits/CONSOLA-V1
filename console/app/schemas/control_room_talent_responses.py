@@ -96,6 +96,7 @@ class TalentNineBoxTotals(PublicProjectionModel):
     employees: int = 0
     ready: int = 0
     reference: int = 0
+    deduced: int = 0
     blocked: int = 0
     cells: int = 0
 
@@ -111,6 +112,7 @@ class TalentNineBoxCell(PublicProjectionModel):
     ready_count: int = 0
     cpa_real_count: int = 0
     reference_count: int = 0
+    deduced_count: int = 0
     blocked_count: int = 0
     status: str | None = None
 
@@ -157,12 +159,53 @@ class TalentPrivacy(PublicProjectionModel):
     excluded_fields: list[str] = Field(default_factory=list)
 
 
+class TalentConfianzaEstrellas(PublicProjectionModel):
+    count: int = 0
+    employee_keys: list[str] = Field(default_factory=list)
+
+    @field_validator("employee_keys")
+    @classmethod
+    def validate_employee_keys(cls, value: list[str]) -> list[str]:
+        return [key for key in value if re.fullmatch(r"tal_[0-9a-f]{12}", key)]
+
+
+class TalentConfianzaVacantes(PublicProjectionModel):
+    count: int = 0
+    roles: list[str] = Field(default_factory=list)
+
+
+class TalentConfianzaCertificaciones(PublicProjectionModel):
+    coverage_pct: float | int | None = None
+    completed_events: int = 0
+    learning_events: int = 0
+
+
+class TalentConfianzaExposicionMoneda(PublicProjectionModel):
+    risk_band: str | None = None
+    currency: str | None = None
+    headcount: int = 0
+    annualized_comp_total: float | int | None = None
+    annualized_comp_avg: float | int | None = None
+
+
+class TalentConfianzaExposicion(PublicProjectionModel):
+    totals: list[TalentConfianzaExposicionMoneda] = Field(default_factory=list)
+
+
+class TalentConfianzaPanel(PublicProjectionModel):
+    estrellas_en_riesgo: TalentConfianzaEstrellas | None = None
+    vacantes_criticas_sin_sucesor: TalentConfianzaVacantes | None = None
+    cobertura_certificaciones: TalentConfianzaCertificaciones | None = None
+    exposicion_monetaria: TalentConfianzaExposicion | None = None
+
+
 class ControlRoomTalentNineBoxResponse(PublicProjectionModel):
     generated_at: str | None = None
     status: str = ""
     totals: TalentNineBoxTotals = Field(default_factory=TalentNineBoxTotals)
     cells: list[TalentNineBoxCell] = Field(default_factory=list)
     desempeno_disponible: TalentPerformanceCohort | None = None
+    confianza: TalentConfianzaPanel | None = None
     blockers: list[TalentBlocker] = Field(default_factory=list)
     privacy: TalentPrivacy | None = None
 
@@ -193,6 +236,7 @@ class TalentRosterRow(PublicProjectionModel):
     potential_pending: bool | None = None
     desempeno_disponible: bool | None = None
     potential_band: str | None = None
+    potential_basis: str | None = None
     fit_band: str | None = None
     movement_age_bucket: str | None = None
     data_status: str | None = None
@@ -201,6 +245,11 @@ class TalentRosterRow(PublicProjectionModel):
     @classmethod
     def validate_employee_key(cls, value: str | None) -> str | None:
         return value if value and re.fullmatch(r"tal_[0-9a-f]{12}", value) else None
+
+    @field_validator("potential_basis")
+    @classmethod
+    def validate_potential_basis(cls, value: str | None) -> str | None:
+        return value if value in {"cpa_observado", "trayectoria_observada"} else None
 
 
 class ControlRoomTalentRosterResponse(PublicProjectionModel):
