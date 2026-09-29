@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import time
 from typing import Any, Callable
@@ -13,7 +14,15 @@ from dataset_refresh_idempotency import (
     heartbeat_materialization,
     reserve_materialization,
 )
-from dataset_refresh_outcome import require_successful_materialization_payload
+from dataset_refresh_outcome import (
+    RESULT_CLASSES,
+    RESULT_DEGRADED,
+    RESULT_FAILED,
+    RESULT_OK,
+    RESULT_SKIPPED,
+    classify_materialization_payload,
+    missing_source_error_code,
+)
 from runtime_security_context import build_materialize_context
 from service_job_client import ServiceJobError, run_service_job
 
@@ -23,15 +32,58 @@ HEARTBEAT_SECONDS = 60
 
 
 def _safe_result(
-    name: str, payload: dict[str, Any], *, reused: bool = False
+    name: str,
+    payload: dict[str, Any],
+    *,
+    reused: bool = False,
+    classification: str = RESULT_OK,
 ) -> dict[str, Any]:
     return {
         "name": name,
         "layer": str(payload.get("layer") or ""),
         "ok": True,
+        "classification": classification,
         "reused": reused,
         "row_count": int(payload.get("row_count") or 0),
     }
+
+
+def _skipped_result(name: str, reason: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "ok": False,
+        "classification": RESULT_SKIPPED,
+        "reason": reason,
+    }
+
+
+def _plan_names(item: dict[str, Any], key: str) -> list[str]:
+    value = item.get(key) or []
+    if not isinstance(value, list) or not all(
+        isinstance(entry, str) and entry for entry in value
+    ):
+        raise RuntimeError("dataset refresh plan is malformed")
+    return value
+
+
+def _structural_absence(
+    item: dict[str, Any],
+    upstreams: list[str],
+    never_materialized: list[str],
+    refreshed: set[str],
+    structurally_skipped: set[str],
+    exc: Exception,
+) -> str | None:
+    if missing_source_error_code(exc) is None:
+        return None
+    absent = [upstream for upstream in upstreams if upstream in structurally_skipped]
+    for source in never_materialized:
+        if source in refreshed or source in absent:
+            continue
+        if source.startswith("raw/") and item.get("materialized") is not False:
+            continue
+        absent.append(source)
+    return f"upstream_never_materialized:{absent[0]}" if absent else None
 
 
 def _reused_layer(item: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -113,13 +165,23 @@ def materialize_in_order(
         raise RuntimeError("scoped cartridge is unavailable")
     _validate_plan(plan, cartridge_id)
     if not plan:
-        result = {"materialized": 0, "results": [], "status": "no_downstream_datasets"}
+        result = {
+            "materialized": 0,
+            "results": [],
+            "status": "no_downstream_datasets",
+            "breakdown": dict.fromkeys(RESULT_CLASSES, 0),
+        }
         context["ti"].xcom_push(key="result", value=result)
         return result
     allow_partial = bool(conf.get("allow_partial"))
     results: list[dict[str, Any]] = []
+    refreshed: set[str] = set()
+    failure_chain: set[str] = set()
+    structurally_skipped: set[str] = set()
     for item in plan:
         name = str(item["name"])
+        upstreams = _plan_names(item, "upstreams")
+        never_materialized = _plan_names(item, "never_materialized_upstreams")
         reservation = reserve_materialization(
             postgres_dsn,
             airflow_run_id=str(context["run_id"]),
@@ -135,11 +197,32 @@ def materialize_in_order(
                     name,
                     {**durable, "layer": _reused_layer(item, durable)},
                     reused=True,
+                    classification=(
+                        RESULT_DEGRADED
+                        if durable.get("degraded") is True
+                        else RESULT_OK
+                    ),
                 )
             )
+            refreshed.add(name)
             continue
         slot_id = str(reservation["slot_id"])
         lease_token = int(reservation["lease_token"])
+        finish = functools.partial(
+            finish_materialization,
+            postgres_dsn,
+            slot_id=slot_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            lease_token=lease_token,
+        )
+        blocking = next((up for up in upstreams if up in failure_chain), None)
+        if blocking is not None:
+            reason = f"upstream_not_refreshed:{blocking}"
+            finish(success=False, skipped_reason=reason)
+            results.append(_skipped_result(name, reason))
+            failure_chain.add(name)
+            continue
         try:
             security_context = build_materialize_context(
                 tenant_id=tenant_id,
@@ -149,73 +232,84 @@ def materialize_in_order(
                 run_id=str(context["run_id"]),
             )
         except (RuntimeError, ValueError) as exc:
-            finish_materialization(
-                postgres_dsn,
-                slot_id=slot_id,
-                tenant_id=tenant_id,
-                workspace_id=workspace_id,
-                lease_token=lease_token,
-                success=False,
-            )
+            finish(success=False)
             raise RuntimeError(
                 "runtime materialization authority failed closed"
             ) from exc
         try:
-            payload = require_successful_materialization_payload(
-                _invoke_materialize(
-                    refinement_url,
-                    headers=headers("REFINEMENT", context),
-                    name=name,
-                    first_context=security_context,
-                    context_factory=lambda: build_materialize_context(
-                        tenant_id=tenant_id,
-                        workspace_id=workspace_id,
-                        cartridge_id=cartridge_id,
-                        dataset_name=name,
-                        run_id=str(context["run_id"]),
-                    ),
-                    keep_lease=_lease_keeper(
-                        postgres_dsn,
-                        slot_id=slot_id,
-                        tenant_id=tenant_id,
-                        workspace_id=workspace_id,
-                        lease_token=lease_token,
-                    ),
-                    key="materialize:"
-                    + hashlib.sha256(f"{slot_id}:{lease_token}".encode()).hexdigest(),
+            raw_payload = _invoke_materialize(
+                refinement_url,
+                headers=headers("REFINEMENT", context),
+                name=name,
+                first_context=security_context,
+                context_factory=lambda: build_materialize_context(
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    cartridge_id=cartridge_id,
+                    dataset_name=name,
+                    run_id=str(context["run_id"]),
                 ),
-                expected_name=name,
+                keep_lease=_lease_keeper(
+                    postgres_dsn,
+                    slot_id=slot_id,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    lease_token=lease_token,
+                ),
+                key="materialize:"
+                + hashlib.sha256(f"{slot_id}:{lease_token}".encode()).hexdigest(),
             )
-            safe = _safe_result(name, payload)
-            finish_materialization(
-                postgres_dsn,
-                slot_id=slot_id,
-                tenant_id=tenant_id,
-                workspace_id=workspace_id,
-                lease_token=lease_token,
+            classification, payload = classify_materialization_payload(
+                raw_payload, expected_name=name
+            )
+            safe = _safe_result(name, payload, classification=classification)
+            finish(
                 success=True,
                 result=safe,
+                degraded=classification == RESULT_DEGRADED,
             )
             results.append(safe)
+            refreshed.add(name)
         except Exception as exc:
-            finish_materialization(
-                postgres_dsn,
-                slot_id=slot_id,
-                tenant_id=tenant_id,
-                workspace_id=workspace_id,
-                lease_token=lease_token,
-                success=False,
-            )
             if isinstance(exc, (PermissionError, ValueError)):
+                finish(success=False)
                 raise RuntimeError(
                     "runtime materialization authority failed closed"
                 ) from exc
-            results.append(
-                {"name": name, "ok": False, "error_code": type(exc).__name__}
+            reason = _structural_absence(
+                item,
+                upstreams,
+                never_materialized,
+                refreshed,
+                structurally_skipped,
+                exc,
             )
-    materialized = sum(1 for item in results if item["ok"])
-    result = {"materialized": materialized, "results": results, "status": "completed"}
+            if reason is not None:
+                finish(success=False, skipped_reason=reason)
+                results.append(_skipped_result(name, reason))
+                structurally_skipped.add(name)
+            else:
+                finish(success=False)
+                results.append(
+                    {
+                        "name": name,
+                        "ok": False,
+                        "classification": RESULT_FAILED,
+                        "error_code": type(exc).__name__,
+                    }
+                )
+                failure_chain.add(name)
+    breakdown = dict.fromkeys(RESULT_CLASSES, 0)
+    for entry in results:
+        breakdown[entry["classification"]] += 1
+    failed = breakdown[RESULT_FAILED]
+    result = {
+        "materialized": breakdown[RESULT_OK] + breakdown[RESULT_DEGRADED],
+        "results": results,
+        "status": "completed",
+        "breakdown": breakdown,
+    }
     context["ti"].xcom_push(key="result", value=result)
-    if materialized != len(results) and not allow_partial:
+    if failed and not allow_partial:
         raise RuntimeError("dataset_refresh_chain has failed materializations")
     return result

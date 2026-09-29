@@ -240,3 +240,34 @@ def test_dataset_without_first_level_fallback_still_lands_readfree(monkeypatch):
     with pytest.raises(RuntimeError, match="Connection refused"):
         main._materialize_with_operational_fallback(ds, {})
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "infra_error",
+    [
+        'HTTP Error: Unable to connect to URL "http://minio:9000/lakehouse/silver/'
+        "sap_successfactors/sap_successfactors_performance_cycle/tenant_id%3D4a404f3e"
+        '/data.parquet": 403 (Forbidden).',
+        'HTTP Error: Unable to connect to URL "http://minio:9000/lakehouse/x.parquet":'
+        " 503 (Service Unavailable).",
+        "HTTP Error: HTTP GET error on '/lakehouse/x.parquet' (HTTP 404) "
+        "SignatureDoesNotMatch",
+        "IO Error: Timeout was reached for HTTP GET to '/lakehouse/x.parquet'",
+    ],
+)
+def test_reason_phrase_and_s3_error_codes_are_infrastructure(infra_error):
+    from refinement.app.successfactors_fallbacks import is_storage_infra_failure
+
+    assert is_storage_infra_failure(infra_error)
+    assert not is_missing_successfactors_dependency_error(Exception(infra_error))
+
+
+@pytest.mark.parametrize(
+    "missing_error",
+    [REAL_DUCKDB_404, DUCKDB_12_OBJECT_404, "IO Error: No files found that match"],
+)
+def test_explicit_absence_is_not_infrastructure(missing_error):
+    from refinement.app.successfactors_fallbacks import is_storage_infra_failure
+
+    assert not is_storage_infra_failure(missing_error)
+    assert is_missing_successfactors_dependency_error(Exception(missing_error))

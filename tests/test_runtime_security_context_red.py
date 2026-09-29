@@ -314,6 +314,7 @@ def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch
             "name": "employee_360",
             "layer": "gold",
             "ok": True,
+            "classification": "ok",
             "reused": True,
             "row_count": 7,
         }

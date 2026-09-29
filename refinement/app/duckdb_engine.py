@@ -505,20 +505,28 @@ class DuckDBEngine:
         if not tenant or not workspace:
             return None
         try:
-            try:
-                from app.publication_snapshot import PublicationSnapshotResolver
-            except ModuleNotFoundError:
-                from refinement.app.publication_snapshot import (
-                    PublicationSnapshotResolver,
-                )
+            from app.publication_snapshot import (
+                PUBLICATION_RESOLUTION_ERRORS,
+                PublicationSnapshotResolver,
+                publication_resolution_error,
+            )
+        except ModuleNotFoundError:
+            from refinement.app.publication_snapshot import (
+                PUBLICATION_RESOLUTION_ERRORS,
+                PublicationSnapshotResolver,
+                publication_resolution_error,
+            )
+        try:
             snapshot = PublicationSnapshotResolver(self.storage).published_snapshot(
                 {"name": name, "layer": layer, "cartridge": cartridge},
                 {"tenant_id": tenant, "workspace_id": workspace},
             )
-            uri = str((snapshot.head if snapshot else {}).get("object_uri") or "")
-            return uri or None
-        except Exception:
-            return None
+        except PUBLICATION_RESOLUTION_ERRORS:
+            raise
+        except Exception as exc:
+            raise publication_resolution_error(exc) from exc
+        uri = str((snapshot.head if snapshot else {}).get("object_uri") or "")
+        return uri or None
 
     def missing_materialized_dependencies(
         self,

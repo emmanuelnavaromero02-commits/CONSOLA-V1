@@ -106,10 +106,10 @@ def test_checksum_mismatch_still_fails() -> None:
         _resolver(storage)._validate_object(_snapshot())
 
 
-def test_unknown_version_fails_as_unavailable() -> None:
+def test_unknown_version_fails_as_an_integrity_error() -> None:
     storage = _Storage(error=RuntimeError("NoSuchVersion"))
 
-    with pytest.raises(RuntimeError, match="unavailable"):
+    with pytest.raises(RuntimeError, match="publication integrity failed"):
         _resolver(storage)._validate_object(_snapshot())
 
 

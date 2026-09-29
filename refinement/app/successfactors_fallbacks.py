@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
+
+import duckdb
 
 from .successfactors_foundation_fallbacks import FOUNDATION_GOLD_FALLBACK_SQL
 from .successfactors_talent_core_fallbacks import TALENT_CORE_FALLBACK_SQL
@@ -32,11 +35,64 @@ _INFRA_FAILURE_MARKERS = (
     "(http 503)",
     "(http 504)",
     "connection refused",
+    "connection reset",
     "timed out",
+    "timeout was reached",
     "could not establish connection",
     "failed to read connection",
     "name or service not known",
+    "could not resolve host",
+    "access denied",
+    "accessdenied",
+    "invalidaccesskeyid",
+    "signaturedoesnotmatch",
+    "expiredtoken",
+    "nosuchbucket",
+    "slowdown",
+    "internalerror",
+    "serviceunavailable",
+    "requesttimeout",
+    "failed to write connection",
+    "ssl connection failed",
+    "couldn't connect to server",
+    "temporary failure in name resolution",
+    "503 service unavailable",
 )
+
+_HTTP_STATUS_PATTERNS = (
+    re.compile(r"\bhttp (\d{3})\b"),
+    re.compile(r"\b(\d{3}) \([a-z][a-z ]*\)"),
+)
+
+
+_SQL_OR_DATA_ERRORS = (
+    duckdb.BinderException,
+    duckdb.CatalogException,
+    duckdb.ConversionException,
+    duckdb.ParserException,
+)
+
+
+def _error_text(exc: Exception | Any) -> str:
+    return " ".join(str(part) for part in getattr(exc, "args", ()) or (str(exc),))
+
+
+def is_storage_infra_exception(exc: Exception | Any) -> bool:
+    if isinstance(exc, _SQL_OR_DATA_ERRORS):
+        return False
+    return is_storage_infra_failure(_error_text(exc))
+
+
+def is_storage_infra_failure(text: str) -> bool:
+    lower = str(text or "").lower()
+    if any(marker in lower for marker in _INFRA_FAILURE_MARKERS):
+        return True
+    return any(
+        code != "404"
+        for pattern in _HTTP_STATUS_PATTERNS
+        for code in pattern.findall(lower)
+    )
+
 
 TALENT_GOLD_FALLBACK_SQL = {
     **TALENT_CORE_FALLBACK_SQL,
@@ -83,11 +139,9 @@ SUCCESSFACTORS_GOLD_FALLBACK_SQL: dict[str, str] = {
 
 
 def is_missing_successfactors_dependency_error(exc: Exception | Any) -> bool:
-    text = " ".join(
-        str(part) for part in getattr(exc, "args", ()) or (str(exc),)
-    ).lower()
-    if any(marker in text for marker in _INFRA_FAILURE_MARKERS):
+    if is_storage_infra_exception(exc):
         return False
+    text = _error_text(exc).lower()
     return any(marker in text for marker in _MISSING_DEPENDENCY_MARKERS)
 
 

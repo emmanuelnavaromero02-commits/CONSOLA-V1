@@ -589,3 +589,160 @@ async def test_timeout_retires_real_postgres_fence_before_rebel_effect(
             module.pool = factory
         await pool.close()
         await admin.close()
+
+
+def test_structural_refresh_state_round_trips_through_the_real_schema(
+    postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
+) -> None:
+    from airflow.dags.dataset_refresh_graph import _load_graph
+
+    scope = _seed(postgres_with_real_init_schema, "structural")
+    other = _seed(postgres_with_real_init_schema, "structural-other")
+    with psycopg2.connect(postgres_with_real_init_schema) as connection:
+        with connection.cursor() as cursor:
+            for name, layer, sources, refreshed in (
+                (
+                    "structural_silver_new",
+                    "silver",
+                    '["raw/replicon/Candidate"]',
+                    False,
+                ),
+                ("structural_silver_old", "silver", '["raw/replicon/Users"]', True),
+                ("structural_gold", "gold", '["structural_silver_new"]', False),
+            ):
+                cursor.execute(
+                    """
+                    INSERT INTO datasets (
+                        name, description, layer, cartridge, sources, sql_def,
+                        column_mapping, tenant_id, workspace_id, last_refresh
+                    )
+                    VALUES (%s, 'structural probe', %s, 'replicon', %s::jsonb,
+                            'SELECT 1', '{}'::jsonb, %s, %s,
+                            CASE WHEN %s THEN NOW() END)
+                    """,
+                    (
+                        name,
+                        layer,
+                        sources,
+                        scope["tenant_id"],
+                        scope["workspace_id"],
+                        refreshed,
+                    ),
+                )
+            for run_id, dag_id, entity, status, count, target in (
+                ("structural-users", "replicon_extract", "users", "success", 5, scope),
+                (
+                    "structural-empty",
+                    "replicon_extract",
+                    "Candidate",
+                    "partial",
+                    None,
+                    scope,
+                ),
+                (
+                    "structural-chain",
+                    "dataset_refresh_chain",
+                    "Candidate",
+                    "success",
+                    3,
+                    scope,
+                ),
+                (
+                    "structural-other",
+                    "replicon_extract",
+                    "Candidate",
+                    "success",
+                    9,
+                    other,
+                ),
+            ):
+                cursor.execute(
+                    """
+                    INSERT INTO pipeline_runs (
+                        run_id, dag_id, cartridge_id, entity, status, record_count,
+                        tenant_id, workspace_id, started_at
+                    )
+                    VALUES (%s, %s, 'replicon', %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (
+                        run_id,
+                        dag_id,
+                        entity,
+                        status,
+                        count,
+                        target["tenant_id"],
+                        target["workspace_id"],
+                    ),
+                )
+
+    graph = _load_graph(
+        omega_console_live_dsn,
+        tenant_id=scope["tenant_id"],
+        workspace_id=scope["workspace_id"],
+    )
+
+    assert graph["structural_silver_new"]["materialized"] is False
+    assert graph["structural_silver_new"]["unextracted_raw"] == [
+        "raw/replicon/candidate"
+    ]
+    assert graph["structural_silver_old"]["materialized"] is True
+    assert graph["structural_silver_old"]["unextracted_raw"] == []
+    assert graph["structural_gold"]["materialized"] is False
+
+    def slot_state(slot_id: str) -> tuple:
+        with psycopg2.connect(postgres_with_real_init_schema) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status, error_message FROM pipeline_runs WHERE run_id=%s",
+                    (slot_id,),
+                )
+                return cursor.fetchone()
+
+    def reserve() -> dict:
+        return reserve_materialization(
+            omega_console_live_dsn,
+            airflow_run_id="structural-run",
+            tenant_id=scope["tenant_id"],
+            workspace_id=scope["workspace_id"],
+            cartridge_id="replicon",
+            dataset="structural_silver_new",
+        )
+
+    reason = "upstream_never_materialized:raw/replicon/candidate"
+    skipped = reserve()
+    finish_materialization(
+        omega_console_live_dsn,
+        slot_id=skipped["slot_id"],
+        tenant_id=scope["tenant_id"],
+        workspace_id=scope["workspace_id"],
+        lease_token=skipped["lease_token"],
+        success=False,
+        skipped_reason=reason,
+    )
+    assert slot_state(skipped["slot_id"]) == ("skipped", reason)
+
+    degraded = reserve()
+    assert degraded["reserved"] is True
+    assert degraded["lease_token"] == skipped["lease_token"] + 1
+    finish_materialization(
+        omega_console_live_dsn,
+        slot_id=degraded["slot_id"],
+        tenant_id=scope["tenant_id"],
+        workspace_id=scope["workspace_id"],
+        lease_token=degraded["lease_token"],
+        success=True,
+        degraded=True,
+        result={"name": "structural_silver_new", "layer": "silver", "row_count": 0},
+    )
+    assert slot_state(degraded["slot_id"]) == ("partial", "degraded_fallback_published")
+    assert reserve() == {
+        "reserved": False,
+        "completed": True,
+        "result": {
+            "name": "structural_silver_new",
+            "row_count": 0,
+            "layer": "silver",
+            "degraded": True,
+        },
+    }

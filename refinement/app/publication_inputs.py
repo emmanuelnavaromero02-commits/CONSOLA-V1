@@ -4,13 +4,19 @@ from typing import Any
 
 try:
     from app.publication_snapshot import (
+        PUBLICATION_RESOLUTION_ERRORS,
+        PublicationIntegrityError,
         PublicationSnapshotResolver,
         _require_pinned_version,
+        publication_resolution_error,
     )
 except ModuleNotFoundError:
     from refinement.app.publication_snapshot import (
+        PUBLICATION_RESOLUTION_ERRORS,
+        PublicationIntegrityError,
         PublicationSnapshotResolver,
         _require_pinned_version,
+        publication_resolution_error,
     )
 
 
@@ -45,27 +51,34 @@ def _published_state(
     engine: Any, source: str, context: dict[str, Any] | None
 ) -> dict[str, Any]:
     layer, cartridge, dataset = source.strip("/").split("/", 2)
-    snapshot = PublicationSnapshotResolver(engine.storage).published_snapshot(
-        {"name": dataset, "layer": layer, "cartridge": cartridge}, context or {}
-    )
+    try:
+        snapshot = PublicationSnapshotResolver(engine.storage).published_snapshot(
+            {"name": dataset, "layer": layer, "cartridge": cartridge}, context or {}
+        )
+    except PUBLICATION_RESOLUTION_ERRORS:
+        raise
+    except Exception as exc:
+        raise publication_resolution_error(exc) from exc
     head = snapshot.head if snapshot else None
     if not head:
         return {"source": source, "published": None}
     uri = str(head.get("object_uri") or "")
     key = engine._s3_object_key(uri)
     if not key:
-        raise RuntimeError("published dependency is outside managed storage")
+        raise PublicationIntegrityError(
+            "published dependency is outside managed storage"
+        )
     version = str(head.get("object_version") or "")
     _require_pinned_version(version, "published dependency")
     try:
         current = engine.storage.stat(key, expected_version=version)
     except Exception as exc:
-        raise RuntimeError("published dependency is unavailable") from exc
+        raise publication_resolution_error(exc) from exc
     actual_checksum = current.checksum_sha256 or ""
     if not actual_checksum:
-        raise RuntimeError("published dependency has no recorded checksum")
+        raise PublicationIntegrityError("published dependency has no recorded checksum")
     if actual_checksum != str(head.get("object_checksum") or ""):
-        raise RuntimeError("published dependency checksum mismatch")
+        raise PublicationIntegrityError("published dependency checksum mismatch")
     return {
         "source": source,
         "published": {

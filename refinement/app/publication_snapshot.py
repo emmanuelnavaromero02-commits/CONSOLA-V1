@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 
 import psycopg2
 
+from omega_lakehouse.errors import StorageError
+
 try:
     from app.publication_contract import PublicationScope
 except ModuleNotFoundError:
@@ -17,9 +19,41 @@ def _dsn(raw: str) -> str:
     return (raw or "").replace("postgresql+psycopg2://", "postgresql://")
 
 
+class PublicationHeadUnavailable(RuntimeError):
+    pass
+
+
+class PublicationIntegrityError(RuntimeError):
+    pass
+
+
+PUBLICATION_RESOLUTION_ERRORS = (PublicationHeadUnavailable, PublicationIntegrityError)
+
+
+_DRIVER_OUTAGES = {("psycopg2", "OperationalError"), ("psycopg2", "InterfaceError")}
+
+
+def _is_outage(exc: BaseException) -> bool:
+    if isinstance(exc, OSError) or type(exc) is StorageError:
+        return True
+    return any(
+        (cls.__module__, cls.__name__) in _DRIVER_OUTAGES for cls in type(exc).__mro__
+    )
+
+
+def publication_resolution_error(exc: BaseException) -> RuntimeError:
+    if _is_outage(exc):
+        return PublicationHeadUnavailable(
+            f"publication head unavailable (http 503): {type(exc).__name__}"
+        )
+    return PublicationIntegrityError(
+        f"publication integrity failed: {type(exc).__name__}"
+    )
+
+
 def _require_pinned_version(version: str, subject: str) -> None:
     if not version or version == "null":
-        raise RuntimeError(f"{subject} has no pinned version")
+        raise PublicationIntegrityError(f"{subject} has no pinned version")
 
 
 @dataclass(frozen=True)
@@ -205,7 +239,7 @@ class PublicationSnapshotResolver:
         try:
             current = self.storage.stat(key, expected_version=version)
         except Exception as exc:
-            raise RuntimeError("published snapshot object is unavailable") from exc
+            raise publication_resolution_error(exc) from exc
         recorded = current.checksum_sha256 or ""
         if not recorded:
             raise RuntimeError("published snapshot object has no recorded checksum")

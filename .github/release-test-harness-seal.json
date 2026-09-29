@@ -47,7 +47,7 @@
     },
     {
       "path": "airflow/dags/dataset_refresh_chain.py",
-      "sha256": "df2fbc77428f9b994a74d415a805ab8f088ad5c6cb6ace6148080a726751f51a"
+      "sha256": "9afc36697cbe71aa81adb6adcc65a6629f547aa90cf8d4028dc8548d59b79a8f"
     },
     {
       "path": "airflow/dags/dataset_refresh_finalization.py",
@@ -55,19 +55,19 @@
     },
     {
       "path": "airflow/dags/dataset_refresh_graph.py",
-      "sha256": "53d56fb9be410a7bd5bf7b4d2da8821ec2a1585634d583fde1c4b2c248cd0d62"
+      "sha256": "0be662186113ed9b8da0f2143af6a332d5161a264742b1f968702f41ebd17c39"
     },
     {
       "path": "airflow/dags/dataset_refresh_idempotency.py",
-      "sha256": "ba2408408d71cb29e20e4bb41c3be9bcb19668951af507db391b66ff2c7150aa"
+      "sha256": "d9ac34f5fa7ccfeceb0c7a86a8c6f4517eb57faa01219f6be615b2155c7aac4d"
     },
     {
       "path": "airflow/dags/dataset_refresh_materialize.py",
-      "sha256": "ee0785507301170d33d630a3fe34b5be368e7cc8dc386813f9241a23c7286073"
+      "sha256": "4aee0e8cd3d65f119ffb4511f34a35c8744c8edd28bd7d5db0d94d3b01a9db78"
     },
     {
       "path": "airflow/dags/dataset_refresh_outcome.py",
-      "sha256": "394d780fdc8a09c8237f6b19a04f6d79ed4371954ffef60f2eede8c123c97124"
+      "sha256": "84ff646c512dbfd2eb2369af4b5d3e4c1b243088c7ae4b7d26ae9981fc6f961c"
     },
     {
       "path": "airflow/dags/entity_scheduler.py",
@@ -3631,7 +3631,7 @@
     },
     {
       "path": "refinement/tests/test_e11_talent_readfree_fallbacks.py",
-      "sha256": "064ae58970c1cee7e0b0254ccf7a2c2e81f956a34e64b77f438e0d8aaeabbfd2"
+      "sha256": "b4187f7178c33a0fb71f178bbfb45f4ce6f676b894c7c18423165781b4fe6e74"
     },
     {
       "path": "refinement/tests/test_explorer_sql_storage_scope.py",
@@ -3678,6 +3678,10 @@
       "sha256": "0c6c328ff7c8f75573888f0762097ed78c80d1452938469384fca2194fd04416"
     },
     {
+      "path": "refinement/tests/test_publication_head_unavailable.py",
+      "sha256": "a157c5c4f8795d58d142e7067c9dd14822734c7f1b981f4f65b8142fff0da790"
+    },
+    {
       "path": "refinement/tests/test_publication_semantics_copilot.py",
       "sha256": "78824f31e94fe385d374c96e012132c3e5ce33b3e221ef94e1d9576d0b606b20"
     },
@@ -3691,7 +3695,7 @@
     },
     {
       "path": "refinement/tests/test_publication_verify_by_version.py",
-      "sha256": "1b45dc2f0f162aba80f2006fbe20b95b1a6efbdb43a26ce26f2f9dbb95d8cdb6"
+      "sha256": "bf90fc61bec6b159ff35e7d786896155bafb896c792d99307e44de921fe0e83c"
     },
     {
       "path": "refinement/tests/test_publish_app_workspace_scope.py",
@@ -3703,7 +3707,7 @@
     },
     {
       "path": "refinement/tests/test_refinement_materialization_errors.py",
-      "sha256": "aaa5525ec83edc2b30a8035cba03bb1642706d00b5da7ac30dc11204299b6ec9"
+      "sha256": "0c435eaad119f29da56b2bb3943b6fed72b02f1a77f86f75b0cbdd90fb65e0e9"
     },
     {
       "path": "refinement/tests/test_refinement_supervisor.py",
@@ -4959,11 +4963,15 @@
     },
     {
       "path": "tests/test_dataset_refresh_chain_fail_closed.py",
-      "sha256": "8c94362c587287856c2533ee4ce1e59af64b527582bc6e3ae10d522e96350c26"
+      "sha256": "045bf46a223ab62632ec434584634f271cefec3d8f29c0e7546edf370f5d0604"
     },
     {
       "path": "tests/test_dataset_refresh_graph_cartridge_seed.py",
       "sha256": "4198b20841544b050eeb8a9bfaf2fb792ec413057f4ea4f20c2b71f21ed00dca"
+    },
+    {
+      "path": "tests/test_dataset_refresh_structural_state.py",
+      "sha256": "30a276776607105c628e045f2502081dee6ada8e4d6e570626f3ce853c8c2f82"
     },
     {
       "path": "tests/test_datasets_workspace_scoped_catalog.py",
@@ -5251,7 +5259,7 @@
     },
     {
       "path": "tests/test_intelligence_engine_contract.py",
-      "sha256": "36e76e973a694db270a9ca8e46f0a6ba5ac6ec80ec67ee0e541b2a430ab78d9f"
+      "sha256": "3e429a7de1e89c8a7983fd898f76f8effbf9fffb1b7a229b5b577a496101e0a3"
     },
     {
       "path": "tests/test_intelligence_provenance_resolver.py",
@@ -5615,7 +5623,7 @@
     },
     {
       "path": "tests/test_operational_truth_runtime_leases_live.py",
-      "sha256": "9a99fe5843001c76f13122b159ffffa01f4d31b70dc70dae5a00a610ea7b5b75"
+      "sha256": "128be1bd3e1cae6ffd43506e126e7c11a675e77b10c507f121ce55dfb4416a82"
     },
     {
       "path": "tests/test_operational_truth_runtime_red.py",
@@ -5999,7 +6007,7 @@
     },
     {
       "path": "tests/test_runtime_security_context_red.py",
-      "sha256": "85cda593ba6a40e21f2dfb081c38bd2115b2a5b1f00340c94e3205329539027c"
+      "sha256": "7a2c19e4654957d7094d78b2e0c5dcb816e8979ad9a93f31beddd34698c05243"
     },
     {
       "path": "tests/test_saas_cartridge_isolation.py",

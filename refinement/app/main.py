@@ -40,7 +40,12 @@ from app.publication_public import (
     published_dataset_metadata,
     published_lineage,
 )
-from app.publication_snapshot import PublicationSnapshotResolver
+from app.publication_snapshot import (
+    PUBLICATION_RESOLUTION_ERRORS,
+    PublicationHeadUnavailable,
+    PublicationIntegrityError,
+    PublicationSnapshotResolver,
+)
 from app.relationship_discovery import discover_relationship_candidates
 from app.security import get_internal_api_key
 from app.security_scope import (  # noqa: F401  (re-exported)
@@ -59,6 +64,7 @@ from app.staged_publication_engine import StagedPublicationEngine
 from app.successfactors_fallbacks import (
     annotate_operational_fallback,
     fallback_dataset_for_successfactors,
+    is_storage_infra_exception,
     readfree_empty_dataset_for_successfactors,
 )
 
@@ -210,6 +216,8 @@ def _materialize_readfree_empty(
 def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict:
     try:
         return engine.materialize(ds, user_context)
+    except PUBLICATION_RESOLUTION_ERRORS:
+        raise
     except Exception as exc:
         fallback = fallback_dataset_for_successfactors(ds, exc)
         if not fallback:
@@ -219,6 +227,8 @@ def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict
             raise
         try:
             result = engine.materialize(fallback, user_context)
+        except PUBLICATION_RESOLUTION_ERRORS:
+            raise
         except Exception as fb_exc:
             readfree = _materialize_readfree_empty(ds, user_context, fb_exc)
             if readfree is not None:
@@ -999,10 +1009,21 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
     request_id = _log_internal_error(
         exc, f"duckdb materialization failed for dataset {dataset_name}"
     )
+    if isinstance(exc, PublicationIntegrityError):
+        return 409, {
+            "code": "publication_integrity_failed",
+            "message": (
+                f"Dataset '{dataset_name}' no pudo validar la publicación vigente "
+                "de una de sus dependencias."
+            ),
+            "detail": "Error interno",
+            "request_id": request_id,
+        }
+    not_found = "http 404" in lower or "404 (not found)" in lower
     missing_parquet = (
         "no files found" in lower and ("read_parquet" in lower or "s3://" in lower)
     ) or (
-        "404" in lower
+        not_found
         and ("lakehouse/" in lower or "http://minio" in lower or "minio:" in lower)
     )
     s3_listing_error = (
@@ -1018,6 +1039,16 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
                 f"Dataset '{dataset_name}' no pudo listar Parquet en S3. "
                 "Verifica que la extracción haya escrito archivos para este workspace "
                 "y que bucket, región y permisos del lakehouse estén disponibles."
+            ),
+            "detail": "Error interno",
+            "request_id": request_id,
+        }
+    if isinstance(exc, PublicationHeadUnavailable) or is_storage_infra_exception(exc):
+        return 503, {
+            "code": "storage_unavailable",
+            "message": (
+                f"Dataset '{dataset_name}' no pudo leer el lakehouse: el "
+                "almacenamiento rechazó el acceso o no estuvo disponible."
             ),
             "detail": "Error interno",
             "request_id": request_id,
@@ -2316,7 +2347,7 @@ def _mcp_invoke_sync(body: dict):
             result = _materialize_with_operational_fallback(
                 ds, _trusted_user_context(body, args)
             )
-        except (duckdb.Error, ValueError) as exc:
+        except (duckdb.Error, ValueError, *PUBLICATION_RESOLUTION_ERRORS) as exc:
             status_code, detail = _friendly_duckdb_error(exc, args["name"])
             raise HTTPException(status_code=status_code, detail=detail) from exc
         if not engine.consume_publication_replay():
