@@ -1,17 +1,29 @@
 -- sap_successfactors_talent_9box  (gold)  cartridge: sap_successfactors
--- sources: ["gold/sap_successfactors/sap_successfactors_talent_readiness"]
--- description: 9-box sólo con desempeño, competencia y aspiración observados; no fabrica proxies desde readiness.
+-- sources: ["gold/sap_successfactors/sap_successfactors_talent_readiness", "gold/sap_successfactors/sap_successfactors_talent_mobility_history"]
+-- description: 9-box con desempeno, competencia y aspiracion observados; sin C/A, deduce potencial desde trayectoria observada (etiquetado) solo con desempeno valido.
 -- benchmark_performance_percentile/benchmark_potential_percentile: no disponibles; no se materializan como proxy.
+-- trajectory weights (0-5 scale): 0.35 breadth + 0.25 recency + 0.15 tenure + 0.25 performance_scale.
+-- breadth: LEAST(5, 1.25*(distinct_job_codes-1 + distinct_departments-1)); recency: <12m=5, <24m=3, <36m=2, else 1; tenure: LEAST(5, months/24).
 
 WITH readiness AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_readiness/**/*.parquet',
                       hive_partitioning = true, union_by_name = true)
 ),
+mobility AS (
+    SELECT
+        user_id AS mob_user_id,
+        TRY_CAST(first_assignment_date AS DATE) AS mob_first_assignment_date,
+        TRY_CAST(latest_assignment_date AS DATE) AS mob_latest_assignment_date,
+        TRY_CAST(distinct_job_codes AS BIGINT) AS mob_distinct_job_codes,
+        TRY_CAST(distinct_departments AS BIGINT) AS mob_distinct_departments
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_mobility_history/**/*.parquet',
+                      hive_partitioning = true, union_by_name = true)
+),
 scored AS (
     -- Readiness scores are percentages. Convert that explicit domain to 0..5
     -- exactly once; a legitimate 5% remains low rather than becoming 5/5.
-    SELECT *,
+    SELECT readiness.*,
         CASE WHEN invalid_score_input IS DISTINCT FROM FALSE THEN NULL
              ELSE talent_percent_scale(performance_score) END AS performance_scale,
         CASE
@@ -21,10 +33,44 @@ scored AS (
             ELSE
                 0.60 * talent_percent_scale(competency_score)
                 + 0.40 * talent_percent_scale(aspiration_score)
-        END AS potential_scale,
+        END AS cpa_potential_scale,
+        CASE
+            WHEN invalid_score_input IS DISTINCT FROM FALSE THEN NULL
+            WHEN talent_percent_scale(performance_score) IS NULL THEN NULL
+            WHEN mobility.mob_user_id IS NULL
+              OR mobility.mob_first_assignment_date IS NULL
+              OR mobility.mob_latest_assignment_date IS NULL
+              OR mobility.mob_distinct_job_codes IS NULL
+              OR mobility.mob_distinct_departments IS NULL THEN NULL
+            ELSE LEAST(5.0, GREATEST(0.0,
+                0.35 * LEAST(5.0, 1.25 * (
+                    GREATEST(mobility.mob_distinct_job_codes - 1, 0)
+                    + GREATEST(mobility.mob_distinct_departments - 1, 0)))
+                + 0.25 * CASE
+                    WHEN GREATEST(DATE_DIFF('month', mobility.mob_latest_assignment_date, CURRENT_DATE), 0) < 12 THEN 5.0
+                    WHEN GREATEST(DATE_DIFF('month', mobility.mob_latest_assignment_date, CURRENT_DATE), 0) < 24 THEN 3.0
+                    WHEN GREATEST(DATE_DIFF('month', mobility.mob_latest_assignment_date, CURRENT_DATE), 0) < 36 THEN 2.0
+                    ELSE 1.0
+                  END
+                + 0.15 * LEAST(5.0, GREATEST(DATE_DIFF('month', mobility.mob_first_assignment_date, CURRENT_DATE), 0) / 24.0)
+                + 0.25 * talent_percent_scale(performance_score)
+            ))
+        END AS trajectory_potential_scale,
         NULL::DOUBLE AS benchmark_performance_proxy,
         NULL::DOUBLE AS benchmark_potential_proxy
     FROM readiness
+    LEFT JOIN mobility ON mobility.mob_user_id = readiness.user_id
+),
+resolved AS (
+    SELECT *,
+        COALESCE(cpa_potential_scale, trajectory_potential_scale) AS potential_scale,
+        CASE
+            WHEN cpa_potential_scale IS NOT NULL THEN 'cpa_observado'
+            WHEN trajectory_potential_scale IS NOT NULL THEN 'trayectoria_observada'
+            ELSE NULL
+        END AS potential_basis,
+        (cpa_potential_scale IS NULL AND trajectory_potential_scale IS NOT NULL) AS deduced_potential
+    FROM scored
 ),
 banded AS (
     SELECT *,
@@ -40,7 +86,7 @@ banded AS (
             WHEN potential_scale >= 3 THEN 'medium'
             ELSE 'low'
         END AS potential_band_calc
-    FROM scored
+    FROM resolved
 )
 SELECT
     tenant_id, workspace_id, user_id, full_name, company_name, department_name,
@@ -61,6 +107,8 @@ SELECT
         ELSE 'low'
     END AS performance_band_available,
     CASE WHEN potential_scale IS NULL THEN TRUE ELSE FALSE END AS potential_pending,
+    potential_basis,
+    deduced_potential,
     potential_band_calc AS potential_band,
     CASE
         WHEN performance_band_calc = 'insufficient_data'
@@ -96,7 +144,7 @@ SELECT
         ELSE 'ready'
     END AS box_status,
     blockers,
-    'talent_9box.v3' AS contract_version,
+    'talent_9box.v4' AS contract_version,
     CURRENT_TIMESTAMP AS generated_at
 FROM banded
 ORDER BY user_id

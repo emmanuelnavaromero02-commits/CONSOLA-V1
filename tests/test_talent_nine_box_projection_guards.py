@@ -27,7 +27,9 @@ def test_downstream_projections_count_only_valid_score_rows(tmp_path):
             ALTER TABLE nine_box_src ADD COLUMN box_label VARCHAR DEFAULT 'Estrella';
             ALTER TABLE nine_box_src ADD COLUMN box_status VARCHAR DEFAULT 'ready';
             ALTER TABLE nine_box_src ADD COLUMN source_mode VARCHAR DEFAULT 'cpa_real';
-            ALTER TABLE nine_box_src ADD COLUMN invalid_score_input BOOLEAN DEFAULT FALSE"""
+            ALTER TABLE nine_box_src ADD COLUMN invalid_score_input BOOLEAN DEFAULT FALSE;
+            ALTER TABLE nine_box_src ADD COLUMN potential_basis VARCHAR DEFAULT 'cpa_observado';
+            ALTER TABLE nine_box_src ADD COLUMN deduced_potential BOOLEAN DEFAULT FALSE"""
         )
         nine_box = tmp_path / "nine-box.parquet"
         _copy(con, "nine_box_src", nine_box)
