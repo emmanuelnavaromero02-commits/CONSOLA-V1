@@ -123,7 +123,7 @@ export function GuardiansCatalog({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             <h2 className="text-lg font-semibold">Guardianes del negocio</h2>
           </div>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Agentes que vigilan indicadores del negocio con la frecuencia acordada, solo recomiendan y dejan evidencia de cada corrida.
+            Agentes que vigilan indicadores del negocio con la frecuencia acordada y dejan evidencia de cada corrida.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

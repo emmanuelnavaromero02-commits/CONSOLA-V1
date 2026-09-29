@@ -104,6 +104,7 @@ const TENANT_STATUS_COPY: Record<string, string> = {
   active: "Activa",
   inactive: "Inactiva",
   suspended: "Suspendida",
+  archived: "Archivada",
 };
 
 const INSTALL_STEP_COPY: Record<string, string> = {
