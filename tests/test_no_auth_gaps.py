@@ -31,6 +31,7 @@ PUBLIC_ROUTE_ALLOWLIST = {
     ("/favicon.ico", "GET"),
     ("/api/csrf", "GET"),
     ("/vpn-config/{token}", "GET"),
+    ("/api/ia/v1/openapi.json", "GET"),
 }
 
 
@@ -60,6 +61,8 @@ AUTH_DEPENDS = (
     "get_current_user_dependency",
     "_internal_or_authenticated",
     "verify_internal_api_key",
+    "require_gateway_token",
+    "require_interactive_session",
 )
 
 

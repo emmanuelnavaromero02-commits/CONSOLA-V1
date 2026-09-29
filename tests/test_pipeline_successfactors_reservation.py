@@ -89,6 +89,7 @@ def test_reservation_helpers_detect_conflicts_and_active_runs():
             "SAP SuccessFactors extract_all is already running; "
             "wait for it to finish before triggering individual entities."
         ),
+        "public_message": sf_reservation.PUBLIC_MESSAGES["extract_all_already_running"],
         "job_id": "airflow-all-1",
     }
     assert (
@@ -112,9 +113,12 @@ def test_reservation_helpers_detect_conflicts_and_active_runs():
             "SAP SuccessFactors extraction backpressure: "
             "2 active entity runs; use Extract All/sync or wait."
         ),
+        "public_message": sf_reservation.PUBLIC_MESSAGES["too_many_active_entity_extracts"],
         "active": 2,
         "limit": 2,
     }
+    for message in sf_reservation.PUBLIC_MESSAGES.values():
+        assert "extracci" in message and "SAP" not in message
 
 
 @pytest.mark.anyio
@@ -271,3 +275,46 @@ async def test_reserve_entity_extract_slot_records_legacy_schema_reservation():
         "console__sap_successfactors_extract__User__abc",
         "full",
     )
+
+
+@pytest.mark.anyio
+async def test_reserve_entity_extract_slot_hides_storage_errors_behind_public_copy():
+    async def table_has_column(*_args, **_kwargs):
+        return False
+
+    class BrokenPool:
+        def acquire(self):
+            raise RuntimeError("connection to server at 10.0.0.9 failed: password authentication")
+
+    async def get_db_pool():
+        return BrokenPool()
+
+    with pytest.raises(HTTPException) as exc:
+        await sf_reservation.reserve_entity_extract_slot(
+            cartridge="sap_successfactors",
+            entity="User",
+            dag_id="sap_successfactors_extract",
+            conf={},
+            user=None,
+            requested_dag_run_id=None,
+            expected_cartridge="sap_successfactors",
+            entity_dag_id="sap_successfactors_extract",
+            extract_all_dag_id="sap_successfactors_extract_all",
+            aggregate_entity="__extract_all__",
+            active_window_seconds=300,
+            max_active_entity_extracts=2,
+            build_security_context=lambda user: {},
+            table_has_column=table_has_column,
+            airflow_run_id_fragment=lambda entity: entity,
+            active_extract_run_payload=None,
+            get_db_pool=get_db_pool,
+            token="abc",
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == {
+        "reason": "backpressure_unavailable",
+        "message": "Could not reserve SAP SuccessFactors extraction slot.",
+        "public_message": sf_reservation.PUBLIC_MESSAGES["backpressure_unavailable"],
+    }
+    assert "password" not in str(exc.value.detail)

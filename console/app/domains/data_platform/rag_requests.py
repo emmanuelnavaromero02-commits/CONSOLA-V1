@@ -33,6 +33,21 @@ def require_rag_ingest_size(request: Request) -> None:
         raise HTTPException(413, "Request body exceeds size limit")
 
 
+RAG_SEARCH_MIN_TOP_K = 1
+RAG_SEARCH_MAX_TOP_K = 20
+RAG_SEARCH_DEFAULT_TOP_K = 5
+
+
+def clamp_top_k(value: Any) -> int:
+    if isinstance(value, bool):
+        return RAG_SEARCH_DEFAULT_TOP_K
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return RAG_SEARCH_DEFAULT_TOP_K
+    return max(RAG_SEARCH_MIN_TOP_K, min(number, RAG_SEARCH_MAX_TOP_K))
+
+
 async def read_json_body_capped(request: Request, max_bytes: int) -> dict[str, Any]:
     declared = _declared_content_length(request)
     if declared is not None and declared > max_bytes:
@@ -46,8 +61,8 @@ async def read_json_body_capped(request: Request, max_bytes: int) -> dict[str, A
         chunks.append(chunk)
     try:
         body = json.loads(b"".join(chunks) or b"{}")
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise HTTPException(400, "Invalid JSON body") from exc
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        raise HTTPException(400, "Invalid JSON body") from None
     if not isinstance(body, dict):
         raise HTTPException(400, "Invalid JSON body")
     return body
@@ -185,7 +200,7 @@ async def rag_search_payload(
                 "search_rag",
                 {
                     "query": body.get("query"),
-                    "top_k": body.get("top_k", 5),
+                    "top_k": clamp_top_k(body.get("top_k", 5)),
                     "source_ids": body.get("source_ids"),
                     "kinds": body.get("kinds"),
                 },

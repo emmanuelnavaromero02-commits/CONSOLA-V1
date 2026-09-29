@@ -130,6 +130,10 @@ def test_mcp_invoke_accepts_admin():
         mcp_registry,
         "invoke",
         new=AsyncMock(return_value={"ok": True}),
+    ), patch.object(
+        mcp_registry,
+        "cached_tool_schema",
+        new=AsyncMock(return_value=None),
     ):
         client = TestClient(_make_app())
         csrf_headers = _set_csrf(client)
@@ -202,6 +206,10 @@ def test_every_endpoint_accepts_admin(method, path, mock_attr):
         mcp_registry,
         mock_attr,
         new=AsyncMock(return_value={"ok": True} if mock_attr != "list_servers" else []),
+    ), patch.object(
+        mcp_registry,
+        "cached_tool_schema",
+        new=AsyncMock(return_value=None),
     ):
         client = TestClient(_make_app())
         csrf_headers = _set_csrf(client)

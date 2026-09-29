@@ -687,3 +687,20 @@ def test_client_ip_policies_select_the_parity_contract():
         targets = _root_targets(_flags(changed))
         assert {"tests/test_request_rate_limits.py", "tests/test_workspace_client_ip_parity.py"} <= targets
     assert _flags("workspace/app/services/client_ip.py")["workspace_tests"] is True
+
+
+def test_ai_gateway_changes_select_their_root_contracts():
+    expectations = {
+        "console/app/services/mcp_gateway/dispatcher.py": {"tests/test_mcp_gateway_sdk_conformance.py"},
+        "console/app/routers/mcp_gateway.py": {"tests/test_mcp_gateway_sdk_conformance.py"},
+        "console/app/domains/security/access_token_auth.py": {"tests/test_mcp_gateway_sdk_conformance.py"},
+        "console/app/routers/mcp_public.py": {"tests/test_mcp_invoke_requires_admin.py"},
+        "scripts/omega_mcp_bridge/omega_mcp_bridge.py": {"tests/test_omega_mcp_bridge.py"},
+        "scripts/ia_gateway_smoke.py": {"tests/test_ia_gateway_smoke_script.py"},
+        "infra/init/99zzzzzzb_personal_access_tokens.sql": {
+            "tests/test_personal_access_tokens_contract.py",
+            "tests/test_personal_access_tokens_live.py",
+        },
+    }
+    for changed, expected in expectations.items():
+        assert expected <= _root_targets(_flags(changed)), changed

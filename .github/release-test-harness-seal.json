@@ -1922,6 +1922,10 @@
       "sha256": "79003c9117088d4b6a229b28ee58e25566419b97d9256aec0cde661ff6454d2c"
     },
     {
+      "path": "console/tests/ia_gateway_fixtures.py",
+      "sha256": "dd2606f148a04dbae58550fecca964f8ea730df495ec49068581c6910b58449d"
+    },
+    {
       "path": "console/tests/procedural_language_corpus.py",
       "sha256": "fed0b2fbc617f034fa2f500c01824df9a47345eb0e2e3cd1698fcfeb4fa4d331"
     },
@@ -1932,6 +1936,22 @@
     {
       "path": "console/tests/studio_goal_fakes.py",
       "sha256": "32bb781a586c5ed60a7b820c804e26c7d2028d6bb9b6f3c6d9087dc060c829c1"
+    },
+    {
+      "path": "console/tests/test_access_token_middleware.py",
+      "sha256": "968cbe6e0a93687c5007fe5b89dc97e290d208489261103cae9c933e8e62d4dd"
+    },
+    {
+      "path": "console/tests/test_access_token_secrets.py",
+      "sha256": "71a0eed8a5a8c46f99613d26ae1023c08f760469bccc90a3d499b98cb84e879a"
+    },
+    {
+      "path": "console/tests/test_access_tokens_router.py",
+      "sha256": "35e5e03dc994a528fd51108afbf65854bf8fc1e634b18b2a2dac9004539dd7d5"
+    },
+    {
+      "path": "console/tests/test_access_tokens_service.py",
+      "sha256": "31f156a19a690305441d5cd4cb4d50ad4ae7eb5e5a638bb32677830e1122383d"
     },
     {
       "path": "console/tests/test_accounts_lifecycle.py",
@@ -2039,7 +2059,7 @@
     },
     {
       "path": "console/tests/test_cartridge_intent.py",
-      "sha256": "88d39033c4fb090055eff041f39ec384482134928ae35d14037196d9e8a67f81"
+      "sha256": "707021b865e5c31a7fcc10aabba05e7d3adabdbdd0514f94232dfea845f626ab"
     },
     {
       "path": "console/tests/test_cartridge_introspect_router.py",
@@ -2975,7 +2995,7 @@
     },
     {
       "path": "console/tests/test_data_platform_modules.py",
-      "sha256": "f871253a82bbcdc35f63345356b2952d1eb8a1a833e57455b10f6740e71e2c78"
+      "sha256": "6b2180a608d649b576f7815ec57d874fc6bc6f0e1909198ec0c17b97163e2a50"
     },
     {
       "path": "console/tests/test_data_query_filters.py",
@@ -3070,6 +3090,10 @@
       "sha256": "13b709e556c154aada5619888a27e50da82802eb53b40deec698b25192edaa37"
     },
     {
+      "path": "console/tests/test_ia_gateway_rate_limits.py",
+      "sha256": "18973f1ed6d917b866f341e9cdd644120c56ede2c23dfac0e0bf25cbddcc074b"
+    },
+    {
       "path": "console/tests/test_iam_access_payload.py",
       "sha256": "b69fee9a34784ca9daf6a60c285a8dc01c4effc63b99228e2033f86ca818d30c"
     },
@@ -3152,6 +3176,30 @@
     {
       "path": "console/tests/test_mcp_dual_auth.py",
       "sha256": "dd6ba6b58f252d1c5e52bebeaf0fe3404808cc79736fa135a489bd18c755f77e"
+    },
+    {
+      "path": "console/tests/test_mcp_gateway_actions.py",
+      "sha256": "ee5b7ae88e32c3254d894e678b640c98e37cfc082da46bfef41ea6dd99d0af7f"
+    },
+    {
+      "path": "console/tests/test_mcp_gateway_catalog.py",
+      "sha256": "1478848b1d892d751dab73ba24a0c0cb2526aa7bb760bcda6b6c59ea5402056b"
+    },
+    {
+      "path": "console/tests/test_mcp_gateway_jsonrpc.py",
+      "sha256": "39597596d8d0616f2854d965c8e5fb552f49574159d6b2c9485fe41e4c5c7391"
+    },
+    {
+      "path": "console/tests/test_mcp_gateway_openapi.py",
+      "sha256": "e3cd4240de36b764734fd43f97a997f28224b3b90e5829702d4cb1bb0f7d28b2"
+    },
+    {
+      "path": "console/tests/test_mcp_gateway_permission_parity.py",
+      "sha256": "db88eaf3ce129ff834d799696c7bdeda8bc785909f9af9d6559c7e89fc3a0075"
+    },
+    {
+      "path": "console/tests/test_mcp_public_invoke_policy.py",
+      "sha256": "ddcb82400d6d9da434c0f9586720be68e8feab77a8ee2fc3329bbd995b7fa3fc"
     },
     {
       "path": "console/tests/test_mcp_registry_direct_sql_literals.py",
@@ -3291,7 +3339,7 @@
     },
     {
       "path": "console/tests/test_route_surface_registry.py",
-      "sha256": "a548651c7b58592760d654cce4f4e54e35bfdf07a309e1825aff98610290fa48"
+      "sha256": "c7cd507b6b2acbbc67db21052f7a6ed2c12939b412a4f90124f25e10e713da9f"
     },
     {
       "path": "console/tests/test_run_logs_scope.py",
@@ -4003,7 +4051,7 @@
     },
     {
       "path": "tests/console_route_source.py",
-      "sha256": "2b801cea40a1f8a90edc260c6e73d54c78587901b6e0f64f9af508ed60af1009"
+      "sha256": "bd72e0af7d88ad6acaf664849bff0f94128095c43d9d4cffb604765646846fa8"
     },
     {
       "path": "tests/control_room_action_authority_dry_run.py",
@@ -4507,7 +4555,7 @@
     },
     {
       "path": "tests/test_ci_changed_areas.py",
-      "sha256": "5f9c9956c9ee3aa00d20c47abff003579173d94cab6cd335485a01aa15d907c4"
+      "sha256": "089140c13bd955424533a95a7e34e336c04ce811669c1d175aa6542a2a13e9cd"
     },
     {
       "path": "tests/test_ci_detector_self_protection.py",
@@ -4563,7 +4611,7 @@
     },
     {
       "path": "tests/test_control_room_ci_contract.py",
-      "sha256": "52a1aca38779abc562b73a2a5c9673f46b0a1a5f6420702f7cbabc7f9830d98e"
+      "sha256": "5183464da70913368b7072fb9d00bea69a5becbdd7b8f9055e6bea2d6187dd8c"
     },
     {
       "path": "tests/test_control_room_data_readiness_contract.py",
@@ -5242,6 +5290,10 @@
       "sha256": "36777ca31f5209d9ab73872d83d34474d541e82dc7936fdd99974ebb2f8c36c1"
     },
     {
+      "path": "tests/test_ia_gateway_smoke_script.py",
+      "sha256": "c56e5889eef0c90b9a3f79cdebcebe80ee5bd87b5a3d275f9bb7a60d466876bf"
+    },
+    {
       "path": "tests/test_identity_session_boundary_contract.py",
       "sha256": "d4aaddeda26dae8ebac2bc939fda1675e31013f80d6616748d8064aeeaa4297e"
     },
@@ -5378,6 +5430,10 @@
       "sha256": "ea8c76d23e986c0abd34b515679c0527f1c43dd9a0a13f99c5031f235b9d7531"
     },
     {
+      "path": "tests/test_mcp_gateway_sdk_conformance.py",
+      "sha256": "cb96e70d2b0b3c7b6049836cb84be7384ccd9263fc45f9705202e46427ad367b"
+    },
+    {
       "path": "tests/test_mcp_infra_duckdb_resource_limits.py",
       "sha256": "07c511fe39edc4526c613f50b3d4cac7875b7eea44f77d05a52b26fe3541e738"
     },
@@ -5403,7 +5459,7 @@
     },
     {
       "path": "tests/test_mcp_invoke_requires_admin.py",
-      "sha256": "d4791e6e7fd0877e4c74545e256f4d9e0dbdcdb5483ca8b582491efed8c5b1f6"
+      "sha256": "fa7e5a636ff63b523881091999de37dc1efe166f62bbc9b0db6ffc3551af425d"
     },
     {
       "path": "tests/test_mcp_minio_lakehouse_storage.py",
@@ -5543,7 +5599,7 @@
     },
     {
       "path": "tests/test_no_auth_gaps.py",
-      "sha256": "a0179cdc6fbae5815de480c3eb593da949d9ea51be5c61a6e350d2686e0bf209"
+      "sha256": "2439ea2a7a9ed45fe88c22245e8bf8c67c58ced98f06e9a2d5dfac9bf0088907"
     },
     {
       "path": "tests/test_no_direct_pggold_access.py",
@@ -5580,6 +5636,10 @@
     {
       "path": "tests/test_omega_lakehouse_storage_scope.py",
       "sha256": "aab029bec5920d07416d51dddf550a79371559cd85a93aa70b6aa5b3562b5692"
+    },
+    {
+      "path": "tests/test_omega_mcp_bridge.py",
+      "sha256": "88588b6e0edab57ab12d1d3f84392e18dfedf59fb2b269714b572f29ac3256b3"
     },
     {
       "path": "tests/test_omega_mcp_infra_lockdown.py",
@@ -5658,6 +5718,14 @@
       "sha256": "efe6056f4ecc50a2ef9f6707e306e952636d26b30744e5ce0c8e778535c34ce6"
     },
     {
+      "path": "tests/test_personal_access_tokens_contract.py",
+      "sha256": "b41f205e8fa330bc6695078d06448692602c27e9beac1b488b732e464d963e34"
+    },
+    {
+      "path": "tests/test_personal_access_tokens_live.py",
+      "sha256": "2cdb0815412f3e8a59dddb54f758a8d603492a67e4d936e9eaeb8d9e2c60a105"
+    },
+    {
       "path": "tests/test_phase0_provider_safe_storage.py",
       "sha256": "fce123eeb2edd3ac4a73d1b982960af5782df8cedafb32f1e209ee447d5589d0"
     },
@@ -5731,7 +5799,7 @@
     },
     {
       "path": "tests/test_pipeline_successfactors_reservation.py",
-      "sha256": "697fc729ff1817cced2f8e261075ff6fb0045aff7e8d8b2519ba1981c1940914"
+      "sha256": "bc4018b6e4c3447e80eecd7c78625ed9931570e591d56b31c08c2cbf9bfee166"
     },
     {
       "path": "tests/test_pipeline_sync_state.py",
@@ -5779,7 +5847,7 @@
     },
     {
       "path": "tests/test_public_routes_audit.py",
-      "sha256": "ce3f52a644650740e728b7ef453d9913769382735e016f15ca4e380b457cfc19"
+      "sha256": "b7c6933368d698548c1df5afe1117a604d5029b61bbb426cef62fcfe2a53f5b0"
     },
     {
       "path": "tests/test_published_app_csp_nonce.py",

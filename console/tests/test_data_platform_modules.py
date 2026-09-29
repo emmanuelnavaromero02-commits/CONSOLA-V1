@@ -50,6 +50,7 @@ from app.domains.data_platform.rag_requests import (
     rag_delete_source_payload,
     rag_ingest_payload,
     rag_reindex_payload,
+    clamp_top_k,
     rag_search_payload,
     rag_sources_payload,
     read_json_body_capped,
@@ -900,6 +901,50 @@ async def test_rag_search_payload_preserves_mcp_shape():
         "kinds": ["schema"],
     }
     assert captured["json"]["user"] == SCOPED_USER
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [(0, 1), (-4, 1), (1, 1), (20, 20), (21, 20), (10_000, 20), ("7", 7), ("x", 5), (None, 5), (True, 5)],
+)
+def test_rag_search_top_k_is_clamped(requested, expected):
+    assert clamp_top_k(requested) == expected
+
+
+@pytest.mark.asyncio
+async def test_rag_search_payload_clamps_oversized_top_k():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"results": []}}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["json"] = json
+            return FakeResponse()
+
+    await rag_search_payload(
+        body={"query": "skills", "top_k": 5000},
+        user=SCOPED_USER,
+        rag_url="http://rag",
+        http_client_factory=FakeClient,
+        headers_factory=lambda service: {},
+        mcp_payload_factory=lambda tool, args, user: {"tool": tool, "args": args},
+        upstream_error_detail=lambda _response, fallback: fallback,
+    )
+    assert captured["json"]["args"]["top_k"] == 20
 
 
 @pytest.mark.asyncio

@@ -38,3 +38,17 @@ def test_sensitive_prefixes_are_not_frontend_surfaces():
     assert classify_route_surface("/studio_ops/mcp/invoke") == "internal"
     assert classify_route_surface("/api/v1/intelligence/runs") == "legacy"
     assert classify_route_surface("/api/intelligence/runs") == "frontend"
+
+
+def test_ai_gateway_is_an_integration_surface():
+    from app.route_surface_registry import classify_route_surface
+
+    for path in (
+        "/api/ia/v1/openapi.json",
+        "/api/ia/v1/whoami",
+        "/api/ia/v1/actions/execute",
+        "/api/ia/v1/mcp",
+    ):
+        assert classify_route_surface(path) == "integration"
+    assert classify_route_surface("/api/me/access-tokens") == "frontend"
+    assert classify_route_surface("/api/iax") is None

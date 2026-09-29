@@ -203,6 +203,7 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_staged_publication_red.py",
     "tests/test_staged_publication_verifier_boundary_live.py",
     "tests/test_talent_benchmark_publication_authority_live.py",
+    "tests/test_personal_access_tokens_live.py",
 )
 
 

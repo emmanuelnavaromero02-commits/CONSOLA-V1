@@ -15,6 +15,7 @@ _SECRET_KEY_PATTERN = (
 _SENSITIVE_KEY_RE = re.compile(rf"(?i)(authorization|{_SECRET_KEY_PATTERN})")
 
 _REDACTION_PATTERNS = [
+    (re.compile(r"omega_pat_[A-Za-z0-9]{43}"), "omega_pat_***REDACTED***"),
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+"), "Bearer ***REDACTED***"),
     (re.compile(r"(?i)(authorization\s*[:=]\s*)Bearer\s+[A-Za-z0-9._\-]+"),
      lambda m: f"{m.group(1)}Bearer ***REDACTED***"),

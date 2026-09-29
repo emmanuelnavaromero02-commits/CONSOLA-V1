@@ -27,6 +27,16 @@ RATE_LIMITS = {
     "pipeline_recover": (10, RATE_LIMIT_WINDOW_SECONDS),
     "/api/control-room/refresh": (6, 60),
     "/api/control-room/refresh:workspace": (30, 60),
+    "/api/ia/v1/openapi.json": (30, 60),
+    "ia_gateway:auth_ip": (1200, 60),
+    "ia_gateway:auth_failures": (60, 60),
+    "ia_gateway:token": (60, 60),
+    "ia_gateway:user": (120, 60),
+    "ia_gateway:workspace": (240, 60),
+    "ia_gateway:ejecutar_extraccion": (6, 600),
+    "ia_gateway:crear_app_analitica": (3, 600),
+    "access_token:create": (10, 300),
+    "access_token:create:workspace": (60, 300),
 }
 API_RATE_LIMIT_PREFIXES = (
     "/api/copilot",
@@ -35,6 +45,7 @@ API_RATE_LIMIT_PREFIXES = (
     "/studio/import",
     "/api/explorer",
     "/api/data/explore",
+    "/api/ia/v1/openapi.json",
 )
 
 
@@ -182,6 +193,38 @@ async def rate_limit_authenticated_action(
         (f"{action}:user:{user_key}", RATE_LIMITS[action]),
         (f"{action}:workspace:{workspace_key}", RATE_LIMITS[f"{action}:workspace"]),
     ):
+        if not await limiter.check(key, limit, window, sensitive=True):
+            raise HTTPException(status_code=429, detail="too many requests")
+
+
+async def rate_limit_gateway(
+    user: Mapping[str, Any] | None,
+    action: str | None = None,
+    *,
+    limiter_factory: Callable[[], Any] = get_rate_limiter,
+) -> None:
+    """Per-token, per-user, per-workspace and per-action gateway limits; never keyed on client IP."""
+    if rate_limit_disabled():
+        return
+    data = user or {}
+    token_key = str(data.get("access_token_id") or "").strip()
+    workspace_key = str(data.get("active_workspace_id") or "").strip()
+    user_key = str(data.get("id") or "").strip()
+    if not token_key or not workspace_key or not user_key:
+        raise HTTPException(status_code=401, detail="personal access token required")
+    if action is None:
+        checks = [
+            (f"ia_gateway:token:{token_key}", RATE_LIMITS["ia_gateway:token"]),
+            (f"ia_gateway:user:{user_key}", RATE_LIMITS["ia_gateway:user"]),
+            (f"ia_gateway:workspace:{workspace_key}", RATE_LIMITS["ia_gateway:workspace"]),
+        ]
+    else:
+        configured = RATE_LIMITS.get(f"ia_gateway:{action}")
+        if configured is None:
+            return
+        checks = [(f"ia_gateway:{action}:user:{user_key}", configured)]
+    limiter = limiter_factory()
+    for key, (limit, window) in checks:
         if not await limiter.check(key, limit, window, sensitive=True):
             raise HTTPException(status_code=429, detail="too many requests")
 

@@ -17,6 +17,10 @@ _SOURCE_ALIASES: dict[str, dict[str, str]] = {
     "s4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
     "s/4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
     "successfactors": {"id": "sap_successfactors", "kind": "odata", "domain": "hcm"},
+    "sap successfactors": {"id": "sap_successfactors", "kind": "odata", "domain": "hcm"},
+    "sap business one": {"id": "sap_b1", "kind": "sql", "domain": "erp"},
+    "sap s4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
+    "sap s/4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
     "workday": {"id": "workday", "kind": "rest", "domain": "hcm"},
     "netsuite": {"id": "netsuite", "kind": "soap", "domain": "erp"},
     "stripe": {"id": "stripe", "kind": "rest", "domain": "billing"},
@@ -28,6 +32,10 @@ _ALIAS_FAMILY: dict[str, str] = {
     "s4hana": "sap",
     "s/4hana": "sap",
     "successfactors": "sap",
+    "sap successfactors": "sap",
+    "sap business one": "sap",
+    "sap s4hana": "sap",
+    "sap s/4hana": "sap",
     "business one": "sap",
     "sap b1": "sap",
     "b1": "sap",
@@ -42,15 +50,29 @@ _OUTPUT_HINTS = {
 }
 
 
+def _matched_aliases(low: str) -> list[tuple[str, dict[str, str]]]:
+    order = {alias: index for index, alias in enumerate(_SOURCE_ALIASES)}
+    taken: list[tuple[int, int]] = []
+    found: list[tuple[str, dict[str, str]]] = []
+    for alias in sorted(_SOURCE_ALIASES, key=lambda item: (-len(item), order[item])):
+        for match in re.finditer(rf"\b{re.escape(alias)}\b", low):
+            start, end = match.span()
+            if any(start < used_end and used_start < end for used_start, used_end in taken):
+                continue
+            taken.append((start, end))
+            found.append((alias, _SOURCE_ALIASES[alias]))
+            break
+    return sorted(found, key=lambda item: order[item[0]])
+
+
 def parse_build_intent(text: str) -> dict[str, Any]:
     t = str(text or "").strip()
     low = t.lower()
 
     sources: list[dict[str, str]] = []
-    for alias, meta in _SOURCE_ALIASES.items():
-        if re.search(rf"\b{re.escape(alias)}\b", low):
-            if meta["id"] not in {s["id"] for s in sources}:
-                sources.append({"alias": alias, **meta})
+    for alias, meta in _matched_aliases(low):
+        if meta["id"] not in {s["id"] for s in sources}:
+            sources.append({"alias": alias, **meta})
 
     seen_families: set[str] = set()
     deduped: list[dict[str, str]] = []

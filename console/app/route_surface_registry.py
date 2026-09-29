@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-RouteSurface = Literal["frontend", "admin_only", "internal", "legacy", "deprecated"]
+RouteSurface = Literal[
+    "frontend", "admin_only", "internal", "legacy", "deprecated", "integration"
+]
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,12 @@ ROUTE_SURFACE_REGISTRY: tuple[RouteSurfaceRule, ...] = (
     RouteSurfaceRule("/api/lineage", "frontend", "lineage API"),
     RouteSurfaceRule("/api/marketplace", "frontend", "marketplace API"),
     RouteSurfaceRule("/api/me", "frontend", "current user API"),
+    RouteSurfaceRule(
+        "/api/me/access-tokens", "frontend", "personal access token management"
+    ),
+    RouteSurfaceRule(
+        "/api/ia", "integration", "AI assistant gateway (personal access tokens only)"
+    ),
     RouteSurfaceRule("/api/metrics", "frontend", "metrics API"),
     RouteSurfaceRule("/api/pipeline", "frontend", "pipeline API"),
     RouteSurfaceRule("/api/pipelines", "frontend", "pipeline operations API"),

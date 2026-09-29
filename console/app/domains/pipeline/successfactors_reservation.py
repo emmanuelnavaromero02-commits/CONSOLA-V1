@@ -11,6 +11,22 @@ from app.domains.pipeline.status_transitions import (
 )
 
 
+PUBLIC_MESSAGES = {
+    "extract_all_already_running": (
+        "Ya hay una extracción completa en curso para esta fuente; espera a que termine "
+        "antes de extraer entidades individuales."
+    ),
+    "too_many_active_entity_extracts": (
+        "Hay demasiadas extracciones individuales en curso. Espera a que terminen o usa "
+        "«Extraer Todo»."
+    ),
+    "backpressure_unavailable": (
+        "No se pudo reservar un turno de extracción en este momento. Intenta de nuevo en "
+        "unos minutos."
+    ),
+}
+
+
 def reservation_applies(
     *, cartridge: str, dag_id: str, expected_cartridge: str, entity_dag_id: str
 ) -> bool:
@@ -65,6 +81,7 @@ def extract_all_conflict(
                     "SAP SuccessFactors extract_all is already running; "
                     "wait for it to finish before triggering individual entities."
                 ),
+                "public_message": PUBLIC_MESSAGES["extract_all_already_running"],
                 "job_id": row.get("airflow_dag_run_id") or row.get("run_id"),
             }
     return None
@@ -90,6 +107,7 @@ def active_entity_limit_payload(*, active: int, limit: int) -> dict[str, Any]:
             "SAP SuccessFactors extraction backpressure: "
             f"{active} active entity runs; use Extract All/sync or wait."
         ),
+        "public_message": PUBLIC_MESSAGES["too_many_active_entity_extracts"],
         "active": active,
         "limit": limit,
     }
@@ -294,7 +312,7 @@ async def reserve_entity_extract_slot(
             detail={
                 "reason": "backpressure_unavailable",
                 "message": "Could not reserve SAP SuccessFactors extraction slot.",
-                "error": str(exc),
+                "public_message": PUBLIC_MESSAGES["backpressure_unavailable"],
             },
         ) from exc
 
