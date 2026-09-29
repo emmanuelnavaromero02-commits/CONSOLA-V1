@@ -12,13 +12,25 @@ import {
   metricState,
   metricSummary,
 } from "@/lib/sap-b1/present";
-import type { KpiMetric, SapB1Indicator, SapB1ViewName } from "@/lib/sap-b1/types";
+import type { KpiMetric, SapB1Case, SapB1Indicator, SapB1ViewName } from "@/lib/sap-b1/types";
 
 import { Fact, LoadingBlock, MetricStatePill, Notice, Panel, QueryError, RefreshButton } from "./ui";
 
 type ViewQuery = ReturnType<typeof useSapB1View>;
 
-function metricFrom(views: Record<SapB1ViewName, ViewQuery | undefined>, metricId: string): { metric?: KpiMetric; query?: ViewQuery } {
+const CASE_VIEWS: Record<SapB1Case, readonly SapB1ViewName[]> = {
+  finanzas: ["sap_b1_margin_kpis"],
+  ventas: ["sap_b1_sales_kpis", "sap_b1_expiry_kpis"],
+  compras: ["sap_b1_supply_kpis"],
+};
+
+const CASE_DESCRIPTIONS: Record<SapB1Case, string> = {
+  finanzas: "Margen bruto y de contribución, destructores, concentración y margen por vendedor, tal como los calcula la plataforma.",
+  ventas: "Sell-in contra sell-out por distribuidora, días de inventario en canal, sell-out por clínica y caducidad de lotes.",
+  compras: "Cobertura de materia prima, órdenes de compra contra necesidad y costo real contra estándar.",
+};
+
+function metricFrom(views: Partial<Record<SapB1ViewName, ViewQuery>>, metricId: string): { metric?: KpiMetric; query?: ViewQuery } {
   const viewName = METRIC_VIEW[metricId];
   const query = viewName ? views[viewName] : undefined;
   const metrics = (query?.data?.metrics ?? {}) as Record<string, KpiMetric | undefined>;
@@ -71,81 +83,73 @@ function IndicatorCard({ indicator, metric, query }: { indicator: SapB1Indicator
   );
 }
 
-export function IndicatorsSection() {
+export function CaseIndicatorsSection({ caseId }: { caseId: SapB1Case }) {
+  const item = CASES.find((entry) => entry.id === caseId) ?? CASES[0];
   const catalog = useSapB1Indicators();
-  const views: Record<SapB1ViewName, ViewQuery | undefined> = {
-    sap_b1_margin_kpis: useSapB1View("sap_b1_margin_kpis") as ViewQuery,
-    sap_b1_sales_kpis: useSapB1View("sap_b1_sales_kpis") as ViewQuery,
-    sap_b1_expiry_kpis: useSapB1View("sap_b1_expiry_kpis") as ViewQuery,
-    sap_b1_supply_kpis: useSapB1View("sap_b1_supply_kpis") as ViewQuery,
-    sap_b1_learning_kpis: undefined,
-    sap_b1_semaforo_kpis: undefined,
+  const enabled = new Set<SapB1ViewName>(CASE_VIEWS[item.id]);
+  const views: Partial<Record<SapB1ViewName, ViewQuery>> = {
+    sap_b1_margin_kpis: useSapB1View("sap_b1_margin_kpis", enabled.has("sap_b1_margin_kpis")) as ViewQuery,
+    sap_b1_sales_kpis: useSapB1View("sap_b1_sales_kpis", enabled.has("sap_b1_sales_kpis")) as ViewQuery,
+    sap_b1_expiry_kpis: useSapB1View("sap_b1_expiry_kpis", enabled.has("sap_b1_expiry_kpis")) as ViewQuery,
+    sap_b1_supply_kpis: useSapB1View("sap_b1_supply_kpis", enabled.has("sap_b1_supply_kpis")) as ViewQuery,
   };
-  const indicators = catalog.data?.indicators ?? [];
-  const busy = catalog.isFetching || Object.values(views).some((query) => query?.isFetching);
+  const activeViews = CASE_VIEWS[item.id].map((view) => views[view]);
+  const caseIndicators = (catalog.data?.indicators ?? []).filter((indicator) => indicator.case === item.id);
+  const busy = catalog.isFetching || activeViews.some((query) => query?.isFetching);
   const refresh = () => {
     void catalog.refetch();
-    Object.values(views).forEach((query) => void query?.refetch());
+    activeViews.forEach((query) => void query?.refetch());
   };
 
   return (
     <Panel
-      eyebrow="KnowledgeBit"
-      title="Indicadores de los tres casos"
-      description="Cada indicador con su fórmula, unidad, dimensiones y dataset, y su valor actual tal como lo calcula la plataforma."
-      actions={<RefreshButton onClick={refresh} busy={busy} />}
+      eyebrow="Indicadores"
+      title={`Indicadores de ${item.label}`}
+      description={CASE_DESCRIPTIONS[item.id]}
+      actions={
+        <>
+          <a
+            href={analyticAppHref(item.app)}
+            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-md border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted dark:border-sky-400/20 dark:bg-[#06111f]"
+          >
+            Abrir app {item.appLabel}
+            <ExternalLink aria-hidden className="h-3.5 w-3.5" />
+          </a>
+          <RefreshButton onClick={refresh} busy={busy} />
+        </>
+      }
     >
       {catalog.isPending ? <LoadingBlock label="Leyendo el catálogo de indicadores…" /> : null}
       {catalog.isError ? <QueryError error={catalog.error} onRetry={() => void catalog.refetch()} /> : null}
-      {catalog.data && !indicators.length ? <Notice tone="empty" title="La fuente de datos no publica indicadores" /> : null}
-      {indicators.length ? (
-        <div className="space-y-6">
-          {CASES.map((item) => {
-            const caseIndicators = indicators.filter((indicator) => indicator.case === item.id);
-            return (
-              <section key={item.id} aria-labelledby={`caso-${item.id}`} className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2 dark:border-sky-400/15">
-                  <h3 id={`caso-${item.id}`} className="text-base font-semibold text-foreground dark:text-white">
-                    {item.label} <span className="text-sm font-normal text-muted-foreground">· {countLabel(caseIndicators.length, "indicador", "indicadores")}</span>
-                  </h3>
-                  <a
-                    href={analyticAppHref(item.app)}
-                    className="inline-flex min-h-[32px] items-center gap-1.5 rounded-md border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted dark:border-sky-400/20 dark:bg-[#06111f]"
-                  >
-                    Abrir app {item.appLabel}
-                    <ExternalLink aria-hidden className="h-3.5 w-3.5" />
-                  </a>
-                </div>
-                {caseIndicators.length ? (
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {caseIndicators.map((indicator) => {
-                      const { metric, query } = metricFrom(views, indicator.id);
-                      return <IndicatorCard key={indicator.id} indicator={indicator} metric={metric} query={query} />;
-                    })}
+      {catalog.data && !caseIndicators.length ? <Notice tone="empty" title="Sin indicadores para este caso" /> : null}
+      {caseIndicators.length ? (
+        <section aria-labelledby={`caso-${item.id}`} className="space-y-3">
+          <h3 id={`caso-${item.id}`} className="sr-only">
+            {item.label} · {countLabel(caseIndicators.length, "indicador", "indicadores")}
+          </h3>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {caseIndicators.map((indicator) => {
+              const { metric, query } = metricFrom(views, indicator.id);
+              return <IndicatorCard key={indicator.id} indicator={indicator} metric={metric} query={query} />;
+            })}
+          </div>
+          {item.extras.length ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {item.extras.map((metricId) => {
+                const { metric, query } = metricFrom(views, metricId);
+                const summary = metricSummary(metricId, metric);
+                return (
+                  <div key={metricId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed px-3 py-2 text-sm dark:border-sky-400/20">
+                    <span className="text-muted-foreground">{metricLabel(metricId)}</span>
+                    <span className="font-medium text-foreground dark:text-white">
+                      {query?.isPending ? "Calculando…" : query?.isError ? "No disponible" : summary.value}
+                    </span>
                   </div>
-                ) : (
-                  <Notice tone="empty" title="Sin indicadores para este caso" />
-                )}
-                {item.extras.length ? (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {item.extras.map((metricId) => {
-                      const { metric, query } = metricFrom(views, metricId);
-                      const summary = metricSummary(metricId, metric);
-                      return (
-                        <div key={metricId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed px-3 py-2 text-sm dark:border-sky-400/20">
-                          <span className="text-muted-foreground">{metricLabel(metricId)}</span>
-                          <span className="font-medium text-foreground dark:text-white">
-                            {query?.isPending ? "Calculando…" : query?.isError ? "No disponible" : summary.value}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </section>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
       ) : null}
     </Panel>
   );

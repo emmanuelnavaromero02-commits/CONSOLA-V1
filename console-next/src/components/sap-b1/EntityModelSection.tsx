@@ -37,7 +37,7 @@ export function EntityModelSection() {
 
   return (
     <Panel
-      eyebrow="WisdomBit"
+      eyebrow="Puesta en marcha"
       title="Modelo de entidades del grupo"
       description="Las ocho entidades unificadas de las empresas: cuántos registros hay en Business One, cuántas identidades quedan al unificar, cuáles comparten las empresas, qué tan completas están sus relaciones y cuántas referencias apuntan a algo que no existe."
       actions={

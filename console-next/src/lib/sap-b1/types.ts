@@ -218,6 +218,7 @@ export interface FinanceReconciliationKpi extends KpiMetric {
   without_platform?: number | null;
   platform_only?: number | null;
   within_pct?: Num;
+  tolerance_pct?: Num;
   periods?: string[];
 }
 

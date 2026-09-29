@@ -139,6 +139,7 @@ beforeEach(() => {
     indicators: query({
       indicators: [
         { id: "margen_bruto", case: "finanzas", name: "Margen bruto", formula: "Venta neta − costo", unit: "moneda local", dimensions: ["empresa"], granularity: "mes", dataset: "sap_b1_margin_kpis_month", filter: "", thresholds: ["margin_min_pct"] },
+        { id: "caducidad_lotes", case: "ventas", name: "Caducidad de lotes", formula: "Lotes por vencer al ritmo de venta", unit: "moneda local", dimensions: ["empresa"], granularity: "corte diario", dataset: "sap_b1_batch_expiry", filter: "", thresholds: ["expiry_red_days"] },
         { id: "dias_cobertura", case: "compras", name: "Días de cobertura", formula: "Disponible ÷ requerimiento", unit: "días", dimensions: ["empresa"], granularity: "corte diario", dataset: "sap_b1_item_coverage", filter: "", thresholds: [] },
       ],
     }),
@@ -161,7 +162,12 @@ beforeEach(() => {
       },
     }),
     sap_b1_sales_kpis: query({ status: "ready", metrics: {} }),
-    sap_b1_expiry_kpis: query({ status: "ready", metrics: {} }),
+    sap_b1_expiry_kpis: query({
+      status: "ready",
+      metrics: {
+        caducidad_lotes: { status: "ready", at_risk_value: 1000, levels: { vencido: { batches: 2 } }, period: null },
+      },
+    }),
     sap_b1_supply_kpis: query(undefined, { isPending: true }),
     sap_b1_learning_kpis: query({ status: "degraded", metrics: { aprendizaje: { status: "degraded", notes: ["todavía no hay alertas de SAP Business One en la ventana"], sources: [] } } }),
     sap_b1_semaforo_kpis: query({
@@ -203,7 +209,7 @@ afterEach(async () => {
 });
 
 describe("SapB1Page", () => {
-  it("opens on the rehearsal checklist built from the overview", async () => {
+  it("opens on the rehearsal checklist with the loads, mapping and entity model", async () => {
     await render(<SapB1Page />);
     expect(tab("Puesta en marcha")?.getAttribute("aria-selected")).toBe("true");
     const text = container.textContent ?? "";
@@ -213,7 +219,27 @@ describe("SapB1Page", () => {
     expect(text).toContain("Completa: 24 meses");
     expect(text).toContain("Extracción SAP B1: pausado");
     expect(text).toContain("Transporte de correo sin configurar");
-    expect(text).toContain("Sin envíos todavía");
+    expect(text).toContain("Conexión y cargas");
+    expect(text).toContain("Facturas de clientes");
+    expect(text).toContain("Modelo de entidades del grupo");
+  });
+
+  it("renders the business Spanish tabs without the bit jargon", async () => {
+    await render(<SapB1Page />);
+    const labels = [...container.querySelectorAll('[role="tab"]')].map((node) => node.textContent);
+    expect(labels).toEqual([
+      "Puesta en marcha",
+      "Finanzas",
+      "Ventas",
+      "Compras",
+      "Aprendizaje",
+      "Agentes",
+      "Semáforo",
+      "Parámetros",
+    ]);
+    expect(container.textContent).not.toContain("InfoBit");
+    expect(container.textContent).not.toContain("WisdomBit");
+    expect(container.textContent).not.toContain("KnowledgeBit");
   });
 
   it("shows an honest error with a retry instead of an empty checklist", async () => {
@@ -230,12 +256,9 @@ describe("SapB1Page", () => {
     Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
     const clicks = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     await render(<SapB1Page />);
-    await click(tab("InfoBit"));
-    expect(window.location.hash).toBe("#infobit");
     const text = container.textContent ?? "";
     expect(text).toContain("en línea");
     expect(text).toContain("mx, us");
-    expect(text).toContain("Facturas de clientes");
     expect(text).toContain("8 / 10 · 80 %");
     expect(text).toContain("faltan filas");
     expect(text).toContain("2024-09-01 a 2026-09-01");
@@ -246,14 +269,12 @@ describe("SapB1Page", () => {
 
   it("says there is no data yet when the load reconciliation is not published", async () => {
     state.queries.loads = query(null);
-    window.history.replaceState(null, "", "#infobit");
     await render(<SapB1Page />);
     expect(container.textContent).toContain("La reconciliación de cargas aún no se publica para este workspace.");
     expect(container.textContent).toContain("sin conteo");
   });
 
   it("renders the entity model for the group and per company", async () => {
-    window.history.replaceState(null, "", "#wisdombit");
     await render(<SapB1Page />);
     expect(container.textContent).toContain("tiene grupo y vendedor");
     expect(container.textContent).toContain("120");
@@ -263,21 +284,102 @@ describe("SapB1Page", () => {
     expect(container.textContent).not.toContain("120");
   });
 
-  it("groups indicators by case with their current value and app link", async () => {
+  it("redirects the legacy #infobit hash to Finanzas", async () => {
+    window.history.replaceState(null, "", "#infobit");
+    await render(<SapB1Page />);
+    expect(tab("Finanzas")?.getAttribute("aria-selected")).toBe("true");
+    expect(window.location.hash).toBe("#finanzas");
+  });
+
+  it("redirects the legacy #wisdombit hash to Ventas", async () => {
+    window.history.replaceState(null, "", "#wisdombit");
+    await render(<SapB1Page />);
+    expect(tab("Ventas")?.getAttribute("aria-selected")).toBe("true");
+    expect(window.location.hash).toBe("#ventas");
+  });
+
+  it("redirects the legacy #knowledgebit hash to Compras", async () => {
     window.history.replaceState(null, "", "#knowledgebit");
     await render(<SapB1Page />);
+    expect(tab("Compras")?.getAttribute("aria-selected")).toBe("true");
+    expect(window.location.hash).toBe("#compras");
+  });
+
+  it("keeps the #parametros hash working unchanged", async () => {
+    window.history.replaceState(null, "", "#parametros");
+    await render(<SapB1Page />);
+    expect(tab("Parámetros")?.getAttribute("aria-selected")).toBe("true");
+    expect(window.location.hash).toBe("#parametros");
+  });
+
+  it("shows Finanzas with the margin indicators and the reconciliation badge copy", async () => {
+    window.history.replaceState(null, "", "#finanzas");
+    await render(<SapB1Page />);
     const text = container.textContent ?? "";
-    expect(text).toContain("Finanzas · 1 indicador");
+    expect(text).toContain("Conciliación con Finanzas");
+    expect(text).toContain("Sin corrida de Finanzas cargada");
+    expect(text).toContain("Margen bruto");
     expect(text).toContain("25 % grupo");
     expect(text).toContain("mx: cliente C1 bajo el mínimo");
-    expect(text).toContain("Calculando…");
     expect(text).toContain("Reconciliación con FinanzasSin datos todavía");
     const links = [...container.querySelectorAll("a")].map((node) => node.getAttribute("href"));
     expect(links).toContain("/analytics/viewer?app=sap_b1_margen");
+    expect(links).not.toContain("/analytics/viewer?app=sap_b1_abasto");
+  });
+
+  it("paints the reconciliation badge from the real rows, never a hardcoded claim", async () => {
+    const margin = state.views.sap_b1_margin_kpis as { data: { metrics: Record<string, unknown> } };
+    margin.data.metrics.reconciliacion_finanzas = {
+      status: "ready",
+      rows: 10,
+      within: 8,
+      within_pct: 80,
+      tolerance_pct: 1.5,
+      period: "2026-08",
+    };
+    window.history.replaceState(null, "", "#finanzas");
+    await render(<SapB1Page />);
+    const badge = container.querySelector('[aria-label="Conciliación con Finanzas"]');
+    expect(badge?.textContent).toContain("Conciliación 80 %");
+    expect(badge?.textContent).toContain("8 de 10 filas de Finanzas dentro de la tolerancia de 1.5 %");
+    expect(badge?.textContent).toContain("Periodo: 2026-08");
+  });
+
+  it("shows Ventas with sell-out and the batch expiry indicator", async () => {
+    window.history.replaceState(null, "", "#ventas");
+    await render(<SapB1Page />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Indicadores de Ventas");
+    expect(text).toContain("Caducidad de lotes");
+    expect(text).toContain("1,000 en riesgo");
+    expect(text).toContain("vencido 2 lotes");
+    expect(text).toContain("Semáforo de distribuidoras");
+    const links = [...container.querySelectorAll("a")].map((node) => node.getAttribute("href"));
+    expect(links).toContain("/analytics/viewer?app=sap_b1_sellout");
+  });
+
+  it("shows Compras with the coverage indicator still computing", async () => {
+    window.history.replaceState(null, "", "#compras");
+    await render(<SapB1Page />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Indicadores de Compras");
+    expect(text).toContain("Días de cobertura");
+    expect(text).toContain("Calculando…");
+    const links = [...container.querySelectorAll("a")].map((node) => node.getAttribute("href"));
     expect(links).toContain("/analytics/viewer?app=sap_b1_abasto");
   });
 
-  it("shows the agents of the plan and the decision record", async () => {
+  it("renders the read-only learning record in Aprendizaje", async () => {
+    window.history.replaceState(null, "", "#aprendizaje");
+    await render(<SapB1Page />);
+    expect(tab("Aprendizaje")?.getAttribute("aria-selected")).toBe("true");
+    const text = container.textContent ?? "";
+    expect(text).toContain("Decisiones y resultados");
+    expect(text).toContain("Sin decisiones todavía");
+    expect(text).toContain("todavía no hay alertas de SAP Business One en la ventana");
+  });
+
+  it("shows the agents of the plan and their alerts", async () => {
     window.history.replaceState(null, "", "#agentes");
     await render(<SapB1Page />);
     const text = container.textContent ?? "";
@@ -285,7 +387,6 @@ describe("SapB1Page", () => {
     expect(text).toContain("Semáforo de las 8:00");
     expect(text).toContain("Horario 08:00 America/Mexico_City");
     expect(text).toContain("Monitores sin registrar en este workspace");
-    expect(text).toContain("todavía no hay alertas de SAP Business One en la ventana");
     expect(text).toContain("Sin alertas de los agentes");
     expect(container.querySelector('a[href="/control-room"]')).not.toBeNull();
   });
@@ -384,11 +485,15 @@ describe("SapB1Page", () => {
 });
 
 describe("SapB1ControlRoomEntry", () => {
-  it("links to the page only when the workspace has the cartridge", async () => {
+  it("links to the page and its business areas only when the workspace has the cartridge", async () => {
     await render(<SapB1ControlRoomEntry />);
     expect(container.querySelector('a[href="/control-room/sap-b1"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/control-room/sap-b1#finanzas"]')?.textContent).toBe("Finanzas");
+    expect(container.querySelector('a[href="/control-room/sap-b1#ventas"]')?.textContent).toBe("Ventas");
+    expect(container.querySelector('a[href="/control-room/sap-b1#compras"]')?.textContent).toBe("Compras");
     state.access.installed = false;
     await render(<SapB1ControlRoomEntry />);
     expect(container.querySelector('a[href="/control-room/sap-b1"]')).toBeNull();
+    expect(container.querySelector('a[href="/control-room/sap-b1#finanzas"]')).toBeNull();
   });
 });
