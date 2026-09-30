@@ -194,10 +194,19 @@ def _published_datasets_for_scope(
     return {"datasets": datasets}
 
 
+def _missing_sources_probe(user_context: dict):
+    def probe(sources: list[str]) -> list[str]:
+        return engine.missing_materialized_dependencies(sources, user_context)
+
+    return probe
+
+
 def _materialize_readfree_empty(
     ds: dict, user_context: dict, cause: Exception
 ) -> dict | None:
-    readfree = readfree_empty_dataset_for_successfactors(ds, cause)
+    readfree = readfree_empty_dataset_for_successfactors(
+        ds, cause, missing_sources=_missing_sources_probe(user_context)
+    )
     if not readfree:
         return None
     result = engine.materialize(readfree, user_context)
@@ -226,7 +235,9 @@ def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict
     except PUBLICATION_RESOLUTION_ERRORS:
         raise
     except Exception as exc:
-        fallback = fallback_dataset_for_successfactors(ds, exc)
+        fallback = fallback_dataset_for_successfactors(
+            ds, exc, missing_sources=_missing_sources_probe(user_context)
+        )
         if not fallback:
             readfree = _materialize_readfree_empty(ds, user_context, exc)
             if readfree is not None:

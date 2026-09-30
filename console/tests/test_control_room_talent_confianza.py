@@ -163,6 +163,7 @@ async def test_confianza_renders_no_fabricated_zeros_for_empty_sources(monkeypat
     assert confianza["exposicion_monetaria"] is None
     assert confianza["estrellas_en_riesgo"] is None
     assert confianza["vacantes_criticas_sin_sucesor"] is None
+    assert confianza["vacantes_criticas_motivo"] == "posiciones_no_extraidas"
 
 
 @pytest.mark.asyncio
@@ -214,6 +215,7 @@ async def test_confianza_fields_are_null_when_gold_heads_are_missing(monkeypatch
     assert projected.model_dump()["confianza"] == {
         "estrellas_en_riesgo": None,
         "vacantes_criticas_sin_sucesor": None,
+        "vacantes_criticas_motivo": "sucesion_no_calculada",
         "cobertura_certificaciones": None,
         "exposicion_monetaria": None,
     }
@@ -292,8 +294,9 @@ async def test_confianza_computes_real_tiles_from_gold_aggregates(monkeypatch):
     ]
     assert "deduced-0" not in str(estrellas)
 
-    # Waiting state until succession is published as gold with real criticality.
+    # No succession projection in this feed: the tile keeps its waiting state.
     assert confianza["vacantes_criticas_sin_sucesor"] is None
+    assert confianza["vacantes_criticas_motivo"] == "posiciones_no_extraidas"
 
     certificaciones = confianza["cobertura_certificaciones"]
     assert certificaciones == {

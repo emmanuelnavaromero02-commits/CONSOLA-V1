@@ -314,7 +314,10 @@ _TALENT_CPA_REQUIREMENTS: tuple[dict[str, Any], ...] = (
                 "extract_entity": "Position",
                 "group": "role",
                 "fields_required": ("code", "department", "lastModifiedDateTime"),
-                "fields_optional": ("positionCode", "jobCode", "externalName_defaultValue", "location", "costCenter"),
+                "fields_optional": (
+                    "positionCode", "jobCode", "externalName_defaultValue", "location", "costCenter",
+                    "criticality", "positionCriticality", "vacant", "effectiveStatus",
+                ),
             },
             {
                 "entity": "FOJobCode",
@@ -597,6 +600,10 @@ _TALENT_METADATA_DISCOVERY_PROFILES: tuple[dict[str, Any], ...] = (
             "department": ("department", "departmentCode", "departmentNav"),
             "jobCode": ("jobCode", "jobClassification", "jobCodeNav"),
             "externalName_defaultValue": ("externalName_defaultValue", "name", "title", "jobTitle"),
+            "criticality": ("criticality",),
+            "positionCriticality": ("positionCriticality",),
+            "vacant": ("vacant",),
+            "effectiveStatus": ("effectiveStatus",),
             "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
         },
         "primary_key_candidates": ("code", "positionCode", "externalCode", "jobCode", "roleId"),
@@ -1502,7 +1509,8 @@ _PEOPLE_MASTER_REQUIREMENTS: tuple[dict[str, Any], ...] = (
                 "fields_required": ("code",),
                 "fields_optional": (
                     "externalName_defaultValue", "department", "location",
-                    "costCenter", "lastModifiedDateTime",
+                    "costCenter", "lastModifiedDateTime", "criticality", "positionCriticality",
+                    "vacant", "effectiveStatus",
                 ),
             },
         ),

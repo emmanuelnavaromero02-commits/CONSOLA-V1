@@ -391,6 +391,11 @@ entities:
       - location
       - costCenter
       - lastModifiedDateTime
+    optional_select_fields:
+      - criticality
+      - positionCriticality
+      - vacant
+      - effectiveStatus
 
   - entity: EmployeeTime
     description: "Time off requests (leave, vacation, sick)."

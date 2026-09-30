@@ -1722,10 +1722,119 @@ def _sf_talent_confianza_estrellas(
 
 
 @_bind_to_core
-def _sf_talent_confianza_vacantes() -> None:
-    # Waiting state: needs a published succession gold projection plus a real
-    # per-role criticality signal; anything else would fabricate vacancies.
+def _sf_talent_succession_summary(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    # Dataset-level values repeat on every row; any disagreement or bad type means no number.
+    if not rows:
+        return None
+    summary: dict[str, Any] = {}
+    for key in (
+        "positions_total",
+        "positions_inactive_count",
+        "criticality_unrecognized_count",
+        "criticality_missing_count",
+        "critical_total",
+        "critical_without_nominee_total",
+        "critical_coverage_unknown_count",
+        "nominations_total",
+        "nominations_matched",
+        "nominations_unmatched_open",
+    ):
+        values = [row.get(key) for row in rows]
+        # The gold leaves the total NULL while coverage is undecided.
+        nullable = key == "critical_without_nominee_total"
+        if any(
+            not (nullable and v is None)
+            and (isinstance(v, bool) or not isinstance(v, int) or v < 0)
+            for v in values
+        ):
+            return None
+        if len(set(values)) != 1:
+            return None
+        summary[key] = values[0]
+    for key in ("criticality_available", "nominations_available"):
+        values = [row.get(key) for row in rows]
+        if any(not isinstance(v, bool) for v in values) or len(set(values)) != 1:
+            return None
+        summary[key] = values[0]
+    return summary
+
+
+@_bind_to_core
+def _sf_talent_succession_summary_consistent(summary: dict[str, Any]) -> bool:
+    critical = summary["critical_total"]
+    return (
+        (summary["critical_without_nominee_total"] or 0)
+        + summary["critical_coverage_unknown_count"]
+        <= critical
+        and critical + summary["criticality_unrecognized_count"]
+        + summary["criticality_missing_count"]
+        <= summary["positions_total"]
+        and summary["nominations_matched"] <= summary["nominations_total"]
+        and summary["nominations_unmatched_open"]
+        <= summary["nominations_total"] - summary["nominations_matched"]
+    )
+
+
+@_bind_to_core
+def _sf_talent_confianza_vacantes_motivo(result: dict[str, Any]) -> str | None:
+    # Names the real waiting cause; the gold publishes its total only under the same gating.
+    status = result["status"]
+    if status == "missing":
+        return "sucesion_no_calculada"
+    if status == "empty":
+        return "posiciones_no_extraidas"
+    if status == "no_permission":
+        return "sin_permiso"
+    if status != "ready":
+        return "sucesion_no_disponible"
+    summary = _sf_talent_succession_summary(result["rows"])
+    if summary is None or not _sf_talent_succession_summary_consistent(summary):
+        return "sucesion_no_disponible"
+    if summary["positions_total"] == 0:
+        return "sin_posiciones_activas"
+    if not summary["criticality_available"]:
+        return "criticidad_no_encontrada"
+    if summary["criticality_unrecognized_count"] > 0:
+        return "criticidad_no_reconocida"
+    if summary["critical_total"] == 0 and summary["criticality_missing_count"] > 0:
+        return "criticidad_incompleta"
+    if not summary["nominations_available"]:
+        return "sucesion_no_extraida"
+    if summary["nominations_total"] == 0:
+        return "sin_nominaciones"
+    if summary["nominations_matched"] == 0:
+        return "nominaciones_sin_cruce"
+    if summary["critical_coverage_unknown_count"] > 0:
+        if summary["nominations_unmatched_open"] > 0:
+            return "nominaciones_cruce_parcial"
+        return "estado_nominacion_no_reconocido"
+    # A zero is never shown while an active position has no criticality.
+    if summary["criticality_missing_count"] > 0 and not summary["critical_without_nominee_total"]:
+        return "criticidad_incompleta"
+    if summary["critical_without_nominee_total"] is None:
+        return "sucesion_no_disponible"
     return None
+
+
+@_bind_to_core
+def _sf_talent_confianza_vacantes(result: dict[str, Any]) -> dict[str, Any] | None:
+    if _sf_talent_confianza_vacantes_motivo(result) is not None:
+        return None
+    summary = _sf_talent_succession_summary(result["rows"])
+    roles: list[str] = []
+    for row in result["rows"]:
+        if row.get("is_critical") is not True or row.get("has_active_nominee") is not False:
+            continue
+        name = str(row.get("position_name") or "").strip()
+        if name and name not in roles:
+            roles.append(name)
+        if len(roles) >= 20:
+            break
+    return {
+        "count": summary["critical_without_nominee_total"],
+        "roles": roles,
+        "posiciones_sin_criticidad": summary["criticality_missing_count"],
+    }
 
 
 @_bind_to_core
@@ -1812,9 +1921,13 @@ async def _sf_talent_confianza_panel(
     exposure = await _sf_talent_gold_result(
         "sap_successfactors_talent_attrition_exposure", user, 1000
     )
+    succession = await _sf_talent_gold_result(
+        "sap_successfactors_talent_succession_coverage", user, 50
+    )
     return {
         "estrellas_en_riesgo": _sf_talent_confianza_estrellas(retention, detail_rows),
-        "vacantes_criticas_sin_sucesor": _sf_talent_confianza_vacantes(),
+        "vacantes_criticas_sin_sucesor": _sf_talent_confianza_vacantes(succession),
+        "vacantes_criticas_motivo": _sf_talent_confianza_vacantes_motivo(succession),
         "cobertura_certificaciones": _sf_talent_confianza_certificaciones(certs),
         "exposicion_monetaria": _sf_talent_confianza_exposicion(exposure),
     }

@@ -172,6 +172,17 @@ class TalentConfianzaEstrellas(PublicProjectionModel):
 class TalentConfianzaVacantes(PublicProjectionModel):
     count: int = 0
     roles: list[str] = Field(default_factory=list)
+    posiciones_sin_criticidad: int | None = None
+
+    @field_validator("roles")
+    @classmethod
+    def validate_roles(cls, value: list[str]) -> list[str]:
+        return [role for role in value if role and role != "[REDACTED]"][:20]
+
+    @field_validator("posiciones_sin_criticidad")
+    @classmethod
+    def validate_posiciones_sin_criticidad(cls, value: int | None) -> int | None:
+        return value if value is None or value >= 0 else None
 
 
 class TalentConfianzaCertificaciones(PublicProjectionModel):
@@ -192,11 +203,36 @@ class TalentConfianzaExposicion(PublicProjectionModel):
     totals: list[TalentConfianzaExposicionMoneda] = Field(default_factory=list)
 
 
+_VACANTES_MOTIVOS = frozenset(
+    {
+        "sucesion_no_calculada",
+        "sucesion_no_disponible",
+        "sin_permiso",
+        "posiciones_no_extraidas",
+        "sin_posiciones_activas",
+        "criticidad_no_encontrada",
+        "criticidad_no_reconocida",
+        "criticidad_incompleta",
+        "sucesion_no_extraida",
+        "sin_nominaciones",
+        "nominaciones_sin_cruce",
+        "nominaciones_cruce_parcial",
+        "estado_nominacion_no_reconocido",
+    }
+)
+
+
 class TalentConfianzaPanel(PublicProjectionModel):
     estrellas_en_riesgo: TalentConfianzaEstrellas | None = None
     vacantes_criticas_sin_sucesor: TalentConfianzaVacantes | None = None
+    vacantes_criticas_motivo: str | None = None
     cobertura_certificaciones: TalentConfianzaCertificaciones | None = None
     exposicion_monetaria: TalentConfianzaExposicion | None = None
+
+    @field_validator("vacantes_criticas_motivo")
+    @classmethod
+    def validate_vacantes_motivo(cls, value: str | None) -> str | None:
+        return value if value in _VACANTES_MOTIVOS else None
 
 
 class ControlRoomTalentNineBoxResponse(PublicProjectionModel):

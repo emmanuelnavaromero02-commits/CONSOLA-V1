@@ -1567,7 +1567,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/services/catalog_service.py",
-      "sha256": "0fa7643068e654bb81a8aec92dbc90f1df7ef220455a2658daacdec4657babdd"
+      "sha256": "21bf8e35f5970fd999f3d0e8365f5efac214ea493846a648ff80ecff3abe5fe7"
     },
     {
       "path": "cartridges/sap_successfactors/app/services/duckdb_service.py",
@@ -1591,7 +1591,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/services/preflight.py",
-      "sha256": "c06ce9b7ff7783215b984ff2b57b82fdb1bd41df0d370c232df336d6a2fd49ef"
+      "sha256": "61aa7ccd2a20d9ae270f1b7c26dde3c60b6fc8a5481ebbec34683db1506f451a"
     },
     {
       "path": "cartridges/sap_successfactors/app/services/protection_service.py",
@@ -1664,6 +1664,10 @@
     {
       "path": "cartridges/sap_successfactors/tests/test_people_master_metadata_readiness.py",
       "sha256": "b6149a8c7c4d18430c673486a02e433e60763a4bd784149c271e0fb12cbb24f5"
+    },
+    {
+      "path": "cartridges/sap_successfactors/tests/test_position_optional_criticality.py",
+      "sha256": "8fd9d29910c6b271027976afc16ac975571f2b6c1277a85c6ff01c3f683f4ecd"
     },
     {
       "path": "cartridges/sap_successfactors/tests/test_query_kb_sql_guard_sap_successfactors.py",
@@ -2883,7 +2887,7 @@
     },
     {
       "path": "console/tests/test_control_room_talent_confianza.py",
-      "sha256": "a0a3e54348a9d619b8b4e0c4bab0754f17b3907a0f0de947429395b07c6747b5"
+      "sha256": "43a62b2ff28e11aa040206bddbed6c1ca6d265a42f5bd0470a632d67e033e0a8"
     },
     {
       "path": "console/tests/test_control_room_talent_kpis.py",
@@ -2892,6 +2896,10 @@
     {
       "path": "console/tests/test_control_room_talent_preview_guard.py",
       "sha256": "2880b9707888e093e3b006c82fba8d2439a73b198ba99dcd0fb75c77fa65b33a"
+    },
+    {
+      "path": "console/tests/test_control_room_talent_succession_vacancies.py",
+      "sha256": "e189ef2beeb15ee715962ba83d660dc3f9d2132c76bfe9efff88ed139b55b05c"
     },
     {
       "path": "console/tests/test_control_room_talent_wisdom_boundary.py",
@@ -3816,6 +3824,10 @@
     {
       "path": "refinement/tests/test_successfactors_operational_fallback.py",
       "sha256": "962b66394f309fd44593b88db1a651efd94dbaffd170a720bb1b0168197e1885"
+    },
+    {
+      "path": "refinement/tests/test_successfactors_succession_coverage_fallback.py",
+      "sha256": "e928feadd73957edae7997985e7facc231b9acdbb880a55fa3e46ddce9dbe2be"
     },
     {
       "path": "refinement/tests/test_successfactors_talent_fallbacks_are_empty.py",
@@ -5727,7 +5739,7 @@
     },
     {
       "path": "tests/test_personal_access_tokens_contract.py",
-      "sha256": "b41f205e8fa330bc6695078d06448692602c27e9beac1b488b732e464d963e34"
+      "sha256": "b416a2704e26e1388f449a636711b1ed847e50954f792019389bce7b945a5165"
     },
     {
       "path": "tests/test_personal_access_tokens_live.py",
@@ -6247,7 +6259,7 @@
     },
     {
       "path": "tests/test_sap_successfactors_datasets.py",
-      "sha256": "f161b5622cb6ec1d56e28cabb46b8f1a38f399166127549eb97e514c808838d1"
+      "sha256": "ca51ada41d742d41ee42ebc39f0cdf3e9cdcb40f5ac998f1b13131e0a762f5fb"
     },
     {
       "path": "tests/test_sap_successfactors_gold_foundation_schedule.py",
@@ -6255,11 +6267,11 @@
     },
     {
       "path": "tests/test_sap_successfactors_hints_agents.py",
-      "sha256": "70d1511c76a020f44eee8580f878a596979e75066e92254bd60d80f75620a592"
+      "sha256": "54da1bd58ef77ae81db85d8c84d7c3333f46872058f60e063ff598057da4ca5e"
     },
     {
       "path": "tests/test_sap_successfactors_kbs.py",
-      "sha256": "0525baf42e4e99ed7ead5fafe55a80e0282c530b4a50aba7b39066c75ae3a8ef"
+      "sha256": "5245418f66125b178aecf6eb76107d0fa5033e41e0d74ec9fd17f9012544dbf2"
     },
     {
       "path": "tests/test_sap_successfactors_seed_completion.py",
@@ -6596,6 +6608,18 @@
     {
       "path": "tests/test_talent_score_type_guards.py",
       "sha256": "59396fa41b5e7d7ec1d13b5c5876110c1749bfc1288881d0f010e3ffa301f402"
+    },
+    {
+      "path": "tests/test_talent_succession_coverage_parity.py",
+      "sha256": "93adb05e5e617d194b6d643f8609473f28352c6f3804fef56f96750459802d2b"
+    },
+    {
+      "path": "tests/test_talent_succession_coverage_registration.py",
+      "sha256": "d93bfd3abada2f93dd9d9c38088605327daeca273bd2907aad4db002a1517924"
+    },
+    {
+      "path": "tests/test_talent_succession_coverage_sql.py",
+      "sha256": "617adc8682c59945af8ad0a4b20fb0ebfd75525092dcfcf2f28c8cf23e4d54d1"
     },
     {
       "path": "tests/test_talent_trajectory_potential_sql.py",

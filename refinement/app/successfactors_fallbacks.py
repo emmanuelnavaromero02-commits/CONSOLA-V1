@@ -7,6 +7,10 @@ from typing import Any
 import duckdb
 
 from .successfactors_foundation_fallbacks import FOUNDATION_GOLD_FALLBACK_SQL
+from .successfactors_succession_fallbacks import (
+    SUCCESSFACTORS_DERIVED_GOLD_FALLBACKS,
+    MissingSources,
+)
 from .successfactors_talent_core_fallbacks import TALENT_CORE_FALLBACK_SQL
 from .successfactors_talent_empty_fallbacks import TALENT_EMPTY_FALLBACK_SQL
 from .successfactors_talent_readfree_fallbacks import TALENT_READFREE_EMPTY_SQL
@@ -145,17 +149,38 @@ def is_missing_successfactors_dependency_error(exc: Exception | Any) -> bool:
     return any(marker in text for marker in _MISSING_DEPENDENCY_MARKERS)
 
 
+def _structural_fallback_kind(
+    name: str, missing_sources: MissingSources | None
+) -> str | None:
+    structural = SUCCESSFACTORS_DERIVED_GOLD_FALLBACKS.get(name)
+    return structural.kind(missing_sources) if structural is not None else None
+
+
 def fallback_dataset_for_successfactors(
-    ds: dict[str, Any], exc: Exception | Any
+    ds: dict[str, Any],
+    exc: Exception | Any,
+    *,
+    missing_sources: MissingSources | None = None,
 ) -> dict[str, Any] | None:
     name = str(ds.get("name") or "")
-    sql = SUCCESSFACTORS_GOLD_FALLBACK_SQL.get(name)
-    if not sql or not is_missing_successfactors_dependency_error(exc):
+    if not is_missing_successfactors_dependency_error(exc):
+        return None
+    structural = SUCCESSFACTORS_DERIVED_GOLD_FALLBACKS.get(name)
+    if structural is not None:
+        # Derived only when the publication heads prove the input is absent.
+        if structural.kind(missing_sources) != "derived":
+            return None
+        sql = structural.build(str(ds.get("sql_def") or "")) or ""
+        sources = list(structural.sources)
+    else:
+        sql = SUCCESSFACTORS_GOLD_FALLBACK_SQL.get(name) or ""
+        sources = SUCCESSFACTORS_GOLD_FALLBACK_SOURCES.get(name, [])
+    if not sql:
         return None
     return {
         **ds,
         "sql_def": sql.strip(),
-        "sources": SUCCESSFACTORS_GOLD_FALLBACK_SOURCES.get(name, []),
+        "sources": sources,
         "description": (
             str(ds.get("description") or "").strip()
             + " Fallback operativo: dependencia SuccessFactors no materializada."
@@ -164,11 +189,18 @@ def fallback_dataset_for_successfactors(
 
 
 def readfree_empty_dataset_for_successfactors(
-    ds: dict[str, Any], exc: Exception | Any
+    ds: dict[str, Any],
+    exc: Exception | Any,
+    *,
+    missing_sources: MissingSources | None = None,
 ) -> dict[str, Any] | None:
     name = str(ds.get("name") or "")
     sql = TALENT_READFREE_EMPTY_SQL.get(name)
     if not sql or not is_missing_successfactors_dependency_error(exc):
+        return None
+    if name in SUCCESSFACTORS_DERIVED_GOLD_FALLBACKS and (
+        _structural_fallback_kind(name, missing_sources) != "readfree"
+    ):
         return None
     return {
         **ds,

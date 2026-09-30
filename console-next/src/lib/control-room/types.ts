@@ -379,6 +379,7 @@ export interface SfTalentConfianzaEstrellas {
 export interface SfTalentConfianzaVacantes {
   count: number;
   roles?: string[];
+  posiciones_sin_criticidad?: number | null;
 }
 
 export interface SfTalentConfianzaCertificaciones {
@@ -399,9 +400,25 @@ export interface SfTalentConfianzaExposicion {
   totals?: SfTalentConfianzaExposicionMoneda[];
 }
 
+export type SfTalentVacantesMotivo =
+  | "sucesion_no_calculada"
+  | "sucesion_no_disponible"
+  | "sin_permiso"
+  | "posiciones_no_extraidas"
+  | "sin_posiciones_activas"
+  | "criticidad_no_encontrada"
+  | "criticidad_no_reconocida"
+  | "criticidad_incompleta"
+  | "sucesion_no_extraida"
+  | "sin_nominaciones"
+  | "nominaciones_sin_cruce"
+  | "nominaciones_cruce_parcial"
+  | "estado_nominacion_no_reconocido";
+
 export interface SfTalentConfianza {
   estrellas_en_riesgo?: SfTalentConfianzaEstrellas | null;
   vacantes_criticas_sin_sucesor?: SfTalentConfianzaVacantes | null;
+  vacantes_criticas_motivo?: SfTalentVacantesMotivo | null;
   cobertura_certificaciones?: SfTalentConfianzaCertificaciones | null;
   exposicion_monetaria?: SfTalentConfianzaExposicion | null;
 }

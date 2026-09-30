@@ -293,7 +293,8 @@ describe("ConfianzaTilesPanel", () => {
     const markup = renderToStaticMarkup(<ConfianzaTilesPanel confianza={confianza} />);
 
     expect(markup).toContain("Estrellas en riesgo de fuga");
-    expect(markup).toContain("Vacantes críticas sin sucesor");
+    expect(markup).toContain("Posiciones críticas sin sucesor");
+    expect(markup).not.toContain("Vacantes críticas");
     expect(markup).toContain("Manager, Representante");
     expect(markup).toContain("Cobertura de certificaciones");
     expect(markup).toContain("60%");
@@ -308,23 +309,151 @@ describe("ConfianzaTilesPanel", () => {
     const markup = renderToStaticMarkup(<ConfianzaTilesPanel confianza={null} />);
 
     expect(markup).toContain("Sin información (requiere Riesgo de retención conectado)");
-    expect(markup).toContain(
-      "Sin información (requiere proyección de Sucesión publicada y criticidad por rol)",
-    );
+    expect(markup).toContain("Sin información (la cobertura de sucesión no está disponible por ahora)");
     expect(markup).toContain("Sin información (requiere Aprendizaje conectado)");
     expect(markup).toContain("Sin información (los montos de compensación están protegidos)");
     expect(markup).not.toContain("$");
     expect(markup).not.toContain("undefined");
   });
 
-  it("mantiene Vacantes en estado de espera aunque el resto tenga datos", () => {
+  it("mantiene Posiciones críticas en estado de espera aunque el resto tenga datos", () => {
     const markup = renderToStaticMarkup(
       <ConfianzaTilesPanel confianza={{ ...confianza, vacantes_criticas_sin_sucesor: null }} />,
     );
 
-    expect(markup).toContain(
-      "Sin información (requiere proyección de Sucesión publicada y criticidad por rol)",
+    expect(markup).toContain("Sin información (la cobertura de sucesión no está disponible por ahora)");
+    expect(markup).not.toContain("ninguna posición crítica");
+  });
+
+  it("nombra la causa real cuando no se encontró criticidad en los datos extraídos", () => {
+    const markup = renderToStaticMarkup(
+      <ConfianzaTilesPanel
+        confianza={{
+          ...confianza,
+          vacantes_criticas_sin_sucesor: null,
+          vacantes_criticas_motivo: "criticidad_no_encontrada",
+        }}
+      />,
     );
+
+    expect(markup).toContain(
+      "Sin información (no se encontró la criticidad de las posiciones en los datos extraídos)",
+    );
+    expect(markup).not.toContain("expone");
+    expect(markup).not.toContain("ninguna posición crítica");
+  });
+
+  it.each([
+    ["sucesion_no_calculada", "Sin información (la cobertura de sucesión aún no se ha calculado)"],
+    [
+      "sucesion_no_disponible",
+      "Sin información (la cobertura de sucesión no está disponible por ahora)",
+    ],
+    ["posiciones_no_extraidas", "Sin información (requiere extracción de posiciones)"],
+    ["sin_permiso", "Sin información (no tienes permiso para ver este dato)"],
+    ["sin_posiciones_activas", "Sin información (todas las posiciones extraídas están inactivas)"],
+    [
+      "criticidad_no_reconocida",
+      "Sin información (los valores de criticidad de las posiciones aún no se reconocen)",
+    ],
+    [
+      "criticidad_incompleta",
+      "Sin información (algunas posiciones no tienen criticidad asignada, así que no se puede confirmar que no haya posiciones críticas sin sucesor)",
+    ],
+    [
+      "nominaciones_cruce_parcial",
+      "Sin información (algunas nominaciones de sucesión no coinciden con las posiciones extraídas)",
+    ],
+    ["sucesion_no_extraida", "Sin información (requiere extracción de sucesión)"],
+    [
+      "sin_nominaciones",
+      "Sin información (no se encontraron nominaciones de sucesión a posiciones en los datos extraídos)",
+    ],
+    [
+      "nominaciones_sin_cruce",
+      "Sin información (las nominaciones de sucesión no coinciden con las posiciones extraídas)",
+    ],
+    [
+      "estado_nominacion_no_reconocido",
+      "Sin información (no se pudieron interpretar los estados de las nominaciones de sucesión)",
+    ],
+  ] as const)("usa la copia de espera para %s", (motivo, copy) => {
+    const markup = renderToStaticMarkup(
+      <ConfianzaTilesPanel
+        confianza={{ vacantes_criticas_sin_sucesor: null, vacantes_criticas_motivo: motivo }}
+      />,
+    );
+
+    expect(markup).toContain(copy);
+    expect(markup).not.toContain("ninguna posición crítica");
+  });
+
+  it("muestra el conteo real y las posiciones sin sucesor activo", () => {
+    const markup = renderToStaticMarkup(
+      <ConfianzaTilesPanel
+        confianza={{
+          vacantes_criticas_sin_sucesor: {
+            count: 6,
+            roles: ["Gerente de Planta", "Jefe de Compras", "Director", "Contralor", "Tesorero"],
+          },
+          vacantes_criticas_motivo: null,
+        }}
+      />,
+    );
+
+    expect(markup).toContain(">6<");
+    expect(markup).toContain("Posiciones: Gerente de Planta, Jefe de Compras, Director, Contralor…");
+    expect(markup).not.toContain("Tesorero");
+    expect(markup).toContain("criticidad según los datos de posiciones extraídos");
+    expect(markup).not.toContain("Sin información (requiere extracción de sucesión)");
+  });
+
+  it("no inventa posiciones cuando el conteo es real pero sin nombres", () => {
+    const zero = renderToStaticMarkup(
+      <ConfianzaTilesPanel confianza={{ vacantes_criticas_sin_sucesor: { count: 0, roles: [] } }} />,
+    );
+    const unnamed = renderToStaticMarkup(
+      <ConfianzaTilesPanel confianza={{ vacantes_criticas_sin_sucesor: { count: 3, roles: [] } }} />,
+    );
+
+    expect(zero).toContain("ninguna posición crítica sin sucesor activo");
+    expect(unnamed).toContain("posiciones críticas sin sucesor activo");
+    expect(unnamed).not.toContain("Posiciones:");
+  });
+
+  it("marca con … cuando el conteo supera los nombres mostrados", () => {
+    const partial = renderToStaticMarkup(
+      <ConfianzaTilesPanel confianza={{ vacantes_criticas_sin_sucesor: { count: 3, roles: ["Gerente"] } }} />,
+    );
+    const complete = renderToStaticMarkup(
+      <ConfianzaTilesPanel
+        confianza={{ vacantes_criticas_sin_sucesor: { count: 2, roles: ["Gerente", "Jefe"] } }}
+      />,
+    );
+
+    expect(partial).toContain("Posiciones: Gerente…");
+    expect(complete).toContain("Posiciones: Gerente, Jefe");
+    expect(complete).not.toContain("Jefe…");
+  });
+
+  it("aclara cuántas posiciones sin criticidad no se cuentan", () => {
+    const render = (sinCriticidad: number | null) =>
+      renderToStaticMarkup(
+        <ConfianzaTilesPanel
+          confianza={{
+            vacantes_criticas_sin_sucesor: {
+              count: 2,
+              roles: ["Gerente", "Jefe"],
+              posiciones_sin_criticidad: sinCriticidad,
+            },
+          }}
+        />,
+      );
+
+    expect(render(3)).toContain("3 posiciones no tienen criticidad asignada y no se cuentan");
+    expect(render(1)).toContain("1 posición no tiene criticidad asignada y no se cuenta");
+    expect(render(0)).not.toContain("criticidad asignada");
+    expect(render(null)).not.toContain("criticidad asignada");
   });
 });
 

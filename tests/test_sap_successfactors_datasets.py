@@ -23,7 +23,7 @@ HEADER_RE = re.compile(
     r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$"
 )
 EXPECTED_SILVER = 72
-EXPECTED_GOLD = 37
+EXPECTED_GOLD = 38
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
 BASE_MIGRATION_DEDUP_KEYS = {
     "sap_successfactors_user_latest.sql": ("userId",),

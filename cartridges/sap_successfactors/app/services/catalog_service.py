@@ -181,6 +181,8 @@ def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
         data["effective_dated"] = True
     if yaml_entity.get("select_fields") and not data.get("select_fields"):
         data["select_fields"] = yaml_entity["select_fields"]
+    if yaml_entity.get("optional_select_fields") and not data.get("optional_select_fields"):
+        data["optional_select_fields"] = yaml_entity["optional_select_fields"]
     if yaml_entity.get("protection") and not data.get("protection"):
         data["protection"] = yaml_entity["protection"]
     return data
@@ -536,13 +538,26 @@ def _prepare_config_with_metadata_fields(
         ):
             present_select_fields.append(actual_field)
 
+    # Optional fields are selected only when the tenant metadata exposes them.
+    optional_fields = _list_fields(config.get("optional_select_fields"))
+    optional_selected = [field for field in optional_fields if field in metadata_fields]
+    if select_fields:
+        for field in optional_selected:
+            if field not in present_select_fields:
+                present_select_fields.append(field)
+
     prepared = dict(config)
     if select_fields:
         prepared["select_fields"] = present_select_fields
         configured_expected = _list_fields(config.get("expected_select_fields")) or select_fields
         prepared["expected_select_fields"] = list(
-            dict.fromkeys([*configured_expected, *required_fields])
+            dict.fromkeys([*configured_expected, *required_fields, *optional_selected])
         )
+    if optional_fields:
+        prepared["metadata_optional_fields_selected"] = optional_selected
+        prepared["metadata_optional_fields_absent"] = [
+            field for field in optional_fields if field not in metadata_fields
+        ]
     if missing_select_fields:
         prepared["metadata_status"] = "select_pruned"
         prepared["metadata_pruned_fields"] = missing_select_fields
