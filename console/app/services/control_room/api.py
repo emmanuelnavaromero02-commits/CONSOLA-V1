@@ -1750,6 +1750,15 @@ def _sf_talent_confianza_certificaciones(
 
 
 @_bind_to_core
+def _sf_talent_round_significant(value: float) -> float:
+    if not value:
+        return 0.0
+    exact = Decimal(repr(float(value)))
+    step = Decimal(1).scaleb(exact.adjusted() - 1)
+    return float(exact.quantize(step, rounding="ROUND_HALF_UP"))
+
+
+@_bind_to_core
 def _sf_talent_confianza_exposicion(
     exposure_result: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -1778,9 +1787,11 @@ def _sf_talent_confianza_exposicion(
         totals.append(
             {
                 **entry,
-                "annualized_comp_total": round(entry["annualized_comp_total"], 2),
-                "annualized_comp_avg": round(
-                    entry["annualized_comp_total"] / entry["headcount"], 2
+                "annualized_comp_total": _sf_talent_round_significant(
+                    entry["annualized_comp_total"]
+                ),
+                "annualized_comp_avg": _sf_talent_round_significant(
+                    entry["annualized_comp_total"] / entry["headcount"]
                 ),
             }
         )

@@ -22,6 +22,7 @@ from dataset_refresh_outcome import (
     RESULT_SKIPPED,
     classify_materialization_payload,
     missing_source_error_code,
+    outdated_dependency,
 )
 from runtime_security_context import build_materialize_context
 from service_job_client import ServiceJobError, run_service_job
@@ -83,7 +84,12 @@ def _structural_absence(
         if source.startswith("raw/") and item.get("materialized") is not False:
             continue
         absent.append(source)
-    return f"upstream_never_materialized:{absent[0]}" if absent else None
+    if absent:
+        return f"upstream_never_materialized:{absent[0]}"
+    outdated = outdated_dependency(exc)
+    if outdated in upstreams and outdated not in refreshed:
+        return f"upstream_outdated:{outdated}"
+    return None
 
 
 def _reused_layer(item: dict[str, Any], payload: dict[str, Any]) -> str:

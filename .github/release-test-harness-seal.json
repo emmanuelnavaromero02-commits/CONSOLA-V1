@@ -63,11 +63,11 @@
     },
     {
       "path": "airflow/dags/dataset_refresh_materialize.py",
-      "sha256": "4aee0e8cd3d65f119ffb4511f34a35c8744c8edd28bd7d5db0d94d3b01a9db78"
+      "sha256": "a9921b085709dd372ef77ed7a6d51ec4bbbbf51d3902af51255513ebe60df2d1"
     },
     {
       "path": "airflow/dags/dataset_refresh_outcome.py",
-      "sha256": "84ff646c512dbfd2eb2369af4b5d3e4c1b243088c7ae4b7d26ae9981fc6f961c"
+      "sha256": "9a6051cf931ef5d773e01cc313bcb80d5f8cb29352b646e181bba2523321520e"
     },
     {
       "path": "airflow/dags/entity_scheduler.py",
@@ -1923,7 +1923,7 @@
     },
     {
       "path": "console/tests/ia_gateway_fixtures.py",
-      "sha256": "dd2606f148a04dbae58550fecca964f8ea730df495ec49068581c6910b58449d"
+      "sha256": "e066ecd424c1bd007a6df8c748e5ab533efbaea8f0358dbd19046bddd2facaa4"
     },
     {
       "path": "console/tests/procedural_language_corpus.py",
@@ -1947,11 +1947,11 @@
     },
     {
       "path": "console/tests/test_access_tokens_router.py",
-      "sha256": "35e5e03dc994a528fd51108afbf65854bf8fc1e634b18b2a2dac9004539dd7d5"
+      "sha256": "9c315e5083c84d0558d676741860ab156bb1315d4fd4fcc6080c826a8fca3f07"
     },
     {
       "path": "console/tests/test_access_tokens_service.py",
-      "sha256": "31f156a19a690305441d5cd4cb4d50ad4ae7eb5e5a638bb32677830e1122383d"
+      "sha256": "3293610bddde56efecc8be25bb444ed6b8f0b193de3a4f73625bd1abe73f0672"
     },
     {
       "path": "console/tests/test_accounts_lifecycle.py",
@@ -1995,7 +1995,7 @@
     },
     {
       "path": "console/tests/test_app_forge.py",
-      "sha256": "f24009028e49bf6d862a708bf314cc0e214f50a31e367a312a1a6869214dfd2b"
+      "sha256": "432bf53dda3ef68370b25b085c893c90bd1b9a6073591eb94a9531cbe3db1645"
     },
     {
       "path": "console/tests/test_app_publication.py",
@@ -2883,7 +2883,7 @@
     },
     {
       "path": "console/tests/test_control_room_talent_confianza.py",
-      "sha256": "bffd005efd829f14d87f63db1b0af7e80cfc06a973faddb6a48dc8b73fe4aa20"
+      "sha256": "a0a3e54348a9d619b8b4e0c4bab0754f17b3907a0f0de947429395b07c6747b5"
     },
     {
       "path": "console/tests/test_control_room_talent_kpis.py",
@@ -3179,7 +3179,7 @@
     },
     {
       "path": "console/tests/test_mcp_gateway_actions.py",
-      "sha256": "ee5b7ae88e32c3254d894e678b640c98e37cfc082da46bfef41ea6dd99d0af7f"
+      "sha256": "984bd22feb3a387d155dfb4ee96c7cc4236b64cc92132d9b844e111a82ae794f"
     },
     {
       "path": "console/tests/test_mcp_gateway_catalog.py",
@@ -3543,7 +3543,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "c740333d6248c46485056a52e1e7d22834bbbd6446868b1309c34374652467c4"
+      "sha256": "559f64dcd6ee0b8f7c1ba0f0268fe0c115fe58c2993a6dda327445b9c9a44757"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3631,7 +3631,7 @@
     },
     {
       "path": "refinement/tests/test_bronze_query_table_function_sandbox.py",
-      "sha256": "d447a68ceae823adc032756f8450b82a7469d5a51efecffb3d0d836dd4abff1d"
+      "sha256": "b027489c28215de2011843dcc432470031b9cca95deaf746788e0ab1c7eceb47"
     },
     {
       "path": "refinement/tests/test_bronze_source_discovery.py",
@@ -3800,6 +3800,14 @@
     {
       "path": "refinement/tests/test_successfactors_candidate_contract.py",
       "sha256": "95bb2bd62ca1ab697ed8953b23bb5a9a783c7d0ccc4983687e116f22664f0db2"
+    },
+    {
+      "path": "refinement/tests/test_successfactors_exposure_materializer.py",
+      "sha256": "5f30b1dca8820e4aa78eaef929cdd7bedbb776a39fe2068aa421a949b68e8aa2"
+    },
+    {
+      "path": "refinement/tests/test_successfactors_exposure_staged_publication.py",
+      "sha256": "3f6bd7f269dc1a3872412182a4d1637cc3f483275156ee202cd3784efe7633bf"
     },
     {
       "path": "refinement/tests/test_successfactors_gold_dataset_orders_single_source.py",
@@ -4343,11 +4351,11 @@
     },
     {
       "path": "tests/test_aws_compose_required_env.py",
-      "sha256": "c00fae936e8cf9f27e62590dde694437b605794d34f4680e195886eaff53aaca"
+      "sha256": "8feb45a28dcf98fce5f90233a87b548ac7444c3ddbda80e48dfd8fec08650121"
     },
     {
       "path": "tests/test_aws_compose_secret_scoping.py",
-      "sha256": "59e3ac526ef2527df58f1e565ee9a6205705cb542b41ae4738653aa5ce72982e"
+      "sha256": "1e364f7e5c85e1cd1827513b19d69ef150f0ba4e5ff860f0202d58da74d81e6f"
     },
     {
       "path": "tests/test_aws_compose_uses_omega_roles.py",
@@ -5015,7 +5023,7 @@
     },
     {
       "path": "tests/test_dataset_refresh_chain_fail_closed.py",
-      "sha256": "045bf46a223ab62632ec434584634f271cefec3d8f29c0e7546edf370f5d0604"
+      "sha256": "38bdae2f97d65221a85f956fdd53b3572cfdee17edd08db0a99990f1b5daecb6"
     },
     {
       "path": "tests/test_dataset_refresh_graph_cartridge_seed.py",
@@ -5914,6 +5922,10 @@
       "sha256": "661c2635a1b39e79139ae37299d7eba62efc608cb17194471bbd7434feb87643"
     },
     {
+      "path": "tests/test_refinement_field_key_custody.py",
+      "sha256": "3d75b0660de99132d27b399d3efae00031b4550adf3df0724bc10d8418b29974"
+    },
+    {
       "path": "tests/test_refinement_healthz_real.py",
       "sha256": "ac347ffc65d7573311c2cd499413761c944c59d902f6f40616856deb36fb6442"
     },
@@ -6551,7 +6563,7 @@
     },
     {
       "path": "tests/test_talent_attrition_exposure_sql.py",
-      "sha256": "eb03d571c987124207d133d1435ab5e3bf40a496338c64eff813f0227f34b38c"
+      "sha256": "2352856975a6229df35954e21a7ca881e195902cbea03625c9fcfeb289afad9b"
     },
     {
       "path": "tests/test_talent_benchmark_approval_authority.py",

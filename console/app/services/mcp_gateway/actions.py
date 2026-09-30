@@ -18,6 +18,7 @@ MAX_TABLES = 100
 MAX_SNIPPET_CHARS = 1_200
 MAX_TEXT_CHARS = 300
 FAILED_RUN_STATUSES = frozenset({"failed", "error", "upstream_failed", "partial"})
+ACTIVE_RUN_STATUSES = frozenset({"queued", "running"})
 PROBLEM_STATES = frozenset({"unavailable", "paused_by_operator"})
 SIN_INFORMACION = "Sin información"
 REUSE_CLOCK_SKEW = timedelta(seconds=2)
@@ -759,6 +760,12 @@ def _started_before(value: Any, moment: datetime) -> bool:
     return started is not None and started < moment - REUSE_CLOCK_SKEW
 
 
+def _run_is_active(payload: Mapping[str, Any]) -> bool:
+    if "active" in payload:
+        return bool(payload.get("active"))
+    return str(payload.get("status") or "").lower() in ACTIVE_RUN_STATUSES
+
+
 async def ejecutar_extraccion(user: dict[str, Any], args: BaseModel) -> ActionResult:
     parsed = _args(catalog.EjecutarExtraccionArgs, args)
     source_id = sources.resolve_source(parsed.fuente, user)
@@ -772,7 +779,8 @@ async def ejecutar_extraccion(user: dict[str, Any], args: BaseModel) -> ActionRe
     if run_id:
         origin = await adapters.sync_run_origin(user, cartridge=source_id, run_id=run_id) or {}
         stored = origin.get("request_id")
-        already_running = stored is not None and stored != request_id
+        # A run with no recorded request id (scheduled or manual) was not started by this call.
+        already_running = stored != request_id and (stored is not None or _run_is_active(payload))
         reused = (
             bool(parsed.clave_idempotencia)
             and stored == request_id
@@ -789,7 +797,10 @@ async def ejecutar_extraccion(user: dict[str, Any], args: BaseModel) -> ActionRe
         ),
     }
     if already_running:
-        resumen = "Ya había una extracción en curso para esta fuente; se informa esa ejecución."
+        resumen = (
+            "Ya había una extracción en curso para esta fuente; no se inició otra "
+            "y se informa esa ejecución."
+        )
     elif reused:
         resumen = (
             "Esta solicitud ya se había registrado con la misma clave de idempotencia; "
@@ -801,31 +812,36 @@ async def ejecutar_extraccion(user: dict[str, Any], args: BaseModel) -> ActionRe
 
 
 APP_NAME_BUSY = (
-    "Ya se está publicando una aplicación con ese nombre en este espacio de trabajo; "
-    "espera a que termine y consulta si quedó publicada antes de reintentar."
+    "Ya se está publicando una aplicación con ese nombre; espera a que termine y "
+    "consulta si quedó publicada antes de reintentar, o elige otro nombre."
 )
 
 
 async def crear_app_analitica(user: dict[str, Any], args: BaseModel) -> ActionResult:
     parsed = _args(catalog.CrearAppAnaliticaArgs, args)
     base = adapters.public_base_url()
-    async with adapters.app_name_lock(user, name=parsed.nombre) as acquired:
-        if not acquired:
-            raise GatewayError(409, "operacion_en_curso", APP_NAME_BUSY)
-        if await adapters.app_name_in_use(user, name=parsed.nombre):
-            path = adapters.app_viewer_path(parsed.nombre)
+
+    async def ensure_name_free(name: str) -> None:
+        if await adapters.app_name_in_use(user, name=name):
+            path = adapters.app_viewer_path(name)
             raise GatewayError(
                 409,
                 "nombre_en_uso",
                 "Ya existe una aplicación con ese nombre en este espacio de trabajo; elige otro nombre.",
-                datos={"nombre": parsed.nombre, "enlace": f"{base}{path}" if base else path},
+                datos={"nombre": name, "enlace": f"{base}{path}" if base else path},
             )
+
+    async with adapters.app_name_lock(user, name=parsed.nombre) as acquired:
+        if not acquired:
+            raise GatewayError(409, "operacion_en_curso", APP_NAME_BUSY)
+        await ensure_name_free(parsed.nombre)
         result = await adapters.create_analytic_app(
             user,
             name=parsed.nombre,
             objective=parsed.objetivo,
             datasets=list(parsed.tablas),
             description=parsed.descripcion,
+            before_publish=ensure_name_free,
         )
     path = adapters.app_viewer_path(str(result.get("name") or parsed.nombre))
     return ActionResult(

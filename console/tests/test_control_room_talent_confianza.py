@@ -256,28 +256,25 @@ async def test_confianza_computes_real_tiles_from_gold_aggregates(monkeypatch):
         ],
         "sap_successfactors_talent_attrition_exposure": [
             {
-                "department_name": "Ventas",
                 "risk_band": "high",
                 "currency": "MXN",
-                "headcount": 6,
-                "annualized_comp_total": 600000.0,
-                "annualized_comp_avg": 100000.0,
+                "headcount": 11,
+                "annualized_comp_total": 1000000.0,
+                "annualized_comp_avg": 91000.0,
             },
             {
-                "department_name": "Planta",
-                "risk_band": "high",
-                "currency": "MXN",
-                "headcount": 5,
-                "annualized_comp_total": 400000.0,
-                "annualized_comp_avg": 80000.0,
-            },
-            {
-                "department_name": "Corporativo",
                 "risk_band": "medium",
                 "currency": "USD",
                 "headcount": 7,
                 "annualized_comp_total": 700000.0,
                 "annualized_comp_avg": 100000.0,
+            },
+            {
+                "risk_band": "low",
+                "currency": "MXN",
+                "headcount": 4,
+                "annualized_comp_total": 300000.0,
+                "annualized_comp_avg": 75000.0,
             },
         ],
     }
@@ -311,8 +308,9 @@ async def test_confianza_computes_real_tiles_from_gold_aggregates(monkeypatch):
     }
     assert totals[("high", "MXN")]["headcount"] == 11
     assert totals[("high", "MXN")]["annualized_comp_total"] == 1000000.0
-    assert totals[("high", "MXN")]["annualized_comp_avg"] == pytest.approx(90909.09)
+    assert totals[("high", "MXN")]["annualized_comp_avg"] == 91000.0
     assert totals[("medium", "USD")]["annualized_comp_total"] == 700000.0
+    assert totals[("medium", "USD")]["annualized_comp_avg"] == 100000.0
     assert len(totals) == 2
 
     projected = project_public_control_room_response(
@@ -340,3 +338,27 @@ async def test_roster_projection_keeps_potential_basis(monkeypatch):
     payload = projected.model_dump()
     assert payload["roster"]
     assert payload["roster"][0]["potential_basis"] == "trayectoria_observada"
+
+
+def test_exposure_totals_never_gain_precision_when_rows_are_summed():
+    exposicion = control_room_service._sf_talent_confianza_exposicion(
+        {
+            "status": "ready",
+            "rows": [
+                {"risk_band": "high", "currency": "MXN", "headcount": 7,
+                 "annualized_comp_total": 2300000.0},
+                {"risk_band": "high", "currency": "MXN", "headcount": 5,
+                 "annualized_comp_total": 470000.0},
+                {"risk_band": "low", "currency": "MXN", "headcount": 4,
+                 "annualized_comp_total": 90000.0},
+            ],
+        }
+    )
+
+    (entry,) = exposicion["totals"]
+    assert entry["headcount"] == 12
+    assert entry["annualized_comp_total"] == 2800000.0
+    assert entry["annualized_comp_avg"] == 230000.0
+    assert control_room_service._sf_talent_round_significant(0) == 0.0
+    assert control_room_service._sf_talent_round_significant(469135.0) == 470000.0
+    assert control_room_service._sf_talent_round_significant(125000.0) == 130000.0

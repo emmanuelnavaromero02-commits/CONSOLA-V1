@@ -1229,3 +1229,174 @@ def test_forged_classification_contracts_fail_closed(
             invocation,
             allow_partial=True,
         )
+
+
+_EXPOSURE = "sap_successfactors_talent_attrition_exposure"
+_RECURRING = "sap_successfactors_emppaycomprecurring_latest"
+_RISK = "sap_successfactors_talent_retention_risk"
+
+
+def _outdated_input(module, dependency: str | None = _RECURRING):
+    detail = {"code": "dependency_not_materialized", "message": "m", "request_id": "r"}
+    if dependency is not None:
+        detail["dependency"] = dependency
+    return module.ServiceJobError(
+        "job j-1 failed with HTTP 409", status_code=409, result={"detail": detail}
+    )
+
+
+def _exposure_plan() -> list[dict]:
+    return [
+        _item(_RISK, "gold"),
+        _item(_EXPOSURE, "gold", upstreams=(_RECURRING, _RISK)),
+    ]
+
+
+def test_outdated_exposure_input_outside_the_run_is_a_structural_skip(
+    monkeypatch,
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+
+    invocation, finished, posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=_exposure_plan(),
+        outcomes={
+            _RISK: _payload(_RISK),
+            _EXPOSURE: _outdated_input(dataset_refresh_materialize),
+        },
+    )
+
+    assert posts == [_RISK, _EXPOSURE]
+    classes = {item["name"]: item["classification"] for item in invocation["results"]}
+    assert classes == {_RISK: "ok", _EXPOSURE: "skipped"}
+    assert finished[_EXPOSURE]["skipped_reason"] == f"upstream_outdated:{_RECURRING}"
+    saved, _intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
+    assert saved == ["running", "partial"]
+
+
+@pytest.mark.parametrize(
+    "plan, outcomes_extra, dependency",
+    [
+        (
+            [
+                _item(_RECURRING, "silver"),
+                _item(_EXPOSURE, "gold", upstreams=(_RECURRING,)),
+            ],
+            {_RECURRING: {"name": _RECURRING, "layer": "silver", "row_count": 4}},
+            _RECURRING,
+        ),
+        ([_item(_EXPOSURE, "gold", upstreams=(_RECURRING,))], {}, _RISK),
+        ([_item(_EXPOSURE, "gold", upstreams=(_RECURRING,))], {}, None),
+        ([_item(_EXPOSURE, "gold", upstreams=(_RECURRING,))], {}, "  "),
+    ],
+    ids=["refreshed-this-run", "not-an-upstream", "unnamed", "blank"],
+)
+def test_outdated_input_claims_that_are_not_structural_still_fail(
+    monkeypatch, plan: list[dict], outcomes_extra: dict, dependency: str | None
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+
+    invocation, finished, _posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=plan,
+        outcomes={
+            **outcomes_extra,
+            _EXPOSURE: _outdated_input(dataset_refresh_materialize, dependency),
+        },
+        allow_partial=True,
+    )
+
+    assert invocation["results"][-1]["classification"] == "failed"
+    assert "skipped_reason" not in finished[_EXPOSURE]
+
+
+def test_outdated_dependency_is_never_read_from_other_codes_or_statuses(
+    monkeypatch,
+) -> None:
+    dataset_refresh_outcome = load_dag(monkeypatch, "dataset_refresh_outcome")
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    detail = {"code": "source_files_missing", "dependency": _RECURRING}
+
+    for error in (
+        dataset_refresh_materialize.ServiceJobError(
+            "x", status_code=409, result={"detail": detail}
+        ),
+        dataset_refresh_materialize.ServiceJobError(
+            "x",
+            status_code=503,
+            result={"detail": {**detail, "code": "dependency_not_materialized"}},
+        ),
+        RuntimeError("dependency_not_materialized sap_successfactors_emppaycomprecurring_latest"),
+    ):
+        assert dataset_refresh_outcome.outdated_dependency(error) is None
+
+
+@pytest.mark.parametrize(
+    "status, degraded, rows, expected",
+    [
+        ("missing_key", True, 0, "degraded"),
+        ("invalid_key", True, 0, "degraded"),
+        ("no_publishable_groups", True, 0, "degraded"),
+        ("published", False, 3, "ok"),
+    ],
+)
+def test_status_payloads_classify_on_the_typed_degraded_flag(
+    monkeypatch, status: str, degraded: bool, rows: int, expected: str
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+
+    invocation, finished, _posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=[_item(_EXPOSURE, "gold")],
+        outcomes={
+            _EXPOSURE: {
+                "name": _EXPOSURE,
+                "layer": "gold",
+                "row_count": rows,
+                "status": status,
+                "degraded": degraded,
+            }
+        },
+    )
+
+    (result,) = invocation["results"]
+    assert result["classification"] == expected
+    assert result["row_count"] == rows
+    assert finished[_EXPOSURE]["degraded"] is degraded
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"name": _EXPOSURE, "layer": "gold", "row_count": 0, "degraded": True},
+        {"name": _EXPOSURE, "layer": "gold", "row_count": 0, "status": "", "degraded": True},
+        {"name": _EXPOSURE, "layer": "gold", "row_count": 0, "status": "x", "degraded": "yes"},
+        {"name": _EXPOSURE, "layer": "gold", "row_count": 0, "status": 1, "degraded": True},
+        {"name": "other", "layer": "gold", "row_count": 0, "status": "x", "degraded": True},
+        {"name": _EXPOSURE, "layer": "raw", "row_count": 0, "status": "x", "degraded": True},
+        {"name": _EXPOSURE, "layer": "gold", "row_count": -1, "status": "x", "degraded": True},
+        {
+            "name": _EXPOSURE, "layer": "gold", "row_count": 0, "status": "x",
+            "degraded": True, "storage_uri": "s3://x",
+        },
+        {"name": _EXPOSURE, "layer": "gold", "row_count": 0, "status": "x",
+         "degraded": True, "ok": False},
+    ],
+)
+def test_malformed_status_payloads_fail_closed(monkeypatch, payload: dict) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+
+    invocation, finished, _posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=[_item(_EXPOSURE, "gold")],
+        outcomes={_EXPOSURE: payload},
+        allow_partial=True,
+    )
+
+    assert invocation["results"][0]["classification"] == "failed"
+    assert finished[_EXPOSURE]["success"] is False

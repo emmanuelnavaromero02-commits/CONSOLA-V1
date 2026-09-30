@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import quote
 
@@ -115,6 +116,7 @@ async def generate_and_publish_app(
     description: str = "",
     objective: str,
     datasets: list[str],
+    before_publish: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     if not permissions.has_permission(user or {}, "apps.write"):
         raise AppForgeError(
@@ -156,6 +158,8 @@ async def generate_and_publish_app(
 
     html = _clean_html(reply)
     _validate_generated_html(html, clean_datasets)
+    if before_publish is not None:
+        await before_publish(app_name)
 
     # HTML travels server-to-server only; it never enters copilot tool args.
     publish_result = await mcp_registry.invoke(

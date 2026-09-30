@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 import duckdb
-import pytest
-
-from tests.test_talent_nine_box_downstream import _copy, _dataset_sql, _quoted
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,116 +13,78 @@ DATASET = (
     / "cartridges/sap_successfactors/datasets"
     / "sap_successfactors_talent_attrition_exposure.sql"
 )
-_EMPTY_FEED_BLOCK = (
-    "    SELECT\n"
-    "        user_id,\n"
-    "        CAST(NULL AS DECIMAL(18, 2)) AS annual_amount,\n"
-    "        CAST(NULL AS VARCHAR) AS currency\n"
-    "    FROM compensation_headers\n"
-    "    WHERE FALSE"
-)
+MATERIALIZER = ROOT / "refinement/app/successfactors_exposure_materializer.py"
+EXPECTED_SOURCES = [
+    "silver/sap_successfactors/sap_successfactors_emppaycomprecurring_latest",
+    "silver/sap_successfactors/sap_successfactors_emppaycompnonrecurring_latest",
+    "gold/sap_successfactors/sap_successfactors_talent_retention_risk",
+]
+EXPECTED_COLUMNS = [
+    "risk_band",
+    "currency",
+    "headcount",
+    "annualized_comp_total",
+    "annualized_comp_avg",
+    "excluded_undecryptable",
+    "excluded_unknown_frequency",
+    "excluded_invalid_amount",
+    "excluded_non_recurring_365d",
+    "privacy_rule",
+    "contract_version",
+    "generated_at",
+]
 
 
-@pytest.fixture()
-def con():
-    connection = duckdb.connect()
+def _text() -> str:
+    return DATASET.read_text(encoding="utf-8")
+
+
+def _body() -> str:
+    return "\n".join(
+        line for line in _text().splitlines() if not line.lstrip().startswith("--")
+    )
+
+
+def test_contract_sql_yields_zero_rows_with_the_published_columns():
+    con = duckdb.connect()
     try:
-        yield connection
+        result = con.execute(_text())
+        columns = [item[0] for item in result.description]
+        rows = result.fetchall()
     finally:
-        connection.close()
-
-
-def _risk(con: duckdb.DuckDBPyConnection, tmp_path: Path, groups: dict[str, int]) -> Path:
-    rows = []
-    for department, size in groups.items():
-        rows.extend(
-            f"('{department}-{index}', '{department}', 'high', FALSE)"
-            for index in range(size)
-        )
-    con.execute(
-        "CREATE TABLE risk_src(user_id VARCHAR, department_name VARCHAR, "
-        "risk_band VARCHAR, invalid_score_input BOOLEAN)"
-    )
-    con.execute("INSERT INTO risk_src VALUES " + ", ".join(rows))
-    path = tmp_path / "risk.parquet"
-    _copy(con, "risk_src", path)
-    return path
-
-
-def _headers(con: duckdb.DuckDBPyConnection, tmp_path: Path) -> Path:
-    con.execute(
-        "CREATE TABLE headers_src AS SELECT DISTINCT user_id, 'PG'::VARCHAR pay_group "
-        "FROM risk_src"
-    )
-    path = tmp_path / "headers.parquet"
-    _copy(con, "headers_src", path)
-    return path
-
-
-def _exposure_sql(risk: Path, headers: Path) -> str:
-    return _dataset_sql(
-        "sap_successfactors_talent_attrition_exposure",
-        {
-            "sap_successfactors_empcompensation_latest": headers,
-            "sap_successfactors_talent_retention_risk": risk,
-        },
-    )
-
-
-def test_shipped_sql_yields_zero_rows_while_amounts_stay_encrypted(con, tmp_path):
-    risk = _risk(con, tmp_path, {"Ventas": 6})
-    headers = _headers(con, tmp_path)
-    rows = con.execute(_exposure_sql(risk, headers)).fetchall()
+        con.close()
     assert rows == []
+    assert columns == EXPECTED_COLUMNS
 
 
-def test_shipped_sql_never_touches_encrypted_compensation_columns():
-    body = DATASET.read_text(encoding="utf-8").lower()
+def test_contract_sql_never_reads_or_names_encrypted_compensation():
+    body = _body().lower()
+    assert "read_parquet" not in body
     assert "paycomp" not in body
-    assert _EMPTY_FEED_BLOCK in DATASET.read_text(encoding="utf-8")
+    assert "s3://" not in body
+    assert "paycomp_value" not in _text().lower()
+    assert "user_id" not in _text().lower()
 
 
-def _sql_with_cleared_amounts(con, tmp_path: Path, risk: Path, headers: Path) -> str:
-    con.execute(
-        """
-        CREATE TABLE amounts_src AS
-        SELECT user_id,
-               CASE WHEN department_name = 'Mixta' AND user_id LIKE '%-0'
-                    THEN 500000.0 ELSE 100000.0 END AS annual_amount,
-               CASE WHEN department_name = 'Mixta' AND user_id LIKE '%-0'
-                    THEN 'USD' ELSE 'MXN' END AS currency
-        FROM risk_src
-        """
+def test_contract_sql_delegates_to_the_python_aggregate_materializer():
+    text = _text()
+    assert "managed_by_sap_successfactors_exposure_materializer" in text
+    assert re.search(r"\bWHERE\s+FALSE\b", _body())
+    assert "'aggregate_min5_dominance50_unitmax' AS privacy_rule" in text
+    assert "'talent_attrition_exposure.v4' AS contract_version" in text
+    sources = json.loads(
+        re.match(r"^--\s+sources:\s+(\[.*\])\s*$", text.splitlines()[1]).group(1)
     )
-    amounts = tmp_path / "amounts.parquet"
-    _copy(con, "amounts_src", amounts)
-    sql = _exposure_sql(risk, headers)
-    assert _EMPTY_FEED_BLOCK in sql
-    return sql.replace(
-        _EMPTY_FEED_BLOCK,
-        "    SELECT user_id, annual_amount, currency "
-        f"FROM read_parquet({_quoted(amounts)})",
-        1,
-    )
+    assert sources == EXPECTED_SOURCES
+    materializer = MATERIALIZER.read_text(encoding="utf-8")
+    for source in EXPECTED_SOURCES:
+        assert f'"{source}"' in materializer
+    assert "MIN_GROUP_SIZE = 5" in materializer
+    assert 'DOMINANCE_SHARE = Decimal("0.5")' in materializer
+    assert "SIGNIFICANT_DIGITS = 2" in materializer
 
 
-def test_group_rule_and_per_currency_aggregation(con, tmp_path):
-    risk = _risk(con, tmp_path, {"Ventas": 6, "Chica": 4, "Mixta": 7})
-    headers = _headers(con, tmp_path)
-    sql = _sql_with_cleared_amounts(con, tmp_path, risk, headers)
-    rows = con.execute(sql).fetchall()
-    columns = [item[0] for item in con.execute(sql).description]
-    assert "user_id" not in columns
-    by_group = {(row[0], row[1], row[2]): row for row in rows}
-
-    ventas = by_group[("Ventas", "high", "MXN")]
-    assert ventas[3] == 6
-    assert float(ventas[4]) == pytest.approx(600000.0)
-    assert float(ventas[5]) == pytest.approx(100000.0)
-
-    assert ("Chica", "high", "MXN") not in by_group
-    assert ("Mixta", "high", "USD") not in by_group
-    mixta = by_group[("Mixta", "high", "MXN")]
-    assert mixta[3] == 6
-    assert float(mixta[4]) == pytest.approx(600000.0)
-    assert all(row[3] >= 5 for row in rows)
+def test_decryption_never_becomes_a_sql_function():
+    materializer = MATERIALIZER.read_text(encoding="utf-8")
+    for forbidden in ("create_function", ".register(", "CREATE MACRO", "CREATE FUNCTION"):
+        assert forbidden not in materializer

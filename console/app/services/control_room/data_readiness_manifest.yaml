@@ -189,12 +189,14 @@ datasets:
       - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
   - cartridge: sap_successfactors
     dataset: sap_successfactors_talent_attrition_exposure
-    readiness: stub
-    reason: "Aggregated monetary exposure per unit, risk band and currency (5+ people per group); compensation amounts arrive encrypted from bronze, so the dataset emits zero rows until a privacy-approved clear aggregation exists."
+    readiness: partial
+    reason: "Aggregated annualized amounts only (5+ people per risk band and currency across the workspace, no person above half of the group total, totals rounded to a unit no finer than the largest individual amount's order of magnitude); refinement decrypts recurring compensation in memory and publishes zero rows without the field encryption key."
     blockers:
-      - "Extract compensation amounts under an approved privacy design before treating monetary exposure as available."
+      - "Requires extracted recurring compensation and the field encryption key in refinement."
+      - "Pay frequencies outside the annualization map, repeated encrypted amounts and non-recurring payments of the last 365 days are counted, not summed."
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_talent_attrition_exposure.sql
+      - refinement/app/successfactors_exposure_materializer.py
       - infra/init/99zzzzzza_talent_attrition_exposure_seed.sql
   - cartridge: sap_successfactors
     dataset: sap_successfactors_talent_promotion_alignment

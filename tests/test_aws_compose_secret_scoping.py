@@ -19,6 +19,7 @@ SENTINELS = {
     "OMEGA_CONSOLE_PASSWORD": "SENTINEL_CONSOLE_ROLE_PW",
     "OMEGA_WORKSPACE_PASSWORD": "SENTINEL_WORKSPACE_ROLE_PW",
     "OMEGA_REFINEMENT_PASSWORD": "SENTINEL_REFINEMENT_ROLE_PW",
+    "FIELD_ENCRYPTION_KEY": "SENTINEL_FIELD_ENCRYPTION_KEY",
 }
 
 ALLOWED = {
@@ -27,6 +28,22 @@ ALLOWED = {
     "OMEGA_CONSOLE_PASSWORD": {"console", "postgres"},
     "OMEGA_WORKSPACE_PASSWORD": {"workspace", "postgres"},
     "OMEGA_REFINEMENT_PASSWORD": {"refinement", "postgres"},
+    "FIELD_ENCRYPTION_KEY": {
+        "refinement",
+        "sap-successfactors",
+        "sap-hcm",
+        "sap-s4hana",
+        "sap-b1",
+        "replicon",
+        "salesforce",
+        "hubspot",
+        "banxico",
+        "inegi",
+        "sec-edgar",
+        "airflow",
+        "airflow-init",
+        "airflow-scheduler",
+    },
 }
 
 

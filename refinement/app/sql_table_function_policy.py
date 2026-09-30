@@ -17,7 +17,15 @@ except ModuleNotFoundError:
 POLICY_ERROR = "SQL blocked by safety policy"
 _STORAGE_FUNCTIONS = {"read_parquet"}
 _SAFE_GENERATORS = {"generate_series", "unnest"}
-_SENSITIVE_SCALAR_FUNCTIONS = {"current_setting", "getvariable"}
+_SENSITIVE_SCALAR_FUNCTIONS = {
+    "current_setting",
+    "duckdb_secrets",
+    "duckdb_settings",
+    "duckdb_variables",
+    "getenv",
+    "getvariable",
+    "which_secret",
+}
 _READ_PARQUET_OPTIONS = {"hive_partitioning", "union_by_name"}
 _GOLD_TABLE_RE = re.compile(r"gold_[A-Za-z0-9_]+")
 _PUBLICATION_TABLE_RE = re.compile(r"run_[0-9a-f]{32}")

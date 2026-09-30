@@ -10,7 +10,10 @@ RESULT_FAILED = "failed"
 RESULT_CLASSES = (RESULT_OK, RESULT_DEGRADED, RESULT_SKIPPED, RESULT_FAILED)
 
 _MISSING_SOURCE_ERROR_CODES = {"source_files_missing", "dependency_not_materialized"}
+_OUTDATED_DEPENDENCY_CODE = "dependency_not_materialized"
 _FALLBACK_REASON = "missing_materialized_dependency"
+_OUTCOME_KEYS = frozenset({"name", "layer", "row_count"})
+_STATUS_KEYS = _OUTCOME_KEYS | {"status", "degraded"}
 PUBLISHED_CLASSES = frozenset({RESULT_OK, RESULT_DEGRADED})
 
 
@@ -21,6 +24,15 @@ def missing_source_error_code(exc: Any) -> str | None:
     detail = result.get("detail") if isinstance(result, Mapping) else None
     code = str(detail.get("code") or "") if isinstance(detail, Mapping) else ""
     return code if code in _MISSING_SOURCE_ERROR_CODES else None
+
+
+def outdated_dependency(exc: Any) -> str | None:
+    if missing_source_error_code(exc) != _OUTDATED_DEPENDENCY_CODE:
+        return None
+    dependency = exc.result["detail"].get("dependency")
+    if not isinstance(dependency, str) or not dependency.strip():
+        return None
+    return dependency
 
 
 def _row_count(payload: Mapping[str, Any]) -> int:
@@ -51,12 +63,29 @@ def _fallback_payload(
     }
 
 
+def _status_payload(
+    payload: Mapping[str, Any], *, expected_name: str
+) -> tuple[str, dict[str, Any]]:
+    if set(payload) != _STATUS_KEYS:
+        raise RuntimeError("materialization outcome unavailable")
+    degraded = payload.get("degraded")
+    status = payload.get("status")
+    if not isinstance(degraded, bool) or not isinstance(status, str) or not status.strip():
+        raise RuntimeError("materialization outcome unavailable")
+    outcome = require_successful_materialization_payload(
+        {key: payload[key] for key in _OUTCOME_KEYS}, expected_name=expected_name
+    )
+    return (RESULT_DEGRADED if degraded else RESULT_OK), outcome
+
+
 def classify_materialization_payload(
     payload: Any, *, expected_name: str
 ) -> tuple[str, dict[str, Any]]:
     checked = _checked(payload)
     if checked.get("fallback") is True:
         return _fallback_payload(checked, expected_name=expected_name)
+    if "degraded" in checked:
+        return _status_payload(checked, expected_name=expected_name)
     return RESULT_OK, require_successful_materialization_payload(
         checked, expected_name=expected_name
     )
@@ -92,7 +121,7 @@ def require_successful_materialization_payload(
     payload: Any, *, expected_name: str
 ) -> dict[str, Any]:
     payload = _checked(payload)
-    if set(payload) != {"name", "layer", "row_count"}:
+    if set(payload) != _OUTCOME_KEYS:
         raise RuntimeError("materialization outcome unavailable")
     if str(payload.get("name") or "") != expected_name:
         raise RuntimeError("materialization outcome unavailable")

@@ -11,6 +11,9 @@ from app.services.mcp_gateway import adapters, catalog, dispatcher
 from ia_gateway_fixtures import WORKSPACE_ID, GatewayHarness, gateway, workspace_row  # noqa: F401
 
 
+REAL_APP_NAME_LOCK = adapters.app_name_lock
+
+
 def _post(gateway: GatewayHarness, token: str, action: str, body: dict | None = None):
     return gateway.client.post(
         f"/api/ia/v1/actions/{action}", json=body or {}, headers=gateway.bearer(token)
@@ -366,12 +369,67 @@ def test_extraction_without_key_generates_one(gateway: GatewayHarness, monkeypat
         return {"run_id": "r1", "status": "queued", "active": True}
 
     async def stored(user, *, cartridge, run_id):
-        return None
+        return {"request_id": seen["request_id"], "started_at": None}
+
+    seen: dict = {}
+
+    async def start_recording(user, *, cartridge, request_id):
+        seen["request_id"] = request_id
+        return await start(user, cartridge=cartridge, request_id=request_id)
+
+    monkeypatch.setattr(adapters, "start_sync", start_recording)
+    monkeypatch.setattr(adapters, "sync_run_origin", stored)
+    token = gateway.issue(scopes=("acciones", "lectura"))
+    envelope = _stream_envelope(_post(gateway, token, "ejecutar_extraccion", {"fuente": "business one"}))
+    assert envelope["datos"]["ya_en_curso"] is False
+
+
+@pytest.mark.parametrize(
+    ("payload_extra", "origin"),
+    [
+        ({}, {"request_id": None}),
+        ({"active": True}, {"request_id": None}),
+        ({"active": True}, None),
+    ],
+)
+def test_active_run_without_a_request_id_is_someone_elses(
+    gateway: GatewayHarness, monkeypatch, fast_keepalive, payload_extra, origin
+):
+    from datetime import UTC, datetime, timedelta
+
+    old = (datetime.now(UTC) - timedelta(minutes=20)).isoformat()
+
+    async def start(user, *, cartridge, request_id):
+        return {"run_id": "sync_now:sap_b1:programada", "status": "running", "started_at": old, **payload_extra}
+
+    async def stored(user, *, cartridge, run_id):
+        return None if origin is None else {**origin, "started_at": old}
 
     monkeypatch.setattr(adapters, "start_sync", start)
     monkeypatch.setattr(adapters, "sync_run_origin", stored)
     token = gateway.issue(scopes=("acciones", "lectura"))
-    envelope = _stream_envelope(_post(gateway, token, "ejecutar_extraccion", {"fuente": "business one"}))
+    envelope = _stream_envelope(_post(gateway, token, "ejecutar_extraccion", {"fuente": "SAP B1"}))
+    assert envelope["ok"] is True
+    assert envelope["datos"]["ya_en_curso"] is True
+    assert envelope["datos"]["reutilizada"] is False
+    assert envelope["resumen"].startswith("Ya había una extracción en curso")
+    assert "no se inició otra" in envelope["resumen"]
+    assert "iniciada" not in envelope["resumen"]
+
+
+def test_finished_run_without_a_request_id_is_not_reported_as_running(
+    gateway: GatewayHarness, monkeypatch, fast_keepalive
+):
+    async def start(user, *, cartridge, request_id):
+        return {"run_id": "r1", "status": "success", "active": False}
+
+    async def stored(user, *, cartridge, run_id):
+        return {"request_id": None, "started_at": None}
+
+    monkeypatch.setattr(adapters, "start_sync", start)
+    monkeypatch.setattr(adapters, "sync_run_origin", stored)
+    token = gateway.issue(scopes=("acciones", "lectura"))
+    envelope = _stream_envelope(_post(gateway, token, "ejecutar_extraccion", {"fuente": "SAP B1"}))
     assert envelope["datos"]["ya_en_curso"] is False
 
 
@@ -782,24 +840,72 @@ async def test_concurrent_app_creation_with_one_name_publishes_once(app_forge_fa
     args = catalog.CrearAppAnaliticaArgs.model_validate(_app_args())
     first = asyncio.ensure_future(actions.crear_app_analitica(_app_user(), args))
     await asyncio.sleep(0.01)
-    for nombre in ("app_margen", "App_Margen"):
+    for workspace, nombre in ((WORKSPACE_ID, "app_margen"), (WORKSPACE_ID, "App_Margen"), ("otro-espacio", "app_margen")):
         with pytest.raises(GatewayError) as busy:
             await actions.crear_app_analitica(
-                _app_user(), catalog.CrearAppAnaliticaArgs.model_validate(_app_args(nombre))
+                _app_user(workspace), catalog.CrearAppAnaliticaArgs.model_validate(_app_args(nombre))
             )
         assert busy.value.status_code == 409
         assert busy.value.codigo == "operacion_en_curso"
-    other = asyncio.ensure_future(actions.crear_app_analitica(_app_user("otro-espacio"), args))
-    await asyncio.sleep(0.01)
-    assert calls == ["app_margen", "app_margen"]
+        assert "espacio de trabajo" not in busy.value.mensaje
+    assert calls == ["app_margen"]
     gate.set()
     assert (await first).datos["nombre"] == "app_margen"
-    assert (await other).datos["nombre"] == "app_margen"
     assert held == set()
     with pytest.raises(GatewayError) as taken:
         await actions.crear_app_analitica(_app_user(), args)
     assert taken.value.codigo == "nombre_en_uso"
-    assert calls == ["app_margen", "app_margen"]
+    assert calls == ["app_margen"]
+
+
+@pytest.mark.asyncio
+async def test_app_name_is_rechecked_inside_the_lock_right_before_publishing(app_forge_fakes, monkeypatch):
+    from app.services.mcp_gateway import actions
+    from app.services.mcp_gateway.errors import GatewayError
+
+    _gate, _calls, held = app_forge_fakes
+    taken: set[str] = set()
+    events: list[str] = []
+
+    async def in_use(user, *, name):
+        events.append(f"check:{name}:{sorted(held)}")
+        return name in taken
+
+    async def create(user, *, before_publish, **kwargs):
+        taken.add(kwargs["name"])
+        await before_publish(kwargs["name"])
+        events.append("publish")
+        return {"name": kwargs["name"], "title": "App", "datasets": kwargs["datasets"]}
+
+    monkeypatch.setattr(adapters, "app_name_in_use", in_use)
+    monkeypatch.setattr(adapters, "create_analytic_app", create)
+    with pytest.raises(GatewayError) as exc:
+        await actions.crear_app_analitica(_app_user(), catalog.CrearAppAnaliticaArgs.model_validate(_app_args()))
+    assert exc.value.status_code == 409
+    assert exc.value.codigo == "nombre_en_uso"
+    assert exc.value.datos["enlace"].endswith("/analytics/viewer?app=app_margen")
+    assert events == ["check:app_margen:['app_margen']", "check:app_margen:['app_margen']"]
+    assert held == set()
+
+
+@pytest.mark.asyncio
+async def test_create_analytic_app_forwards_the_pre_publish_check(monkeypatch):
+    from app.services import app_forge
+
+    seen: dict = {}
+
+    async def generate(user, **kwargs):
+        seen.update(kwargs)
+        return {"name": kwargs["name"], "title": "App", "datasets": kwargs["datasets"]}
+
+    async def check(name):
+        return None
+
+    monkeypatch.setattr(app_forge, "generate_and_publish_app", generate)
+    await adapters.create_analytic_app(
+        _app_user(), name="app_margen", objective="Objetivo", datasets=["gold_margen"], description="", before_publish=check
+    )
+    assert seen["before_publish"] is check
 
 
 @pytest.mark.asyncio
@@ -866,7 +972,8 @@ async def test_app_name_lock_uses_a_dedicated_session_lock(lock_connection):
     async with adapters.app_name_lock(user, name=" App_Margen ") as acquired:
         assert acquired is True
         assert opened[0].closed is False
-    key = f"omega_ia_app_name:{WORKSPACE_ID}:app_margen"
+    key = "omega_ia_app_name:app_margen"
+    assert adapters.app_name_lock_key("APP_MARGEN") == key
     assert state["dsn"] == "postgresql://omega@db.invalid/omega"
     assert opened[0].calls == [
         (adapters.APP_NAME_LOCK_SQL, (key,)),
@@ -879,7 +986,7 @@ async def test_app_name_lock_uses_a_dedicated_session_lock(lock_connection):
     assert opened[1].calls[-1] == (adapters.APP_NAME_UNLOCK_SQL, (key,))
     assert opened[1].closed is True
     state["acquired"] = False
-    async with adapters.app_name_lock(user, name="app_margen") as acquired:
+    async with adapters.app_name_lock(_app_user("otro-espacio"), name="app_margen") as acquired:
         assert acquired is False
     assert opened[2].calls == [(adapters.APP_NAME_LOCK_SQL, (key,))]
     assert opened[2].closed is True
@@ -895,3 +1002,63 @@ async def test_app_name_lock_without_database_is_a_spanish_503(monkeypatch):
             pass
     assert exc.value.status_code == 503
     assert exc.value.codigo == "servicio_no_disponible"
+
+
+class _PasswordRejected(Exception):
+    pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ConnectionRefusedError("connect to postgresql://omega:s3cr3t-pass@db.invalid/omega refused"),
+        TimeoutError(),
+        _PasswordRejected('password "s3cr3t-pass" rejected for postgresql://omega:s3cr3t-pass@db.invalid'),
+    ],
+)
+async def test_lock_connection_failure_is_a_retryable_503_without_secrets(monkeypatch, caplog, failure):
+    import asyncpg
+
+    from app.services.mcp_gateway.errors import GatewayError, error_body
+
+    async def connect(dsn, **kwargs):
+        raise failure
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://omega:s3cr3t-pass@db.invalid/omega")
+    monkeypatch.setattr(asyncpg, "connect", connect)
+    with pytest.raises(GatewayError) as exc:
+        async with adapters.app_name_lock(_app_user(), name="app_margen"):
+            raise AssertionError("the body must not run without the lock")
+    assert exc.value.status_code == 503
+    assert exc.value.codigo == "servicio_no_disponible"
+    assert exc.value.reintentable is True
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__ is True
+    rendered = json.dumps(error_body(exc.value)) + caplog.text
+    assert "s3cr3t" not in rendered and "db.invalid" not in rendered
+
+
+def test_lock_connection_failure_over_http_is_a_spanish_503(gateway: GatewayHarness, monkeypatch, fast_keepalive):
+    import asyncpg
+
+    created: list = []
+
+    async def connect(dsn, **kwargs):
+        raise OSError(f"could not reach {dsn}")
+
+    async def create(user, **kwargs):
+        created.append(kwargs)
+        return {}
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://omega:s3cr3t-pass@db.invalid/omega")
+    monkeypatch.setattr(asyncpg, "connect", connect)
+    monkeypatch.setattr(adapters, "app_name_lock", REAL_APP_NAME_LOCK)
+    monkeypatch.setattr(adapters, "create_analytic_app", create)
+    token = gateway.issue(scopes=("acciones", "lectura"))
+    response = _post(gateway, token, "crear_app_analitica", _app_args())
+    envelope = _stream_envelope(response)
+    assert envelope["ok"] is False
+    assert envelope["error"]["codigo"] == "servicio_no_disponible"
+    assert envelope["error"]["reintentable"] is True
+    assert "s3cr3t" not in response.text and "db.invalid" not in response.text
+    assert created == []

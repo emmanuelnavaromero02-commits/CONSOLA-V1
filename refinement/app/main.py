@@ -43,6 +43,7 @@ from app.publication_public import (
 from app.publication_snapshot import (
     PUBLICATION_RESOLUTION_ERRORS,
     PublicationHeadUnavailable,
+    PublicationInputOutdated,
     PublicationIntegrityError,
     PublicationSnapshotResolver,
 )
@@ -213,9 +214,15 @@ def _materialize_readfree_empty(
     return annotated
 
 
+def _with_materializer_status(ds: dict, result: dict) -> dict:
+    from app.successfactors_exposure_materializer import with_exposure_status
+
+    return with_exposure_status(ds, result)
+
+
 def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict:
     try:
-        return engine.materialize(ds, user_context)
+        return _with_materializer_status(ds, engine.materialize(ds, user_context))
     except PUBLICATION_RESOLUTION_ERRORS:
         raise
     except Exception as exc:
@@ -1017,6 +1024,18 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
                 "de una de sus dependencias."
             ),
             "detail": "Error interno",
+            "request_id": request_id,
+        }
+    if isinstance(exc, PublicationInputOutdated):
+        return 409, {
+            "code": "dependency_not_materialized",
+            "message": (
+                f"Dataset '{dataset_name}' necesita que '{exc.dependency}' esté "
+                "materializado con su definición vigente. Materializa primero esa "
+                "dependencia y vuelve a intentar."
+            ),
+            "detail": "Error interno",
+            "dependency": exc.dependency,
             "request_id": request_id,
         }
     not_found = "http 404" in lower or "404 (not found)" in lower

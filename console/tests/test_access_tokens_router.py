@@ -12,6 +12,7 @@ from ia_gateway_fixtures import WORKSPACE_ID, workspace_row
 
 CSRF = "csrf-for-access-token-tests"
 SESSION = "sesion-de-prueba"
+REAL_REVOKE_TOKEN = importlib.import_module("app.services.access_tokens").revoke_token
 
 
 class Harness:
@@ -250,6 +251,27 @@ def test_revoke_goes_straight_to_the_owner_scoped_function(harness: Harness, mon
     assert harness.revoked == [(42, beyond_listing["id"])]
     audit = [event for event in harness.audit if event["action"] == "access_token.revoke"]
     assert audit[0]["metadata"]["token_prefix"] == "omega_pat_Zzzz"
+
+
+def test_legacy_boolean_revoke_function_is_never_reported_as_revoked(harness: Harness, monkeypatch):
+    access_tokens = importlib.import_module("app.services.access_tokens")
+
+    class LegacyPool:
+        async def fetchrow(self, sql, *args):
+            return {"omega_auth_revoke_access_token": True}
+
+    async def legacy_pool():
+        return LegacyPool()
+
+    monkeypatch.setattr(access_tokens, "revoke_token", REAL_REVOKE_TOKEN)
+    monkeypatch.setattr(access_tokens._auth, "pool", legacy_pool)
+    harness.session()
+    response = harness.client.delete(
+        f"/api/me/access-tokens/{uuid.uuid4()}", headers={"X-CSRF-Token": CSRF}
+    )
+    assert response.status_code == 404
+    assert "revocado" not in response.text
+    assert not [event for event in harness.audit if event["action"] == "access_token.revoke"]
 
 
 def test_listing_counts_tokens_without_access_toward_the_limit(harness: Harness):

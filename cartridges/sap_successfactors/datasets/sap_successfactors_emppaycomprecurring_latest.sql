@@ -20,6 +20,14 @@ normalized AS (
             )
         ) AS _start_date,
         COALESCE(
+            TRY_CAST(endDate AS DATE),
+            CAST(
+                to_timestamp(
+                    TRY_CAST(regexp_extract(CAST(endDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+                ) AS DATE
+            )
+        ) AS _end_date,
+        COALESCE(
             TRY_CAST(lastModifiedDateTime AS TIMESTAMP),
             to_timestamp(
                 TRY_CAST(regexp_extract(CAST(lastModifiedDateTime AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
@@ -52,6 +60,7 @@ SELECT
     frequency            AS frequency,
     currencyCode         AS currency,
     _start_date          AS start_date,
+    _end_date            AS end_date,
     load_date
 FROM latest
 ORDER BY user_id, pay_component, start_date

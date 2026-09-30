@@ -106,4 +106,15 @@ def resolve_input_state(
             resolved.append(_published_state(engine, source, context))
         else:
             resolved.append({"source": source, "unsupported": True})
+    resolved.extend(_materializer_input_state(dataset))
     return resolved
+
+
+def _materializer_input_state(dataset: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        from app.successfactors_exposure_materializer import exposure_input_state
+    except ModuleNotFoundError:
+        from refinement.app.successfactors_exposure_materializer import (
+            exposure_input_state,
+        )
+    return exposure_input_state(dataset)
