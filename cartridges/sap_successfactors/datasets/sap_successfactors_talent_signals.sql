@@ -32,7 +32,7 @@ SELECT
     action_id AS signal_id,
     action_type AS signal_type,
     severity,
-    affected_count,
+    CAST(affected_count AS BIGINT) AS affected_count,
     title,
     recommendation,
     status,

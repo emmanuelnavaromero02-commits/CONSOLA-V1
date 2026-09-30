@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY formDataId
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -30,7 +30,7 @@ SELECT
     formDataId AS form_data_id,
     formSubjectId AS user_id,
     formTemplateId AS form_template_id,
-    status,
+    CAST(status AS VARCHAR) AS status,
     -- Overall performance rating. In this tenant FormHeader.overallRating is null
     -- and the real rating lives in FormHeader.rating (populated only when the form
     -- is rated: isRated=true). Take rating for rated forms and fall back to
@@ -45,8 +45,8 @@ SELECT
     ) AS performance_rating,
     (LOWER(CAST(isRated AS VARCHAR)) IN ('true', '1', 't')) AS is_rated,
     TRY_CAST(potentialRating AS DOUBLE) AS potential_rating,
-    TRY_CAST(formStartDate AS DATE) AS cycle_start_date,
-    TRY_CAST(formEndDate AS DATE) AS cycle_end_date,
+    sf_odata_date_strict(formStartDate, 'cycle_start_date') AS cycle_start_date,
+    sf_odata_date_strict(formEndDate, 'cycle_end_date') AS cycle_end_date,
     load_date
 FROM latest
 ORDER BY user_id, form_data_id

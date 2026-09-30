@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY COALESCE(learningItemId, itemId)
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -32,7 +32,7 @@ SELECT
     status,
     TRY_CAST(creditHours AS DOUBLE) AS credit_hours,
     TRY_CAST(duration AS DOUBLE) AS duration_hours,
-    TRY_CAST(expirationDate AS DATE) AS expiration_date,
+    sf_odata_date_strict(expirationDate, 'expiration_date') AS expiration_date,
     load_date
 FROM latest
 ORDER BY learning_item_id

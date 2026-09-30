@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY externalCode
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -29,9 +29,9 @@ latest AS (
 SELECT
     externalCode AS payment_detail_id,
     PaymentInformationV3_worker AS worker_id,
-    TRY_CAST(PaymentInformationV3_effectiveStartDate AS DATE) AS effective_start_date,
-    TRY_CAST(mdfSystemEffectiveStartDate AS DATE) AS system_effective_start_date,
-    TRY_CAST(mdfSystemEffectiveEndDate AS DATE) AS system_effective_end_date,
+    sf_odata_date_strict(PaymentInformationV3_effectiveStartDate, 'effective_start_date') AS effective_start_date,
+    sf_odata_date_strict(mdfSystemEffectiveStartDate, 'system_effective_start_date') AS system_effective_start_date,
+    sf_odata_date_strict(mdfSystemEffectiveEndDate, 'system_effective_end_date') AS system_effective_end_date,
     paymentMethod AS payment_method,
     bankCountry AS bank_country,
     bank AS bank,

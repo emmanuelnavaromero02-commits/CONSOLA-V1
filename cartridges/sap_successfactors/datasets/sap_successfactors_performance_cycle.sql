@@ -118,7 +118,7 @@ SELECT
     b.user_id AS user_id_hash,
     r.form_data_id,
     r.form_template_id,
-    r.status AS review_status,
+    CAST(r.status AS VARCHAR) AS review_status,
     COALESCE(r.performance_rating, s.performance_rating, c.calibrated_performance_rating) AS performance_rating,
     COALESCE(r.potential_rating, s.potential_rating, c.calibrated_potential_rating) AS potential_rating,
     r.cycle_start_date,

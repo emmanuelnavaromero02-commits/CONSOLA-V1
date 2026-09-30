@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY externalCode
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -27,11 +27,11 @@ latest AS (
     WHERE _rn = 1
 )
 SELECT
-    externalCode AS event_reason_id,
-    name_defaultValue AS event_reason_name,
-    event,
-    eventReasonCategory AS event_reason_category,
-    status,
+    CAST(externalCode AS VARCHAR) AS event_reason_id,
+    CAST(name_defaultValue AS VARCHAR) AS event_reason_name,
+    CAST(event AS VARCHAR) AS event,
+    CAST(eventReasonCategory AS VARCHAR) AS event_reason_category,
+    CAST(status AS VARCHAR) AS status,
     load_date
 FROM latest
 ORDER BY event_reason_id

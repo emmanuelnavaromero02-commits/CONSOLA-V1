@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY externalCode
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -30,7 +30,7 @@ SELECT
     externalCode AS work_schedule_id,
     userId       AS user_id,
     country,
-    TRY_CAST(startingDate AS DATE) AS start_date,
+    sf_odata_date_strict(startingDate, 'start_date') AS start_date,
     NULL::DATE AS end_date,
     averageWorkingDaysPerWeek AS average_working_days_per_week,
     averageHoursPerWeek       AS average_hours_per_week,

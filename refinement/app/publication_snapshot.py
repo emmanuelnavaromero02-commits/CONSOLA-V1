@@ -27,6 +27,14 @@ class PublicationIntegrityError(RuntimeError):
     pass
 
 
+class PublicationRejected(PublicationIntegrityError):
+    pass
+
+
+class PublicationRecoveryPending(RuntimeError):
+    pass
+
+
 class PublicationInputOutdated(ValueError):
     def __init__(self, source: str) -> None:
         super().__init__(
@@ -35,7 +43,11 @@ class PublicationInputOutdated(ValueError):
         self.dependency = str(source).strip("/").rsplit("/", 1)[-1]
 
 
-PUBLICATION_RESOLUTION_ERRORS = (PublicationHeadUnavailable, PublicationIntegrityError)
+PUBLICATION_RESOLUTION_ERRORS = (
+    PublicationHeadUnavailable,
+    PublicationIntegrityError,
+    PublicationRecoveryPending,
+)
 
 
 _DRIVER_OUTAGES = {("psycopg2", "OperationalError"), ("psycopg2", "InterfaceError")}

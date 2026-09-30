@@ -14,6 +14,7 @@ CANDIDATE_SQL = (
     / "datasets"
     / "sap_successfactors_candidate_latest.sql"
 )
+ODATA_MACROS = REPO_ROOT / "refinement" / "app" / "sql" / "sf_odata_datetime.sql"
 PACKAGED_SOURCE = (
     "s3://{bucket}/raw/sap_successfactors/Candidate/**/*.parquet"
 )
@@ -41,6 +42,7 @@ def test_candidate_silver_preserves_null_status_when_metadata_omits_field(
 
     con = _real_duckdb().connect()
     try:
+        con.execute(ODATA_MACROS.read_text(encoding="utf-8"))
         con.execute(
             """
             CREATE TABLE candidate_bronze AS

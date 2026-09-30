@@ -8,47 +8,20 @@ WITH raw AS (
                       hive_partitioning = true,
                       union_by_name   = true)
 ),
-normalized AS (
-    SELECT
-        raw.*,
-        COALESCE(
-            TRY_CAST(startDate AS DATE),
-            CAST(
-                to_timestamp(
-                    TRY_CAST(regexp_extract(CAST(startDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
-                ) AS DATE
-            )
-        ) AS _start_date,
-        COALESCE(
-            TRY_CAST(endDate AS DATE),
-            CAST(
-                to_timestamp(
-                    TRY_CAST(regexp_extract(CAST(endDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
-                ) AS DATE
-            )
-        ) AS _end_date,
-        COALESCE(
-            TRY_CAST(lastModifiedDateTime AS TIMESTAMP),
-            to_timestamp(
-                TRY_CAST(regexp_extract(CAST(lastModifiedDateTime AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
-            )
-        ) AS _last_modified_at
-    FROM raw
-),
 latest AS (
     SELECT *
     FROM (
         SELECT
-            normalized.*,
+            raw.*,
             ROW_NUMBER() OVER (
                 PARTITION BY userId, payComponent, startDate
                 ORDER BY
-                    _last_modified_at DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
             ) AS _rn
-        FROM normalized
+        FROM raw
         WHERE userId IS NOT NULL
     )
     WHERE _rn = 1
@@ -59,8 +32,8 @@ SELECT
     paycompvalue         AS paycomp_value,      -- encrypted en bronze (no agregable)
     frequency            AS frequency,
     currencyCode         AS currency,
-    _start_date          AS start_date,
-    _end_date            AS end_date,
+    sf_odata_date_strict(startDate, 'start_date') AS start_date,
+    sf_odata_date_strict(endDate, 'end_date') AS end_date,
     load_date
 FROM latest
 ORDER BY user_id, pay_component, start_date

@@ -126,8 +126,7 @@ class PublicationFinalizeMixin:
             )
         except Exception as exc:
             if getattr(exc, "pgcode", None) == "40001":
-                self._publication_store.abandon(state["identity"])
-                raise
+                self._quarantine_head_cas_loser(state["identity"], exc)
             state["receipt"] = self._recover_prepared(state["identity"], exc)
         self._mark_publication_replayed(bool(state["receipt"].get("replayed")))
         state["published"] = True

@@ -6,12 +6,15 @@
 -- completitud de SAP SuccessFactors; este gold queda vacío solo si el tenant no
 -- trae bajas en la ventana extraída.
 WITH term AS (
-    SELECT user_id, termination_date, event_reason
+    SELECT user_id, termination_date, CAST(event_reason AS VARCHAR) AS event_reason
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_empemploymenttermination_latest/**/*.parquet')
     WHERE termination_date IS NOT NULL
 ),
 reasons AS (
-    SELECT event_reason_id, event_reason_name, event_reason_category
+    SELECT
+        CAST(event_reason_id AS VARCHAR) AS event_reason_id,
+        CAST(event_reason_name AS VARCHAR) AS event_reason_name,
+        CAST(event_reason_category AS VARCHAR) AS event_reason_category
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_foeventreason_latest/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)

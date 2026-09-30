@@ -197,6 +197,7 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_staged_publication_semantics_live.py",
     "tests/test_staged_publication_final_red.py",
     "tests/test_staged_publication_integrity_live.py",
+    "tests/test_staged_publication_legacy_compat_live.py",
     "tests/test_staged_publication_live.py",
     "tests/test_staged_publication_public_projection.py",
     "tests/test_staged_publication_reader_boundaries.py",

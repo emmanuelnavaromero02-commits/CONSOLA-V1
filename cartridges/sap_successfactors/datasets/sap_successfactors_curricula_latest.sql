@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY curriculumId
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -30,7 +30,7 @@ SELECT
     curriculumId AS curriculum_id,
     title,
     status,
-    TRY_CAST(expirationDate AS DATE) AS expiration_date,
+    sf_odata_date_strict(expirationDate, 'expiration_date') AS expiration_date,
     load_date
 FROM latest
 ORDER BY curriculum_id

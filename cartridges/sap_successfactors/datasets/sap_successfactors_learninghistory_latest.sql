@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY historyId
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -30,7 +30,7 @@ SELECT
     historyId AS history_id,
     userId AS user_id,
     itemId AS learning_item_id,
-    TRY_CAST(completionDate AS DATE) AS completion_date,
+    sf_odata_date_strict(completionDate, 'completion_date') AS completion_date,
     TRY_CAST(creditHours AS DOUBLE) AS credit_hours,
     status,
     load_date

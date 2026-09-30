@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY personIdExternal, startDate
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -32,7 +32,7 @@ SELECT
     lastName             AS last_name,            -- masked en bronze
     gender               AS gender,
     maritalStatus        AS marital_status,
-    TRY_CAST(startDate AS DATE) AS valid_from,
+    sf_odata_date_strict(startDate, 'valid_from') AS valid_from,
     load_date
 FROM latest
 ORDER BY person_id_external, valid_from

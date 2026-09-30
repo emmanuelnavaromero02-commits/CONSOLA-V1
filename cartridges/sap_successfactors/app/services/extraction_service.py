@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from app.core.minio_client import require_storage_access
@@ -19,6 +19,7 @@ CARTRIDGE_ID = "sap_successfactors"
 DEFAULT_EFFECTIVE_FROM_DATE = "1900-01-01"
 DEFAULT_EFFECTIVE_TO_DATE = "9999-12-31"
 SAP_DATE_RE = re.compile(r"^/Date\((-?\d+)(?:[+-]\d+)?\)/$")
+ISO_BOUND_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ].+)?")
 logger = logging.getLogger(__name__)
 _STORAGE_PREFLIGHT_VERIFIED = object()
 _SAFE_METADATA_FAILURE_CODES = frozenset(
@@ -164,7 +165,7 @@ def _parse_watermark_datetime(value: Any) -> datetime | None:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
-    except ValueError:
+    except (OverflowError, ValueError):
         return None
 
 
@@ -318,15 +319,58 @@ def _apply_date_range_filter(
     date_field: str | None,
     from_date: str | None,
     to_date: str | None,
+    end_date_field: str | None = None,
 ) -> list[dict[str, Any]]:
     if not date_field or (not from_date and not to_date):
         return rows
-    out = rows
-    if from_date:
-        out = [r for r in out if str(r.get(date_field, "")) >= from_date]
-    if to_date:
-        out = [r for r in out if str(r.get(date_field, "")) <= to_date]
+    lower = _bound_day(from_date) if from_date else None
+    upper = _bound_day(to_date) if to_date else None
+    out = []
+    undated = 0
+    for row in rows:
+        start = _calendar_day(row.get(date_field))
+        if end_date_field:
+            end = _calendar_day(row.get(end_date_field))
+            if (upper is None or start is None or start <= upper) and (
+                lower is None or end is None or end >= lower
+            ):
+                out.append(row)
+            continue
+        if start is None:
+            undated += 1
+            continue
+        if (lower is None or start >= lower) and (upper is None or start <= upper):
+            out.append(row)
+    if undated:
+        logger.warning(
+            "sap_successfactors_historical_filter_undated_rows field=%s dropped=%s",
+            date_field,
+            undated,
+        )
     return out
+
+
+def _calendar_day(value: Any) -> date | None:
+    parsed = _parse_watermark_datetime(value)
+    return parsed.date() if parsed is not None else None
+
+
+def _bound_day(value: str) -> date:
+    text = str(value or "").strip()
+    day = (
+        _calendar_day(text)
+        if SAP_DATE_RE.match(text) or ISO_BOUND_RE.fullmatch(text)
+        else None
+    )
+    if day is None:
+        raise ValueError("historical date range bound is not a valid date")
+    return day
+
+
+def _effective_end_field(config: dict[str, Any]) -> str | None:
+    if not config.get("effective_dated"):
+        return None
+    return str(config.get("end_date_field") or "endDate")
 
 
 def _effective_date_window(
@@ -530,7 +574,9 @@ def run_entity(
 
             if mode == "incremental" and watermark_for_client_filter and watermark_field:
                 page = _apply_watermark_filter(page, watermark_field, watermark_for_client_filter)
-            page = _apply_date_range_filter(page, date_field, from_date, to_date)
+            page = _apply_date_range_filter(
+                page, date_field, from_date, to_date, _effective_end_field(config)
+            )
 
             page_wm = _max_watermark(page, watermark_field)
             if page_wm and (max_wm is None or page_wm > max_wm):

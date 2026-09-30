@@ -43,6 +43,7 @@ _REPO = Path(__file__).resolve().parents[2]
 _DATASETS = _REPO / "cartridges/sap_successfactors/datasets"
 _GOLD = _DATASETS / f"{SUCCESSION_COVERAGE_DATASET}.sql"
 _POSITION_SILVER = _DATASETS / "sap_successfactors_position_latest.sql"
+_ODATA_MACROS = _REPO / "refinement/app/sql/sf_odata_datetime.sql"
 _TENANT = "11111111-1111-4111-8111-111111111111"
 _WORKSPACE = "22222222-2222-4222-8222-222222222222"
 _CTX = {"tenant_id": _TENANT, "workspace_id": _WORKSPACE}
@@ -147,6 +148,7 @@ def _publish_positions_from_raw(engine: _PipelineEngine, raw: list[tuple]) -> No
     raw_dir.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect()
     try:
+        con.execute(_ODATA_MACROS.read_text(encoding="utf-8"))
         _table(
             con,
             "CREATE TABLE src (code VARCHAR, externalName_defaultValue VARCHAR, department VARCHAR, "

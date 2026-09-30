@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY applicationId
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -30,7 +30,7 @@ SELECT
     applicationId AS application_id,
     jobReqId AS job_req_id,
     candidateId AS candidate_id,
-    applicationStatus AS application_status,
+    CAST(applicationStatus AS VARCHAR) AS application_status,
     source,
     load_date
 FROM latest

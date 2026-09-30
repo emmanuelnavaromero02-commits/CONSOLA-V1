@@ -16,6 +16,18 @@ except ModuleNotFoundError:
     import refinement.app.partitioned_parquet as partitioned_parquet
 
 
+class PreparedObjectIncomplete(RuntimeError):
+    pass
+
+
+class PreparedObjectUnavailable(RuntimeError):
+    pass
+
+
+class PreparedObjectCorrupt(RuntimeError):
+    pass
+
+
 class PublicationObjectMixin:
     def _object_checksum(self, key: str, expected_version: str | None = None) -> str:
         digest = hashlib.sha256()
@@ -35,15 +47,19 @@ class PublicationObjectMixin:
         version = str(values.get("object_version") or "")
         key = self._s3_object_key(uri)
         if not key or not expected or not version:
-            raise RuntimeError("prepared materialization object is incomplete")
+            raise PreparedObjectIncomplete(
+                "prepared materialization object is incomplete"
+            )
         try:
             observed = self._object_checksum(key, version)
         except Exception as exc:
-            raise RuntimeError(
+            raise PreparedObjectUnavailable(
                 "prepared materialization object is unavailable"
             ) from exc
         if observed != expected:
-            raise RuntimeError("prepared materialization object checksum mismatch")
+            raise PreparedObjectCorrupt(
+                "prepared materialization object checksum mismatch"
+            )
 
     def _pinned_partition_part(self, part: dict[str, Any]) -> pq.ParquetFile:
         key = str(part["key"])

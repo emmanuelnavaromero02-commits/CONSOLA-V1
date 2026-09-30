@@ -1400,3 +1400,52 @@ def test_malformed_status_payloads_fail_closed(monkeypatch, payload: dict) -> No
 
     assert invocation["results"][0]["classification"] == "failed"
     assert finished[_EXPOSURE]["success"] is False
+
+
+@pytest.mark.parametrize(
+    "status, code",
+    [(409, "publication_rejected"), (503, "publication_recovery_retry")],
+)
+def test_typed_publication_failures_fail_the_dataset_and_rely_on_task_retry(
+    monkeypatch, status: int, code: str
+) -> None:
+    """Neither code is a structural absence; the chain task retry re-runs the dataset."""
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+    plan = [
+        _item("gold_employee_360", "gold"),
+        _item("gold_headcount", "gold", upstreams=("gold_employee_360",)),
+    ]
+    error = _refinement_error(dataset_refresh_materialize, code, status=status)
+
+    assert dataset_refresh_materialize.missing_source_error_code(error) is None
+    with pytest.raises(RuntimeError, match="failed materializations"):
+        _classified_materialization(
+            monkeypatch,
+            dataset_refresh_materialize,
+            plan=plan,
+            outcomes={"gold_employee_360": error},
+        )
+
+    invocation, finished, posts = _classified_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=plan,
+        outcomes={"gold_employee_360": error},
+        allow_partial=True,
+    )
+
+    assert posts == ["gold_employee_360"]
+    assert [item["classification"] for item in invocation["results"]] == [
+        "failed",
+        "skipped",
+    ]
+    assert invocation["results"][0]["error_code"] == "ServiceJobError"
+    assert invocation["results"][1]["reason"] == (
+        "upstream_not_refreshed:gold_employee_360"
+    )
+    assert finished["gold_employee_360"]["success"] is False
+    assert "skipped_reason" not in finished["gold_employee_360"]
+    assert dataset_refresh_chain.default_args["retries"] == 1
+    with pytest.raises(RuntimeError, match="failed run"):
+        _record(monkeypatch, dataset_refresh_chain, invocation)

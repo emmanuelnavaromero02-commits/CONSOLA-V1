@@ -7,6 +7,8 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from refinement.app.duckdb_engine import _register_shared_macros
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASETS = ROOT / "cartridges/sap_successfactors/datasets"
@@ -50,6 +52,7 @@ def _quoted(path: Path) -> str:
 @pytest.fixture()
 def con():
     connection = duckdb.connect()
+    _register_shared_macros(connection)
     try:
         yield connection
     finally:

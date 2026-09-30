@@ -14,9 +14,9 @@ SELECT
     FALSE AS benchmark_approval_valid,
     'unreviewed' AS benchmark_provenance_status,
     'insufficient_data' AS readiness_status,
-    1::BIGINT AS blocker_count,
+    1::INTEGER AS blocker_count,
     '["missing_materialized_dependencies"]' AS blockers,
-    NULL::DOUBLE AS confidence
+    NULL::DECIMAL(3,2) AS confidence
 WHERE FALSE
 """
     return """

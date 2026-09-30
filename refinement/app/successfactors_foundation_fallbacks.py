@@ -67,7 +67,7 @@ SELECT
     NULL::VARCHAR AS full_name,
     NULL::VARCHAR AS manager_id,
     0::BIGINT AS direct_reports,
-    0::BIGINT AS depth
+    0::INTEGER AS depth
 WHERE FALSE
 """,
 }

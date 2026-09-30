@@ -144,12 +144,7 @@ class StagedPublicationEngine(
                 self._publication_store.publish(identity, expected_head)
             except Exception as exc:
                 if getattr(exc, "pgcode", None) == "40001":
-                    self._publication_store.quarantine_prepared(
-                        identity, "publication_head_cas_lost"
-                    )
-                    raise RuntimeError(
-                        "publication head conflict; prepared run was quarantined"
-                    ) from exc
+                    self._quarantine_head_cas_loser(identity, exc)
                 self._recover_prepared(identity, exc)
             current = self._publication_store.run(identity) or {}
             return {

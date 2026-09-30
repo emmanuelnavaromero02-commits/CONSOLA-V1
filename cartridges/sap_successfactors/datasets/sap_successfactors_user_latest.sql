@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY userId
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -37,7 +37,7 @@ SELECT
     division             AS division,
     location             AS location,
     manager              AS manager,
-    CAST(hireDate AS DATE) AS hire_date,
+    sf_odata_date_strict(hireDate, 'hire_date') AS hire_date,
     load_date
 FROM latest
 ORDER BY user_id

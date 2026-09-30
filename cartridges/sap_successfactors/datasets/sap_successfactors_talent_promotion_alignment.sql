@@ -39,9 +39,9 @@ promotions AS (
 SELECT
     COALESCE(box_key, 'no_promotions_observed') AS box_key,
     COALESCE(box_label, 'Sin promociones observadas') AS box_label,
-    COALESCE(promotion_count, 0) AS promotion_count,
-    COALESCE(aligned_count, 0) AS aligned_count,
-    COALESCE(misaligned_count, 0) AS misaligned_count,
+    CAST(COALESCE(promotion_count, 0) AS DOUBLE) AS promotion_count,
+    CAST(COALESCE(aligned_count, 0) AS DOUBLE) AS aligned_count,
+    CAST(COALESCE(misaligned_count, 0) AS DOUBLE) AS misaligned_count,
     CASE
         WHEN COALESCE(promotion_count, 0) = 0 THEN 'partial'
         WHEN box_status = 'ready' THEN 'ready'
@@ -53,9 +53,9 @@ UNION ALL
 SELECT
     'summary' AS box_key,
     'Promociones vs calibracion' AS box_label,
-    COALESCE(SUM(promotion_count), 0) AS promotion_count,
-    COALESCE(SUM(aligned_count), 0) AS aligned_count,
-    COALESCE(SUM(misaligned_count), 0) AS misaligned_count,
+    CAST(COALESCE(SUM(promotion_count), 0) AS DOUBLE) AS promotion_count,
+    CAST(COALESCE(SUM(aligned_count), 0) AS DOUBLE) AS aligned_count,
+    CAST(COALESCE(SUM(misaligned_count), 0) AS DOUBLE) AS misaligned_count,
     CASE WHEN COALESCE(SUM(promotion_count), 0) = 0 THEN 'partial' ELSE 'ready' END AS status,
     CURRENT_TIMESTAMP AS generated_at
 FROM promotions

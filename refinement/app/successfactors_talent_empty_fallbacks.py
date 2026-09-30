@@ -145,9 +145,9 @@ WHERE FALSE
 SELECT
     'summary' AS box_key,
     'Promociones vs calibracion' AS box_label,
-    0::BIGINT AS promotion_count,
-    0::BIGINT AS aligned_count,
-    0::BIGINT AS misaligned_count,
+    0::DOUBLE AS promotion_count,
+    0::DOUBLE AS aligned_count,
+    0::DOUBLE AS misaligned_count,
     'partial' AS status,
     CURRENT_TIMESTAMP AS generated_at
 WHERE FALSE
@@ -185,7 +185,7 @@ SELECT
     NULL::VARCHAR AS action_id,
     NULL::VARCHAR AS action_type,
     NULL::VARCHAR AS severity,
-    0::BIGINT AS affected_count,
+    0::DOUBLE AS affected_count,
     NULL::VARCHAR AS title,
     NULL::VARCHAR AS recommendation,
     'blocked' AS status,

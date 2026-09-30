@@ -28,7 +28,7 @@ SELECT
     r.location,
     a.application_id,
     a.candidate_id,
-    a.application_status,
+    CAST(a.application_status AS VARCHAR) AS application_status,
     a.source,
     CASE WHEN c.candidate_id IS NULL THEN 'candidate_missing' ELSE 'ready' END AS candidate_status,
     r.load_date

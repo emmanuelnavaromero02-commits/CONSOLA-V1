@@ -78,6 +78,7 @@ def test_rerunning_publication_migrations_after_publish_preserves_state(
         "43_staged_publication_authority.sql",
     ):
         stack.rerun_gold_migration(migration)
+    stack.reapply_current_publication_functions()
 
     after = stack.sql(
         stack.admin_dsn,
