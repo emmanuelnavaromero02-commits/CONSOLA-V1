@@ -22,6 +22,7 @@ latest_event AS (
                 ORDER BY TRY_CAST(start_date AS DATE) DESC NULLS LAST
             ) AS rn
         FROM job_history
+        WHERE TRY_CAST(start_date AS DATE) <= CURRENT_DATE
     )
     WHERE rn = 1
 ),
@@ -29,7 +30,8 @@ rollup AS (
     SELECT
         user_id,
         MIN(TRY_CAST(start_date AS DATE)) AS first_assignment_date,
-        MAX(TRY_CAST(start_date AS DATE)) AS latest_assignment_date,
+        MAX(TRY_CAST(start_date AS DATE))
+            FILTER (WHERE TRY_CAST(start_date AS DATE) <= CURRENT_DATE) AS latest_assignment_date,
         GREATEST(COUNT(*) - 1, 0) AS movement_events,
         COUNT(DISTINCT department) AS distinct_departments,
         COUNT(DISTINCT location) AS distinct_locations,

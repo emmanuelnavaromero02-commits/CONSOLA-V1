@@ -185,6 +185,7 @@ def C12_upgrade_and_rerun(stack):
     )
     for migration in (*migrations, *migrations):
         stack.rerun_gold_migration(migration)
+    stack.reapply_current_publication_functions()
     assert stack.sql(
         stack.admin_dsn,
         (TENANT_A, WORKSPACE_A),

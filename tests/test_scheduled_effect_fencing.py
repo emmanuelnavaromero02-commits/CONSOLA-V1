@@ -263,8 +263,8 @@ def test_f4_all_invalid_prepared_states_enter_controlled_recovery() -> None:
     source = _read("refinement/app/publication_recovery.py")
     assert "_recover_prepared" in engine
     for reason in (
-        "attestation_expired",
-        "attestation_consumed",
+        "publication_integrity_rejected",
+        "legacy_type_conflict",
         "gold_stage_missing",
         "object_unavailable",
         "object_corrupt",

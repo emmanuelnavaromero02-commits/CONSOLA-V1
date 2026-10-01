@@ -9,9 +9,9 @@ WITH pipe AS (
                       union_by_name = true)
 )
 SELECT
-    COALESCE(department, '(sin departamento)') AS department,
-    COALESCE(application_status, '(sin etapa)') AS application_status,
-    COALESCE(source, '(sin fuente)') AS source,
+    COALESCE(CAST(department AS VARCHAR), '(sin departamento)') AS department,
+    COALESCE(CAST(application_status AS VARCHAR), '(sin etapa)') AS application_status,
+    COALESCE(CAST(source AS VARCHAR), '(sin fuente)') AS source,
     COUNT(DISTINCT job_req_id) AS requisitions,
     COUNT(DISTINCT application_id) AS applications,
     COUNT(DISTINCT candidate_id) AS candidates,

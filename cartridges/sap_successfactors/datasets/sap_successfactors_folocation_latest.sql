@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY externalCode
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -30,8 +30,8 @@ SELECT
     externalCode         AS location_id,
     name                 AS location_name,
     status               AS status,
-    TRY_CAST(startDate AS DATE) AS valid_from,
-    TRY_CAST(endDate AS DATE)   AS valid_to,
+    sf_odata_date_strict(startDate, 'valid_from') AS valid_from,
+    sf_odata_date_strict(endDate, 'valid_to')   AS valid_to,
     load_date
 FROM latest
 ORDER BY location_id

@@ -59,8 +59,8 @@ def test_packaged_talent_benchmark_is_unreviewed_system_default() -> None:
     lowered = sql.lower()
 
     assert "false as approved" in lowered
-    assert "null as approved_by" in lowered
-    assert "null as approved_at" in lowered
+    assert "cast(null as integer) as approved_by" in lowered
+    assert "cast(null as integer) as approved_at" in lowered
     assert "system_default" in lowered
     assert "unreviewed" in lowered
     assert "fallback operativo aprobado" not in lowered
@@ -95,9 +95,9 @@ def test_talent_benchmark_needs_durable_server_side_approval() -> None:
     benchmark = BENCHMARK.read_text(encoding="utf-8").lower()
     readiness = READINESS.read_text(encoding="utf-8").lower()
 
-    assert "null as approval_evidence_ref" in benchmark
-    assert "null as approval_authorization_ref" in benchmark
-    assert "null as approval_actor_source" in benchmark
+    assert "cast(null as varchar) as approval_evidence_ref" in benchmark
+    assert "cast(null as varchar) as approval_authorization_ref" in benchmark
+    assert "cast(null as varchar) as approval_actor_source" in benchmark
     assert "false as approval_recorded_by_server" in benchmark
     assert "false as approval_authorization_verified" in benchmark
     assert "select *, false as approval_valid" in readiness

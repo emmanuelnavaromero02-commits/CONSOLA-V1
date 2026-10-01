@@ -15,14 +15,37 @@ WITH emp AS (
 ),
 job AS (
     SELECT user_id, job_code, department, division, location, company, cost_center, manager_id,
-           ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY start_date DESC) AS rn
+           ROW_NUMBER() OVER (
+               PARTITION BY user_id
+               ORDER BY
+                   CASE
+                       WHEN start_date <= CURRENT_DATE
+                            AND (end_date IS NULL OR end_date >= CURRENT_DATE) THEN 0
+                       WHEN start_date <= CURRENT_DATE THEN 1
+                       WHEN start_date > CURRENT_DATE THEN 2
+                       ELSE 3
+                   END,
+                   CASE WHEN start_date > CURRENT_DATE THEN start_date END ASC NULLS LAST,
+                   start_date DESC NULLS LAST,
+                   end_date DESC NULLS FIRST
+           ) AS rn
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_empjob_latest/**/*.parquet')
 ),
 pers AS (
     SELECT person_id_external,
            TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) AS full_name,
            gender, marital_status,
-           ROW_NUMBER() OVER (PARTITION BY person_id_external ORDER BY valid_from DESC) AS rn
+           ROW_NUMBER() OVER (
+               PARTITION BY person_id_external
+               ORDER BY
+                   CASE
+                       WHEN valid_from <= CURRENT_DATE THEN 0
+                       WHEN valid_from > CURRENT_DATE THEN 1
+                       ELSE 2
+                   END,
+                   CASE WHEN valid_from > CURRENT_DATE THEN valid_from END ASC NULLS LAST,
+                   valid_from DESC NULLS LAST
+           ) AS rn
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_perpersonal_latest/**/*.parquet')
 ),
 company AS (SELECT company_id, company_name FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_focompany_latest/**/*.parquet')),

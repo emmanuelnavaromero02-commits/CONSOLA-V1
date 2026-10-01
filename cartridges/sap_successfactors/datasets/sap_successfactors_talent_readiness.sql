@@ -201,7 +201,7 @@ SELECT
         ELSE 'Not ready'
     END AS readiness_label,
     role_profile_status, required_skills_status,
-    list_count(blocker_items) AS blocker_count,
+    CAST(list_count(blocker_items) AS INTEGER) AS blocker_count,
     to_json(blocker_items)::VARCHAR AS blockers,
     CASE
         WHEN source_mode = 'cpa_real' THEN 0.85

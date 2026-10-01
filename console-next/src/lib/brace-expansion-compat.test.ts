@@ -285,15 +285,15 @@ describe("brace-expansion compatibility", () => {
     const lock = JSON.parse(
       readFileSync(resolve(process.cwd(), "package-lock.json"), "utf8"),
     );
-    const payload = lock.packages["vendor/brace-expansion-compat/node_modules/brace-expansion-safe"];
+    const payload = lock.packages["node_modules/brace-expansion-safe"];
 
     expect(payload).toMatchObject({
       name: "brace-expansion",
-      version: "5.0.9",
+      version: "5.0.12",
       resolved:
-        "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
+        "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz",
       integrity:
-        "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
+        "sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==",
     });
   });
 });

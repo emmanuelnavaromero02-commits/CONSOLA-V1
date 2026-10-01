@@ -9,7 +9,7 @@ WITH perf AS (
                       union_by_name = true)
 )
 SELECT
-    COALESCE(review_status, 'unknown') AS review_status,
+    COALESCE(CAST(review_status AS VARCHAR), 'unknown') AS review_status,
     COUNT(DISTINCT user_id) AS employees_evaluated,
     ROUND(AVG(performance_rating), 2) AS avg_performance_rating,
     ROUND(AVG(potential_rating), 2) AS avg_potential_rating,

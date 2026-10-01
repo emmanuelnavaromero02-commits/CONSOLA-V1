@@ -8,6 +8,7 @@ import pytest
 
 from refinement.app.publication_contract import PublicationIdentity
 from refinement.app.publication_inputs import resolve_input_state
+from refinement.app.publication_snapshot import PublicationRecoveryPending
 from tests.staged_publication_canaries import TENANT_A, WORKSPACE_A
 from tests.staged_publication_live import LiveStack, valid_lineage
 from tests.test_staged_publication_authority_live import (
@@ -231,7 +232,7 @@ def test_publish_failure_keeps_exact_revalidated_prepared_state_for_retry(
         fetch=False,
     )
     try:
-        with pytest.raises(RuntimeError, match="retry is required"):
+        with pytest.raises(PublicationRecoveryPending, match="retry is required"):
             engine.materialize(dataset, _scope())
     finally:
         stack.sql(
@@ -257,6 +258,13 @@ def test_publish_failure_keeps_exact_revalidated_prepared_state_for_retry(
     )[0]
     assert prepared[0] == "prepared"
     assert all(value not in (None, "") for value in prepared[1:])
+    assert stack.sql(
+        stack.admin_dsn,
+        (TENANT_A, WORKSPACE_A),
+        "SELECT count(*) FROM omega_publication.materialization_evidence "
+        "WHERE materialization_run_id=%s",
+        (run_id,),
+    ) == [(1,)]
     assert engine.materialize(dataset, _scope())["row_count"] == 1
     counts = stack.sql(
         stack.admin_dsn,

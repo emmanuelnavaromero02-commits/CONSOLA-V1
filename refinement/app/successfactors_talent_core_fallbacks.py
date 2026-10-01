@@ -44,7 +44,7 @@ SELECT
     emp.job_code,
     emp.manager_id,
     0::BIGINT AS direct_reports,
-    0::BIGINT AS hierarchy_depth,
+    0::INTEGER AS hierarchy_depth,
     emp.start_date,
     emp.end_date,
     CASE
@@ -107,7 +107,7 @@ SELECT
     user_id AS user_id_hash,
     form_data_id,
     form_template_id,
-    status AS review_status,
+    CAST(status AS VARCHAR) AS review_status,
     performance_rating,
     potential_rating,
     cycle_start_date,

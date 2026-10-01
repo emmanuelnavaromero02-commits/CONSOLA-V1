@@ -16,7 +16,7 @@ latest AS (
             ROW_NUMBER() OVER (
                 PARTITION BY externalCode
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    sf_odata_timestamp(lastModifiedDateTime) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
@@ -30,8 +30,8 @@ SELECT
     externalCode AS pay_grade_id,
     name_defaultValue AS pay_grade_name,
     status,
-    TRY_CAST(startDate AS DATE) AS start_date,
-    TRY_CAST(endDate AS DATE) AS end_date,
+    sf_odata_date_strict(startDate, 'start_date') AS start_date,
+    sf_odata_date_strict(endDate, 'end_date') AS end_date,
     load_date
 FROM latest
 ORDER BY pay_grade_id

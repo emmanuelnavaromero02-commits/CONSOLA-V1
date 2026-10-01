@@ -45,6 +45,8 @@ from app.publication_snapshot import (
     PublicationHeadUnavailable,
     PublicationInputOutdated,
     PublicationIntegrityError,
+    PublicationRecoveryPending,
+    PublicationRejected,
     PublicationSnapshotResolver,
 )
 from app.relationship_discovery import discover_relationship_candidates
@@ -1027,6 +1029,28 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
     request_id = _log_internal_error(
         exc, f"duckdb materialization failed for dataset {dataset_name}"
     )
+    if isinstance(exc, PublicationRejected):
+        return 409, {
+            "code": "publication_rejected",
+            "message": (
+                f"Dataset '{dataset_name}' no se publicó: la publicación verificada "
+                "rechazó el resultado por un conflicto de tipos o de reglas de "
+                "integridad. Reintentar no lo resuelve; hay que corregir la "
+                "definición del dataset."
+            ),
+            "detail": "Error interno",
+            "request_id": request_id,
+        }
+    if isinstance(exc, PublicationRecoveryPending):
+        return 503, {
+            "code": "publication_recovery_retry",
+            "message": (
+                f"Dataset '{dataset_name}' quedó pendiente de publicar y su "
+                "recuperación no terminó. Vuelve a intentar la materialización."
+            ),
+            "detail": "Error interno",
+            "request_id": request_id,
+        }
     if isinstance(exc, PublicationIntegrityError):
         return 409, {
             "code": "publication_integrity_failed",
@@ -3844,9 +3868,13 @@ def _refresh_dataset_sync(name: str, auth_body: dict) -> dict:
     if not ds:
         raise HTTPException(404)
     _require_dataset_scope(auth_body, ds, "datasets.write")
-    result = _materialize_with_operational_fallback(
-        ds, _trusted_user_context(auth_body, {})
-    )
+    try:
+        result = _materialize_with_operational_fallback(
+            ds, _trusted_user_context(auth_body, {})
+        )
+    except (duckdb.Error, ValueError, *PUBLICATION_RESOLUTION_ERRORS) as exc:
+        status_code, detail = _friendly_duckdb_error(exc, name)
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     if not engine.consume_publication_replay():
         store.update_refresh(name, result["row_count"], **store_scope)
         _post_publish_best_effort(name, auth_body)

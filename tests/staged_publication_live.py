@@ -22,6 +22,10 @@ PASSWORD = "staged-publication-postgres"
 READER_PASSWORD = "staged-publication-reader"
 PUBLISHER_PASSWORD = "staged-publication-publisher"
 VERIFIER_PASSWORD = "staged-publication-verifier"
+CURRENT_PUBLICATION_MIGRATIONS = (
+    "45_legacy_text_compatible_publication.sql",
+    "46_publication_search_path_pg_temp_last.sql",
+)
 
 
 def valid_lineage() -> str:
@@ -357,6 +361,22 @@ class LiveStack:
             "-f",
             f"/docker-entrypoint-initdb.d/{filename}",
         )
+
+    def reapply_current_publication_functions(self) -> None:
+        for filename in CURRENT_PUBLICATION_MIGRATIONS:
+            self.rerun_gold_migration(filename)
+        definition, unpinned = self.sql(
+            self.admin_dsn,
+            (TENANT_A, WORKSPACE_A),
+            "SELECT pg_get_functiondef("
+            "'omega_publication.publish_materialization(uuid,uuid)'::regprocedure),"
+            "(SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL unnest(p.proconfig) c "
+            "WHERE p.pronamespace='omega_publication'::regnamespace "
+            "AND c LIKE 'search_path=%%' AND c NOT LIKE '%%, pg_temp')",
+        )[0]
+        assert "ERRCODE='42804'" in definition
+        assert "existing_type = 'character varying'" in definition
+        assert unpinned == 0
 
 
 from tests.staged_publication_canary_impl import CANARY_IMPLEMENTATIONS
