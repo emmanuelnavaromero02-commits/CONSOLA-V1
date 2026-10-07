@@ -89,8 +89,8 @@ async def record_event(
                  ip, user_agent, status, request_id, metadata,
                  tool_name, tool_args, tool_result_status, risk_level, conversation_id)
                 VALUES ($1, $2, $3, $4, $5,
-                        $6, $7, $8, $9, $10::jsonb,
-                        $11, $12::jsonb, $13, $14, $15)
+                        $6, $7, $8, $9, $10::text::jsonb,
+                        $11, $12::text::jsonb, $13, $14, $15)
                 ON CONFLICT (user_id, action, resource_id, created_at)
                   DO NOTHING
                 """,
@@ -118,8 +118,8 @@ async def record_event(
                  ip, user_agent, status, metadata,
                  tool_name, tool_args, tool_result_status, risk_level, conversation_id)
                 VALUES ($1, $2, $3, $4, $5,
-                        $6, $7, $8, $9::jsonb,
-                        $10, $11::jsonb, $12, $13, $14)
+                        $6, $7, $8, $9::text::jsonb,
+                        $10, $11::text::jsonb, $12, $13, $14)
                 ON CONFLICT (user_id, action, resource_id, created_at)
                   DO NOTHING
                 """,

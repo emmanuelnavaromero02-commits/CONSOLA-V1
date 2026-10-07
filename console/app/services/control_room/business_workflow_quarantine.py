@@ -5,6 +5,11 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from app.services.control_room.business_observation_order import (
+    business_observation_order,
+    latest_observation_instant,
+    observation_order_instant,
+)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
@@ -12,6 +17,9 @@ from app.services.control_room.business_workflow_provenance import (
     WORKFLOW_QUARANTINE_KEY,
     business_observation_fingerprint,
 )
+
+
+GENERATION_ORDER_KEY = "observation_order"
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -34,6 +42,16 @@ def quarantine_generations(value: Any) -> list[dict[str, Any]]:
     return [dict(row) for row in generations if isinstance(row, Mapping)]
 
 
+def generation_applies(
+    generation: Mapping[str, Any], *, fingerprint: str, observed_at: str
+) -> bool:
+    if str(generation.get("fingerprint") or "").strip() != fingerprint:
+        return False
+    quarantined_at = observation_order_instant(generation.get(GENERATION_ORDER_KEY))
+    # A later materialization of the same values is a new observation.
+    return not (quarantined_at and observed_at and observed_at > quarantined_at)
+
+
 def workflow_is_quarantined(item: Mapping[str, Any] | None) -> bool:
     current = item if isinstance(item, Mapping) else {}
     metadata = _mapping(current.get("metadata"))
@@ -45,9 +63,12 @@ def workflow_is_quarantined(item: Mapping[str, Any] | None) -> bool:
     generations = quarantine_generations(quarantine)
     if not generations:
         return True
+    if isinstance(current.get("metadata"), str):
+        current = {**current, "metadata": metadata}
     fingerprint = business_observation_fingerprint(current)
+    observed_at = latest_observation_instant(current)
     return any(
-        str(generation.get("fingerprint") or "").strip() == fingerprint
+        generation_applies(generation, fingerprint=fingerprint, observed_at=observed_at)
         for generation in generations
     )
 
@@ -88,6 +109,7 @@ def quarantine_workflow_metadata(
                 "stage": normalized_stage,
                 "reason": str(reason or "workflow_invalidated"),
                 "quarantined_at": datetime.now(UTC).isoformat(),
+                GENERATION_ORDER_KEY: business_observation_order(item),
             }
         )
     clean[WORKFLOW_QUARANTINE_KEY] = {
@@ -131,6 +153,8 @@ def workflow_reopen_allowed(row: Mapping[str, Any]) -> bool:
 
 
 __all__ = (
+    "GENERATION_ORDER_KEY",
+    "generation_applies",
     "quarantine_generations",
     "quarantine_workflow_metadata",
     "workflow_columns_unlinked",

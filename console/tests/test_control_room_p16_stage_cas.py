@@ -145,7 +145,15 @@ async def test_approval_locks_stage_before_inserting_action():
     async def approve_link(*_args, **_kwargs):
         order.append("approve_link")
 
+    async def four_eyes(*_args, **kwargs):
+        assert kwargs["decision"] == {"id": 42}
+        order.append("four_eyes")
+
     with (
+        patch(
+            "app.services.control_room.business_action_approval.require_distinct_item_approver",
+            side_effect=four_eyes,
+        ),
         patch(
             "app.services.control_room.business_action_approval.lock_authoritative_business_item",
             side_effect=lock,
@@ -176,7 +184,7 @@ async def test_approval_locks_stage_before_inserting_action():
             approve_link=approve_link,
         )
 
-    assert order == ["require", "lock", "insert_action", "approve_link"]
+    assert order == ["require", "four_eyes", "lock", "insert_action", "approve_link"]
 
 
 @pytest.mark.asyncio

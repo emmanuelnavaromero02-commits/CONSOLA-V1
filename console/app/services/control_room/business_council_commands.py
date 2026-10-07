@@ -65,6 +65,13 @@ from app.services.control_room.business_council_view import (
     system_suggestion_match,
     system_suggestions,
 )
+from app.services.control_room.business_approval_denial import (
+    CHECKER_INFLUENCED,
+    SELF_APPROVAL,
+    SELF_DISCARD,
+    ItemApprovalDenied,
+    record_item_approval_denial,
+)
 from app.services.control_room.business_decision_persistence import (
     create_and_link_decision,
 )
@@ -76,6 +83,8 @@ from app.services.db_scope import run_with_db_scope
 
 
 DECISION_CREATE_AUDIT = "control_room.decision.create"
+APPROVE_DENIED_AUDIT = "control_room.council.approve.denied"
+DISCARD_DENIED_AUDIT = "control_room.council.discard.denied"
 DISCARD_AUDIT = "control_room.council.discard"
 RENEW_AUDIT = "control_room.council.renew"
 DISCARD_ACTION_PREFIX = "Propuesta descartada en el Consejo: "
@@ -186,13 +195,40 @@ def _visible(user: Mapping[str, Any], row: Mapping[str, Any] | None) -> bool:
     )
 
 
-def _checker_influenced() -> HTTPException:
-    return HTTPException(
-        403,
-        {
-            "code": "checker_influenced_proposal",
-            "message": "a threshold set by the checker produced this suggestion",
-        },
+def _require_distinct_checker(
+    maker: CouncilMaker,
+    checker_id: int,
+    *,
+    item_id: str,
+    decision_id: int | None,
+    reason: str = SELF_APPROVAL,
+) -> None:
+    try:
+        require_council_distinct_actors(maker, checker_id)
+    except HTTPException:
+        raise ItemApprovalDenied(
+            reason, decision_id=decision_id, maker=maker, item_id=item_id
+        ) from None
+
+
+async def _record_denial(
+    user: Mapping[str, Any],
+    denial: ItemApprovalDenied,
+    *,
+    action: str,
+    proposal_id: str,
+    ip: str | None,
+    user_agent: str | None,
+) -> None:
+    await record_item_approval_denial(
+        audit_service.record_event,
+        user=user,
+        item_id=denial.item_id or proposal_id,
+        denial=denial,
+        requested_decision_id=None,
+        ip=ip,
+        user_agent=user_agent,
+        action=action,
     )
 
 
@@ -313,7 +349,12 @@ async def _approve_person(
     maker = CouncilMaker.person(intent.get("maker_user_id"))
     if maker.user_id != proposal.maker_user_id:
         raise proposal_changed()
-    require_council_distinct_actors(maker, checker_id)
+    _require_distinct_checker(
+        maker,
+        checker_id,
+        item_id=proposal.item_id,
+        decision_id=proposal.decision_id,
+    )
     await _require_current(
         conn,
         tenant_id=tenant_id,
@@ -471,7 +512,9 @@ async def _approve_system(
         conn, workspace_id=workspace_id, user_id=checker_id
     )
     if checker_influenced(suggestion.live, authored):
-        raise _checker_influenced()
+        raise ItemApprovalDenied(
+            CHECKER_INFLUENCED, maker=maker, item_id=suggestion.item_id
+        )
     item = _system_item(suggestion, row)
     decision = await create_and_link_decision(
         conn,
@@ -545,6 +588,20 @@ async def approve_council_proposal(
     )
     pool = await auth.pool()
 
+    async def _guarded(runner: Any) -> Outcome:
+        try:
+            return await _scoped(pool, user, runner)
+        except ItemApprovalDenied as denial:
+            await _record_denial(
+                user,
+                denial,
+                action=APPROVE_DENIED_AUDIT,
+                proposal_id=proposal_id,
+                ip=ip,
+                user_agent=user_agent,
+            )
+            raise
+
     async def _person(conn: Any, scoped_tenant: str | None, scoped: str) -> Outcome:
         _scope_guard(tenant_id, workspace_id, scoped_tenant, scoped)
         replayed = await _replayed(
@@ -570,7 +627,7 @@ async def approve_council_proposal(
             conn, user=user, proposal=match, keys=keys, ip=ip, user_agent=user_agent
         )
 
-    outcome = await _scoped(pool, user, _person)
+    outcome = await _guarded(_person)
     if outcome.kind == "stale":
         raise _source_changed()
     if outcome.kind == "missing":
@@ -604,7 +661,7 @@ async def approve_council_proposal(
                 user_agent=user_agent,
             )
 
-        outcome = await _scoped(pool, user, _system)
+        outcome = await _guarded(_system)
     if outcome.kind != "done" or outcome.decision_id is None:
         raise _not_found()
     return CouncilApproveResponse(decision_id=outcome.decision_id)
@@ -667,7 +724,13 @@ async def _discard_person(
     if proposal.maker_user_id is None or not _visible(user, proposal.row):
         raise proposal_changed()
     maker = CouncilMaker.person(proposal.maker_user_id)
-    require_council_distinct_actors(maker, checker_id)
+    _require_distinct_checker(
+        maker,
+        checker_id,
+        item_id=proposal.item_id,
+        decision_id=proposal.decision_id,
+        reason=SELF_DISCARD,
+    )
     await _require_current(
         conn,
         tenant_id=tenant_id,
@@ -814,6 +877,20 @@ async def discard_council_proposal(
     )
     pool = await auth.pool()
 
+    async def _guarded(runner: Any) -> Outcome:
+        try:
+            return await _scoped(pool, user, runner)
+        except ItemApprovalDenied as denial:
+            await _record_denial(
+                user,
+                denial,
+                action=DISCARD_DENIED_AUDIT,
+                proposal_id=proposal_id,
+                ip=ip,
+                user_agent=user_agent,
+            )
+            raise
+
     async def _person(conn: Any, scoped_tenant: str | None, scoped: str) -> Outcome:
         _scope_guard(tenant_id, workspace_id, scoped_tenant, scoped)
         replayed = await _replayed(
@@ -845,7 +922,7 @@ async def discard_council_proposal(
             user_agent=user_agent,
         )
 
-    outcome = await _scoped(pool, user, _person)
+    outcome = await _guarded(_person)
     if outcome.kind == "missing":
         snapshot = await collect_surface_snapshot(user)
         candidates = system_candidate_items(snapshot)
@@ -898,7 +975,7 @@ async def discard_council_proposal(
             )
             return Outcome("done", None)
 
-        outcome = await _scoped(pool, user, _system)
+        outcome = await _guarded(_system)
     if outcome.kind != "done":
         raise _not_found()
     return CouncilDiscardResponse(decision_id=outcome.decision_id)

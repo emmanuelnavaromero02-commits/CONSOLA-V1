@@ -77,6 +77,14 @@ class SummaryCounts(PublicProjectionModel):
     false_positive: int = 0
 
 
+class SummarySignalCounts(PublicProjectionModel):
+    total: int = 0
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+
+
 class SummaryBreakdown(PublicProjectionModel):
     label: str | None = None
     count: int = 0
@@ -259,6 +267,7 @@ class ControlRoomBusinessSummaryResponse(PublicProjectionModel):
     thresholds: SummaryThresholds = Field(default_factory=SummaryThresholds)
     lessons: SummaryLessons = Field(default_factory=SummaryLessons)
     alerts: SummaryCounts = Field(default_factory=SummaryCounts)
+    intelligence_signals: SummarySignalCounts | None = None
 
     @classmethod
     def project(cls, value: object) -> ControlRoomBusinessSummaryResponse:

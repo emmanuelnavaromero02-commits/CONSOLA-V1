@@ -23,10 +23,16 @@ from app.services.control_room.business_command_item import (
     load_persisted_command_item,
 )
 from app.services.control_room.business_council_actors import SYSTEM_MAKER
+from app.services.control_room.business_decision_summary import (
+    count_open_business_decisions,
+)
 from app.services.control_room.business_followup_intent import (
     prepare_followup_intent,
 )
 from app.services.control_room.business_item_persistence import persist_item_rows
+from app.services.control_room.business_state_refresh import (
+    refresh_control_room_state,
+)
 from app.services.control_room.surface_snapshot import SurfaceScope, SurfaceSnapshot
 from app.services.db_scope import run_with_db_scope
 from tests.control_room_action_authority_live import (
@@ -101,6 +107,22 @@ async def _value(seed: AuthoritySeed, sql: str, *args: Any) -> Any:
 
 def _metadata(value: Any) -> dict[str, Any]:
     return json.loads(value) if isinstance(value, str) else dict(value or {})
+
+
+async def _denials(
+    seed: AuthoritySeed, action: str, item_id: str
+) -> list[tuple[int, str, str | None]]:
+    rows = await _fetch(
+        seed,
+        """SELECT user_id, status, metadata FROM audit_events
+            WHERE action = $1 AND resource_id = $2 ORDER BY id""",
+        action,
+        item_id,
+    )
+    return [
+        (row["user_id"], row["status"], _metadata(row["metadata"]).get("reason"))
+        for row in rows
+    ]
 
 
 async def _item_row(seed: AuthoritySeed, scope: AuthorityScope, item_id: str) -> dict:
@@ -193,11 +215,18 @@ async def test_person_proposal_requires_another_person_and_completes_in_one_tran
             assert own.disabled_reason == (
                 "Requiere la aprobación de otra persona del equipo."
             )
+            denied_before = await _denials(
+                seed, "control_room.council.approve.denied", scope.item_id
+            )
             with pytest.raises(HTTPException) as maker_try:
                 await business_council_commands.approve_council_proposal(
                     scope.maker, own.proposal_id, idempotency_key="maker-attempt-1"
                 )
             assert maker_try.value.status_code == 403
+            assert maker_try.value.detail["code"] == "self_approval"
+            assert await _denials(
+                seed, "control_room.council.approve.denied", scope.item_id
+            ) == [*denied_before, (scope.maker["id"], "denied", "self_approval")]
 
             pending = await _proposal(
                 scope.checker, origin="person", decision_id=decision_id
@@ -367,6 +396,10 @@ async def test_dual_role_person_cannot_approve_their_own_proposal(
                     dual, own.proposal_id, idempotency_key="dual-self-approval"
                 )
         assert denied.value.status_code == 403
+        assert denied.value.detail["code"] == "self_approval"
+        assert await _denials(
+            seed, "control_room.council.approve.denied", scope.item_id
+        ) == [(dual["id"], "denied", "self_approval")]
         row = await _item_row(seed, scope, scope.item_id)
         assert row["status"] == "decision_created"
     finally:
@@ -529,6 +562,19 @@ async def test_discard_needs_a_reason_and_closes_the_decision(
         with _patched(pool, _snapshot(scope, scope.item, system_live)):
             intent_id = await prepare_followup_intent(scope.maker, scope.item_id)
             decision_id = int(scope.item["decision_id"])
+            own = await _proposal(scope.maker, origin="person", decision_id=decision_id)
+            with pytest.raises(HTTPException) as self_discard:
+                await business_council_commands.discard_council_proposal(
+                    scope.maker,
+                    own.proposal_id,
+                    reason=REASON,
+                    idempotency_key="discard-own-1",
+                )
+            assert self_discard.value.status_code == 403
+            assert self_discard.value.detail["code"] == "self_discard"
+            assert await _denials(
+                seed, "control_room.council.discard.denied", scope.item_id
+            ) == [(scope.maker["id"], "denied", "self_discard")]
             person = await _proposal(scope.checker, origin="person", decision_id=decision_id)
             assert person.can_discard is True
             discarded = await business_council_commands.discard_council_proposal(
@@ -965,6 +1011,10 @@ async def test_a_checker_who_set_the_threshold_needs_another_person(
                     scope.checker, influenced.proposal_id, idempotency_key="self-threshold-1"
                 )
             assert refused.value.status_code == 403
+            assert refused.value.detail["code"] == "checker_influenced_proposal"
+            assert await _denials(
+                seed, "control_room.council.approve.denied", str(live["id"])
+            ) == [(scope.checker["id"], "denied", "checker_influenced_proposal")]
             other = await _proposal(scope.maker, origin="system")
             assert other.can_approve is True
             approved = await business_council_commands.approve_council_proposal(
@@ -1317,5 +1367,468 @@ async def test_disabling_a_threshold_keeps_its_author_from_approving_alone(
                     scope.checker, suggestion.proposal_id, idempotency_key="disabled-th-1"
                 )
         assert refused.value.status_code == 403
+    finally:
+        await pool.close()
+
+
+TALENT_SIGNAL = {
+    "signal_id": "talent_role_requirements_missing",
+    "signal_type": "pipeline",
+    "severity": "medium",
+    "affected_count": 42,
+    "title": "Requisitos de rol pendientes",
+    "recommendation": "Validar Position y entidades de skills.",
+    "status": "recommendation_only",
+    "generated_at": "2026-07-05T03:27:32Z",
+    "readiness_status": "partial",
+    "source_row_count": 10,
+    "materialized_at": "2026-07-05T03:27:32Z",
+    "blockers": "[]",
+}
+
+
+async def _talent_workspace_admin(seed: AuthoritySeed) -> dict[str, Any]:
+    suffix = uuid.uuid4().hex[:10]
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        tenant_id = str(
+            await conn.fetchval(
+                "INSERT INTO tenants(name, slug) VALUES ($1, $2) RETURNING id",
+                f"Talent tenant {suffix}",
+                f"talent-{suffix}",
+            )
+        )
+        workspace_id = str(
+            await conn.fetchval(
+                "INSERT INTO workspaces(tenant_id, name) VALUES ($1, $2) RETURNING id",
+                tenant_id,
+                f"Talent workspace {suffix}",
+            )
+        )
+        admin = await _new_user(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            workspace_role="workspace_admin",
+            suffix=f"talent-admin-{suffix}",
+        )
+        await conn.execute(
+            """INSERT INTO cartridge_installations (
+                   id, tenant_id, workspace_id, cartridge_id, product_id, status,
+                   current_step, install_fingerprint, created_by_id, ready_at
+               ) VALUES ($1, $2::uuid, $3::uuid, 'sap_successfactors',
+                         'sap_successfactors', 'ready', 'activated', $1, $4, NOW())""",
+            f"talent-council-{suffix}",
+            tenant_id,
+            workspace_id,
+            admin["id"],
+        )
+    finally:
+        await conn.close()
+    return {**admin, "allowed_cartridges": ["sap_successfactors"]}
+
+
+@pytest.mark.asyncio
+async def test_refreshed_talent_signal_reaches_the_council_and_becomes_a_decision(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    admin = await _talent_workspace_admin(seed)
+    tenant_id = admin["active_tenant_id"]
+    workspace_id = admin["active_workspace_id"]
+
+    async def gold_rows(dataset: str, _user: Any, _limit: int = 1000) -> list[dict]:
+        if dataset != "sap_successfactors_talent_signals":
+            return []
+        return [{**TALENT_SIGNAL, "tenant_id": tenant_id, "workspace_id": workspace_id}]
+
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        with (
+            patch.object(auth, "pool", new=AsyncMock(return_value=pool)),
+            patch(
+                "app.services.intelligence.gold_fetcher.query_gold_dataset_rows",
+                new=gold_rows,
+            ),
+        ):
+            await refresh_control_room_state(admin)
+            (talent,) = await _fetch(
+                seed,
+                """SELECT item_id, status, decision_id, selected_option_id, metadata
+                     FROM control_room_items
+                    WHERE workspace_id = $1::uuid
+                      AND source_dataset = 'sap_successfactors_talent_signals'
+                      AND item_kind = 'intelligence_signal'""",
+                workspace_id,
+            )
+            metadata = _metadata(talent["metadata"])
+            assert metadata["data_status"] == "gold_ready"
+            assert metadata["business_eligibility_fingerprint"]
+            assert talent["selected_option_id"] is None
+            assert talent["status"] == "open" and talent["decision_id"] is None
+
+            suggestion = await _proposal(admin, origin="system")
+            assert suggestion.title == "Requisitos de rol pendientes"
+            assert suggestion.state == "pending_approval" and suggestion.can_approve
+            approved = await business_council_commands.approve_council_proposal(
+                admin, suggestion.proposal_id, idempotency_key="talent-system-1"
+            )
+            council = await business_council_view.build_action_council(admin)
+            assert await count_open_business_decisions(pool, admin) == 1
+        done = next(p for p in council.proposals if p.decision_id == approved.decision_id)
+        assert done.origin == "system" and done.state == "completed"
+        decision = (
+            await _fetch(
+                seed,
+                """SELECT created_by_id, created_by, assignee_id, status
+                     FROM decisions WHERE id = $1 AND workspace_id = $2::uuid""",
+                approved.decision_id,
+                workspace_id,
+            )
+        )[0]
+        assert decision == {
+            "created_by_id": None,
+            "created_by": SYSTEM_MAKER,
+            "assignee_id": admin["id"],
+            "status": "open",
+        }
+        assert await _value(
+            seed,
+            """SELECT count(*) FROM decision_actions
+                WHERE decision_id = $1 AND action_text LIKE 'Aprobación en el Consejo%'""",
+            approved.decision_id,
+        ) == 1
+        (row,) = await _fetch(
+            seed,
+            """SELECT status, execution_status, decision_id FROM control_room_items
+                WHERE workspace_id = $1::uuid AND item_id = $2""",
+            workspace_id,
+            talent["item_id"],
+        )
+        assert row == {
+            "status": "approved",
+            "execution_status": "executed",
+            "decision_id": approved.decision_id,
+        }
+        assert await _value(
+            seed,
+            """SELECT count(*) FROM audit_events
+                WHERE action = 'control_room.state.refresh' AND resource_id = $1""",
+            workspace_id,
+        ) == 1
+        assert await _value(
+            seed,
+            """SELECT count(*) FROM audit_events
+                WHERE action = 'control_room.council.approve_and_follow_up'
+                  AND resource_id = $1 AND user_id = $2""",
+            talent["item_id"],
+            admin["id"],
+        ) == 1
+    finally:
+        await pool.close()
+
+
+async def _talent_row(seed: AuthoritySeed, workspace_id: str) -> dict[str, Any]:
+    (row,) = await _fetch(
+        seed,
+        """SELECT item_id, status, decision_id, execution_status, metadata
+             FROM control_room_items
+            WHERE workspace_id = $1::uuid
+              AND source_dataset = 'sap_successfactors_talent_signals'
+              AND item_kind = 'intelligence_signal'""",
+        workspace_id,
+    )
+    row["metadata"] = _metadata(row["metadata"])
+    return row
+
+
+@pytest.mark.asyncio
+async def test_approved_talent_signal_survives_the_next_refresh_and_stops_counting_as_open(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    admin = await _talent_workspace_admin(seed)
+    tenant_id = admin["active_tenant_id"]
+    workspace_id = admin["active_workspace_id"]
+
+    async def gold_rows(dataset: str, _user: Any, _limit: int = 1000) -> list[dict]:
+        if dataset != "sap_successfactors_talent_signals":
+            return []
+        return [{**TALENT_SIGNAL, "tenant_id": tenant_id, "workspace_id": workspace_id}]
+
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        with (
+            patch.object(auth, "pool", new=AsyncMock(return_value=pool)),
+            patch(
+                "app.services.intelligence.gold_fetcher.query_gold_dataset_rows",
+                new=gold_rows,
+            ),
+        ):
+            await refresh_control_room_state(admin)
+            before = await control_room_service.summary(admin)
+            assert before["intelligence_signals"] == {
+                "total": 1,
+                "critical": 0,
+                "high": 0,
+                "medium": 1,
+                "low": 0,
+            }
+            suggestion = await _proposal(admin, origin="system")
+            approved = await business_council_commands.approve_council_proposal(
+                admin, suggestion.proposal_id, idempotency_key="talent-refresh-1"
+            )
+            await refresh_control_room_state(admin)
+            council = await business_council_view.build_action_council(admin)
+            after = await control_room_service.summary(admin)
+            open_decisions = await count_open_business_decisions(pool, admin)
+        row = await _talent_row(seed, workspace_id)
+        assert (row["status"], row["decision_id"], row["execution_status"]) == (
+            "approved",
+            approved.decision_id,
+            "executed",
+        )
+        provenance = row["metadata"].get("decision_eligibility_provenance") or {}
+        assert provenance.get("stage") == "executed"
+        assert not (row["metadata"].get("workflow_quarantine") or {}).get("generations")
+        assert not [
+            p
+            for p in council.proposals
+            if p.origin == "system" and p.state == "pending_approval"
+        ]
+        assert open_decisions == 1
+        assert after["open_decisions"] == 1
+        assert after["intelligence_signals"]["total"] == 0
+        assert await _value(
+            seed, "SELECT count(*) FROM decisions WHERE workspace_id = $1::uuid", workspace_id
+        ) == 1
+    finally:
+        await pool.close()
+
+
+def _pending_system_titles(council: Any) -> list[str]:
+    return [
+        proposal.title
+        for proposal in council.proposals
+        if proposal.origin == "system" and proposal.state == "pending_approval"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rematerialized_talent_gold_keeps_approval_until_its_value_changes(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    admin = await _talent_workspace_admin(seed)
+    tenant_id = admin["active_tenant_id"]
+    workspace_id = admin["active_workspace_id"]
+    gold = {"at": "2026-10-01T03:00:00Z", "affected_count": 42}
+
+    async def gold_rows(dataset: str, _user: Any, _limit: int = 1000) -> list[dict]:
+        if dataset != "sap_successfactors_talent_signals":
+            return []
+        return [
+            {
+                **TALENT_SIGNAL,
+                "affected_count": gold["affected_count"],
+                "generated_at": gold["at"],
+                "materialized_at": gold["at"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+            }
+        ]
+
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        with (
+            patch.object(auth, "pool", new=AsyncMock(return_value=pool)),
+            patch(
+                "app.services.intelligence.gold_fetcher.query_gold_dataset_rows",
+                new=gold_rows,
+            ),
+        ):
+            await refresh_control_room_state(admin)
+            suggestion = await _proposal(admin, origin="system")
+            approved = await business_council_commands.approve_council_proposal(
+                admin, suggestion.proposal_id, idempotency_key="talent-remat-1"
+            )
+
+            gold["at"] = "2026-10-02T03:00:00Z"
+            await refresh_control_room_state(admin)
+            council = await business_council_view.build_action_council(admin)
+            summary = await control_room_service.summary(admin)
+            open_decisions = await count_open_business_decisions(pool, admin)
+            stable = await _talent_row(seed, workspace_id)
+
+            gold.update(at="2026-10-03T03:00:00Z", affected_count=43)
+            await refresh_control_room_state(admin)
+            changed_council = await business_council_view.build_action_council(admin)
+            changed_summary = await control_room_service.summary(admin)
+            changed = await _talent_row(seed, workspace_id)
+
+        workflow = ("status", "decision_id", "execution_status")
+        stable_metadata = stable["metadata"]
+        assert tuple(stable[key] for key in workflow) == (
+            "approved",
+            approved.decision_id,
+            "executed",
+        )
+        provenance = stable_metadata.get("decision_eligibility_provenance") or {}
+        assert provenance.get("stage") == "executed"
+        assert provenance.get("decision_id") == approved.decision_id
+        quarantine = stable_metadata.get("workflow_quarantine") or {}
+        assert not quarantine.get("generations")
+        assert stable_metadata["detected_at"] == "2026-10-02T03:00:00Z"
+        assert stable_metadata["details"]["materialized_at"] == "2026-10-02T03:00:00Z"
+        assert _pending_system_titles(council) == []
+        assert open_decisions == 1
+        assert summary["open_decisions"] == 1
+        assert summary["intelligence_signals"]["total"] == 0
+
+        assert tuple(changed[key] for key in workflow) == (
+            "open",
+            None,
+            "not_started",
+        )
+        quarantine = changed["metadata"].get("workflow_quarantine") or {}
+        generations = quarantine.get("generations") or []
+        assert [entry.get("reason") for entry in generations] == ["observation_changed"]
+        assert generations[0].get("decision_id") == approved.decision_id
+        title = "Requisitos de rol pendientes"
+        assert _pending_system_titles(changed_council) == [title]
+        assert changed_summary["intelligence_signals"]["total"] == 1
+        decisions = await _value(
+            seed,
+            "SELECT count(*) FROM decisions WHERE workspace_id = $1::uuid",
+            workspace_id,
+        )
+        assert decisions == 1
+    finally:
+        await pool.close()
+
+
+def _talent_gold(admin: dict[str, Any], gold: dict[str, Any]) -> Any:
+    async def gold_rows(dataset: str, _user: Any, _limit: int = 1000) -> list[dict]:
+        if dataset != "sap_successfactors_talent_signals":
+            return []
+        return [
+            {
+                **TALENT_SIGNAL,
+                "affected_count": gold["affected_count"],
+                "generated_at": gold["at"],
+                "materialized_at": gold["at"],
+                "tenant_id": admin["active_tenant_id"],
+                "workspace_id": admin["active_workspace_id"],
+            }
+        ]
+
+    return gold_rows
+
+
+@pytest.mark.parametrize("approve_changed_value", [False, True])
+@pytest.mark.asyncio
+async def test_talent_value_returning_to_a_quarantined_observation_can_be_approved(
+    council_seed: AuthoritySeed, approve_changed_value: bool
+):
+    seed = council_seed
+    admin = await _talent_workspace_admin(seed)
+    workspace_id = admin["active_workspace_id"]
+    gold = {"at": "2026-10-01T03:00:00Z", "affected_count": 42}
+    title = "Requisitos de rol pendientes"
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        with (
+            patch.object(auth, "pool", new=AsyncMock(return_value=pool)),
+            patch(
+                "app.services.intelligence.gold_fetcher.query_gold_dataset_rows",
+                new=_talent_gold(admin, gold),
+            ),
+        ):
+            await refresh_control_room_state(admin)
+            first = await business_council_commands.approve_council_proposal(
+                admin,
+                (await _proposal(admin, origin="system")).proposal_id,
+                idempotency_key="talent-revert-1",
+            )
+            gold.update(at="2026-10-02T03:00:00Z", affected_count=43)
+            await refresh_control_room_state(admin)
+            if approve_changed_value:
+                await business_council_commands.approve_council_proposal(
+                    admin,
+                    (await _proposal(admin, origin="system")).proposal_id,
+                    idempotency_key="talent-revert-2",
+                )
+            gold.update(at="2026-10-03T03:00:00Z", affected_count=42)
+            await refresh_control_room_state(admin)
+            council = await business_council_view.build_action_council(admin)
+            reverted = await _talent_row(seed, workspace_id)
+            await control_room_service._item_for_mutation(
+                reverted["item_id"], dict(admin)
+            )
+            again = await business_council_commands.approve_council_proposal(
+                admin,
+                (await _proposal(admin, origin="system")).proposal_id,
+                idempotency_key="talent-revert-3",
+            )
+            gold["at"] = "2026-10-04T03:00:00Z"
+            await refresh_control_room_state(admin)
+            after = await business_council_view.build_action_council(admin)
+            summary = await control_room_service.summary(admin)
+        generations = reverted["metadata"]["workflow_quarantine"]["generations"]
+        assert first.decision_id in [entry["decision_id"] for entry in generations]
+        assert reverted["metadata"]["business_eligibility_fingerprint"] in [
+            entry["fingerprint"] for entry in generations
+        ]
+        assert (reverted["status"], reverted["decision_id"]) == ("open", None)
+        assert _pending_system_titles(council) == [title]
+        assert again.decision_id not in (None, first.decision_id)
+        row = await _talent_row(seed, workspace_id)
+        assert (row["status"], row["decision_id"], row["execution_status"]) == (
+            "approved",
+            again.decision_id,
+            "executed",
+        )
+        assert _pending_system_titles(after) == []
+        assert summary["intelligence_signals"]["total"] == 0
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_talent_proposal_keeps_its_id_until_the_observation_month_changes(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    admin = await _talent_workspace_admin(seed)
+    workspace_id = admin["active_workspace_id"]
+    gold = {"at": "2026-08-01T03:00:00Z", "affected_count": 42}
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        with (
+            patch.object(auth, "pool", new=AsyncMock(return_value=pool)),
+            patch(
+                "app.services.intelligence.gold_fetcher.query_gold_dataset_rows",
+                new=_talent_gold(admin, gold),
+            ),
+        ):
+            await refresh_control_room_state(admin)
+            before = await _proposal(admin, origin="system")
+            gold["at"] = "2026-08-02T03:00:00Z"
+            await refresh_control_room_state(admin)
+            rerun = await _proposal(admin, origin="system")
+            approved = await business_council_commands.approve_council_proposal(
+                admin, before.proposal_id, idempotency_key="talent-pending-1"
+            )
+            gold["at"] = "2026-09-02T03:00:00Z"
+            await refresh_control_room_state(admin)
+            next_month = await _proposal(admin, origin="system")
+            row = await _talent_row(seed, workspace_id)
+        assert rerun.proposal_id == before.proposal_id
+        assert approved.decision_id is not None
+        assert next_month.proposal_id != before.proposal_id
+        assert (row["status"], row["decision_id"]) == ("open", None)
+        generations = row["metadata"]["workflow_quarantine"]["generations"]
+        assert [entry["decision_id"] for entry in generations] == [approved.decision_id]
+        assert [entry["reason"] for entry in generations] == ["observation_changed"]
     finally:
         await pool.close()

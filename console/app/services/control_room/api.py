@@ -16,8 +16,9 @@ from app.services.control_room.business_agentops import agentops_source_ids
 from app.services.control_room.business_cartridge_scope import (
     allowed_business_cartridges,
 )
+from app.services.control_room.business_fingerprint import observation_instant
 from app.services.control_room.business_source_projection import append_normalized_business_rows
-from app.services.control_room.business_source_scope import scoped_runtime_evidence_fields, scoped_source_row, scoped_source_row_with_evidence
+from app.services.control_room.business_source_scope import INVALID_SCOPE_STATUS, scoped_runtime_evidence_fields, scoped_source_row, scoped_source_row_with_evidence
 from app.services.control_room.business_talent_preview import (
     build_talent_action_preview,
 )
@@ -57,6 +58,8 @@ for _name, _value in _core.__dict__.items():
         globals()[_name] = _value
 _core.__dict__.setdefault("agentops_source_ids", agentops_source_ids)
 _core.__dict__.setdefault("allowed_business_cartridges", allowed_business_cartridges)
+_core.__dict__.setdefault("INVALID_SCOPE_STATUS", INVALID_SCOPE_STATUS)
+_core.__dict__.setdefault("observation_instant", observation_instant)
 _core.__dict__.setdefault("scoped_runtime_evidence_fields", scoped_runtime_evidence_fields)
 _core.__dict__.setdefault("scoped_source_row", scoped_source_row)
 _core.__dict__.setdefault("scoped_source_row_with_evidence", scoped_source_row_with_evidence)
@@ -3229,6 +3232,7 @@ def _sf_talent_signal_evidence_pack(
     generated_at: str,
     materialized_at: str,
     blockers: list[str],
+    severity: str,
 ) -> dict[str, Any]:
     items: list[dict[str, Any]] = [
         {
@@ -3267,6 +3271,8 @@ def _sf_talent_signal_evidence_pack(
         ),
         "items": items,
         "materialized_at": materialized_at,
+        "observation_period": observation_instant(generated_at)[:7],
+        "severity": severity,
         "source_dataset": source.dataset,
         "source_row_count": source_row_count,
         "readiness_status": readiness_status,
@@ -3495,7 +3501,6 @@ def _sf_talent_signal_options(
             "risk": 1,
             "score": priority_score,
             "score_explanation": score_explanation,
-            "selected": True,
             "recommendation_only": True,
         },
         {
@@ -3535,6 +3540,7 @@ def _sf_talent_signal_intelligence(
             generated_at=context["generated_at"],
             materialized_at=context["materialized_at"],
             blockers=context["blockers"],
+            severity=context["severity"],
         ),
         "hypotheses": _sf_talent_signal_hypotheses(context, blocked=blocked),
         "options": _sf_talent_signal_options(
@@ -3548,11 +3554,17 @@ def _sf_talent_signal_intelligence(
 @_bind_to_core
 def _sf_talent_signal_base_item(
     source: ControlRoomSource,
+    row: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     return _base_item(
         source,
-        {"severity": context["severity"], "generated_at": context["generated_at"]},
+        {
+            "severity": context["severity"],
+            "generated_at": context["generated_at"],
+            "tenant_id": row.get("tenant_id"),
+            "workspace_id": row.get("workspace_id"),
+        },
         context["signal_type"],
         context["signal_id"],
         context["title"],
@@ -3570,6 +3582,8 @@ def _sf_talent_signal_item_fields(
 ) -> dict[str, Any]:
     priority_score = priority["score"]
     readiness_status = context["readiness_status"]
+    invalid_scope = row.get("data_status") == INVALID_SCOPE_STATUS
+    scope_validation = _details(row.get("details")).get("scope_validation")
     return {
         "title": context["title"],
         "description": context["recommendation"],
@@ -3584,13 +3598,18 @@ def _sf_talent_signal_item_fields(
             "readiness_status": readiness_status,
             "blockers": context["blockers"],
             "recommendation_only": True,
+            **(
+                {"scope_validation": scope_validation}
+                if invalid_scope and scope_validation
+                else {}
+            ),
         },
         "detected_at": context["generated_at"],
         "metric_type": "count",
         "affected_count": context["affected_count"],
         "population_count": context["source_row_count"],
         "status": "open",
-        "data_status": "gold_ready",
+        "data_status": INVALID_SCOPE_STATUS if invalid_scope else "gold_ready",
         "source_system": "sap_successfactors",
         "dataset": source.dataset,
         "gold_table": source.dataset,
@@ -3609,7 +3628,6 @@ def _sf_talent_signal_item_fields(
         "monte_carlo": math_provenance["monte_carlo"],
         "bayesian_calibration": math_provenance["bayesian_calibration"],
         "math_provenance": math_provenance,
-        "selected_option_id": "review_talent_signal",
         "execution_status": "not_started",
     }
 
@@ -3645,7 +3663,7 @@ def _normalize_successfactors_talent_signal(
         confidence=confidence,
     )
     priority = _sf_talent_signal_priority(context, source)
-    item = _sf_talent_signal_base_item(source, context)
+    item = _sf_talent_signal_base_item(source, row, context)
     item.update(
         _sf_talent_signal_item_fields(
             source=source,
@@ -5450,6 +5468,7 @@ async def summary(
         include_source_state_items=False,
     )
     items = [item for item in collected["items"] if item["kind"] == "anomaly"]
+    open_signals = _open_intelligence_signals(collected["items"])
     by_severity = _severity_counts(items)
     by_cartridge: dict[str, int] = {}
     by_domain: dict[str, int] = {}
@@ -5484,7 +5503,41 @@ async def summary(
         },
         "lessons": _lesson_insights(lesson_rows),
         "alerts": alert_summary,
+        "intelligence_signals": _intelligence_signal_counts(collected, open_signals),
     }
+
+
+@_bind_to_core
+def _intelligence_signal_counts(
+    collected: dict[str, Any],
+    open_signals: list[dict[str, Any]],
+) -> dict[str, int] | None:
+    datasets = {
+        source.dataset
+        for module in collected.get("modules") or ()
+        for source in module.sources
+        if source.kind == "intelligence_signal" and _source_contract_is_visible(source)
+    }
+    statuses = [
+        str(row.get("status") or "")
+        for row in collected.get("sources") or ()
+        if row.get("dataset") in datasets
+    ]
+    if not statuses or any(status not in {"ok", "empty"} for status in statuses):
+        return None
+    return {"total": len(open_signals), **_severity_counts(open_signals)}
+
+
+@_bind_to_core
+def _open_intelligence_signals(
+    business_items: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in business_items
+        if item["kind"] == "intelligence_signal"
+        and str(item.get("status") or "open") not in TERMINAL_ITEM_STATUSES
+    ]
 
 
 _ITEM_STATUSES = (

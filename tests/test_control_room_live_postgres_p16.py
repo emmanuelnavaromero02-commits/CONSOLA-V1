@@ -22,6 +22,7 @@ from app.services.control_room.business_repository import (
 )
 from app.services.control_room.business_workflow_provenance import WorkflowStage
 from app.services.db_scope import SET_SCOPE_SQL
+from tests.control_room_action_authority_live import _new_user
 from tests.test_control_room_live_postgres_workflows import (
     AsyncNoop,
     _item,
@@ -58,7 +59,14 @@ async def _linked_item(dsn: str, item_id: str):
             "decision_id": int(decision["id"]),
             "status": "decision_created",
         }
-        return tenant_id, workspace_id, linked
+        checker = await _new_user(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            workspace_role="workspace_admin",
+            suffix=f"p16-checker-{item_id}",
+        )
+        return tenant_id, workspace_id, linked, checker
     finally:
         await conn.close()
 
@@ -147,10 +155,9 @@ async def test_live_concurrent_approval_has_one_winner(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ):
-    tenant_id, workspace_id, item = await _linked_item(
+    tenant_id, workspace_id, item, checker = await _linked_item(
         postgres_with_real_init_schema, "p16-double-approval"
     )
-    user = _user(tenant_id, workspace_id)
     barrier = asyncio.Barrier(2)
 
     async def approve():
@@ -161,7 +168,7 @@ async def test_live_concurrent_approval_has_one_winner(
                 tenant_id,
                 workspace_id,
                 lambda conn: _approve(
-                    conn, user=user, item=item, workspace_id=workspace_id
+                    conn, user=checker, item=item, workspace_id=workspace_id
                 ),
             )
         except HTTPException as exc:
@@ -180,7 +187,7 @@ async def test_live_option_waiting_on_approval_cannot_downgrade_stage(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ):
-    tenant_id, workspace_id, item = await _linked_item(
+    tenant_id, workspace_id, item, checker = await _linked_item(
         postgres_with_real_init_schema, "p16-option-approval"
     )
     user = _user(tenant_id, workspace_id)
@@ -191,14 +198,16 @@ async def test_live_option_waiting_on_approval_cannot_downgrade_stage(
         async def work(conn):
             await lock_authoritative_business_item(
                 conn,
-                user=user,
+                user=checker,
                 item=item,
                 decision_id=int(item["decision_id"]),
                 allowed_stages=(WorkflowStage.DECISION_CREATED,),
             )
             approval_locked.set()
             await allow_approval.wait()
-            return await _approve(conn, user=user, item=item, workspace_id=workspace_id)
+            return await _approve(
+                conn, user=checker, item=item, workspace_id=workspace_id
+            )
 
         return await _tx(omega_console_live_dsn, tenant_id, workspace_id, work)
 

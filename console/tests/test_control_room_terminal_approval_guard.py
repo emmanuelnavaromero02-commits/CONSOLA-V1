@@ -258,7 +258,7 @@ async def _scoped(conn, _user, work):
 
 
 @pytest.mark.asyncio
-async def test_dismissed_cannot_implicitly_approve_without_reopen_or_audit():
+async def test_dismissed_implicit_approval_is_denied_before_any_write():
     conn = TerminalCreateConnection("dismissed")
     ensure = AsyncMock()
     event = AsyncMock()
@@ -282,9 +282,11 @@ async def test_dismissed_cannot_implicitly_approve_without_reopen_or_audit():
     ):
         await control_room_service.approve_item("item-1", USER)
 
-    assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "terminal_item"
-    assert not any(_is_dml(statement) for statement in conn.statements)
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "implicit_self_approval"
+    assert conn.statements == []
     ensure.assert_not_awaited()
     event.assert_not_awaited()
-    audit.assert_not_awaited()
+    audit.assert_awaited_once()
+    assert audit.await_args.kwargs["action"] == "control_room.approve.denied"
+    assert audit.await_args.kwargs["status"] == "denied"

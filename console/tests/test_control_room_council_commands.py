@@ -608,3 +608,59 @@ def test_person_approval_checks_the_follow_up_switch_before_touching_the_intent(
     source = inspect.getsource(commands._approve_person)
     assert source.index("require_followups_enabled(") < source.index("lock_intent(")
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "kwargs", "action", "reason"),
+    (
+        (
+            commands.approve_council_proposal,
+            {},
+            "control_room.council.approve.denied",
+            "self_approval",
+        ),
+        (
+            commands.discard_council_proposal,
+            {"reason": "La causa se corrigió en origen"},
+            "control_room.council.discard.denied",
+            "self_discard",
+        ),
+    ),
+)
+async def test_four_eyes_denials_are_audited_outside_the_rolled_back_transaction(
+    command, kwargs, action, reason
+):
+    from app.services.control_room.business_item_approval_guard import (
+        ItemApprovalDenied,
+    )
+
+    async def _denied(_pool: Any, _user: Any, _work: Any) -> None:
+        commands._require_distinct_checker(
+            CouncilMaker.person(21),
+            21,
+            item_id="item-1",
+            decision_id=3,
+            reason=reason,
+        )
+
+    audit = AsyncMock()
+    with (
+        patch.object(commands.auth, "pool", new=AsyncMock(return_value=object())),
+        patch.object(commands, "run_with_db_scope", _denied),
+        patch.object(commands.audit_service, "record_event", audit),
+    ):
+        with pytest.raises(ItemApprovalDenied) as denied:
+            await command(CHECKER, HANDLE, idempotency_key="key-12345", **kwargs)
+
+    assert denied.value.status_code == 403
+    assert denied.value.detail["code"] == reason
+    audit.assert_awaited_once()
+    recorded = audit.await_args.kwargs
+    assert "connection" not in recorded
+    assert recorded["action"] == action
+    assert recorded["status"] == "denied"
+    assert recorded["resource_id"] == "item-1"
+    assert recorded["user_id"] == 21
+    assert recorded["metadata"] == {"reason": reason, "decision_id": 3, "maker": "user:21"}
+    assert recorded["critical"] is True

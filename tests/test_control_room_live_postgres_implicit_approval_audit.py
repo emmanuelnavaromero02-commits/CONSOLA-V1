@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import asyncio
-
 import asyncpg
 import pytest
-from fastapi import HTTPException
 
 from app.services import audit_service
+from app.services.control_room.business_item_approval_guard import (
+    DENIED_AUDIT_ACTION,
+)
 from tests.test_control_room_live_postgres_implicit_approval import (
     _approve,
-    _seed,
+    _assert_not_approved,
+    _seed_linked,
     _state,
 )
 from tests.test_operational_rls_console_refinement import (
@@ -18,10 +19,7 @@ from tests.test_operational_rls_console_refinement import (
 )
 
 
-AUDIT_ACTIONS = (
-    "control_room.decision.create",
-    "control_room.approve",
-)
+AUDIT_ACTIONS = ("control_room.approve", DENIED_AUDIT_ACTION)
 
 
 async def _audit_counts(dsn: str, item_id: str) -> dict[str, int]:
@@ -42,60 +40,45 @@ async def _audit_counts(dsn: str, item_id: str) -> dict[str, int]:
         await conn.close()
 
 
-def _assert_zero_workflow(state: dict) -> None:
-    assert state == {
-        "status": "open",
-        "decision_id": None,
-        "decisions": 0,
-        "created_actions": 0,
-        "approved_actions": 0,
-        "events": {},
-        "lessons": 0,
-    }
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failed_action", AUDIT_ACTIONS)
-async def test_live_each_audit_failure_rolls_back_every_effect(
-    failed_action: str,
+async def test_live_approval_audit_failure_rolls_back_every_effect(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ) -> None:
-    suffix = failed_action.rsplit(".", 1)[-1]
-    user, item = await _seed(
-        postgres_with_real_init_schema,
-        f"p12-audit-rollback-{suffix}",
+    maker, checker, item = await _seed_linked(
+        postgres_with_real_init_schema, "p12-audit-rollback"
     )
     pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=2)
 
-    async def fail_selected_audit(**kwargs):
-        if kwargs["action"] == failed_action:
-            raise RuntimeError(f"failed {failed_action}")
+    async def fail_approval_audit(**kwargs):
+        if kwargs["action"] == "control_room.approve":
+            raise RuntimeError("failed approval audit")
         await audit_service.record_event(**kwargs)
 
     try:
-        with pytest.raises(RuntimeError, match=f"failed {failed_action}"):
+        with pytest.raises(RuntimeError, match="failed approval audit"):
             await _approve(
                 pool,
-                user=user,
+                user=checker,
                 item=item,
-                audit_recorder=fail_selected_audit,
+                decision_id=item["decision_id"],
+                audit_recorder=fail_approval_audit,
             )
     finally:
         await pool.close()
 
-    _assert_zero_workflow(
-        await _state(postgres_with_real_init_schema, user, item["id"])
-    )
+    _assert_not_approved(await _state(postgres_with_real_init_schema, maker, item["id"]))
     assert await _audit_counts(postgres_with_real_init_schema, item["id"]) == {}
 
 
 @pytest.mark.asyncio
-async def test_live_success_audits_are_invisible_until_workflow_commit(
+async def test_live_success_audit_is_invisible_until_workflow_commit(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ) -> None:
-    user, item = await _seed(postgres_with_real_init_schema, "p12-audit-visibility")
+    maker, checker, item = await _seed_linked(
+        postgres_with_real_init_schema, "p12-audit-visibility"
+    )
     pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=2)
     observations: list[tuple[int, ...]] = []
 
@@ -106,7 +89,6 @@ async def test_live_success_audits_are_invisible_until_workflow_commit(
             row = await observer.fetchrow(
                 """
                 SELECT
-                  (SELECT COUNT(*) FROM decisions WHERE workspace_id=$1),
                   (SELECT COUNT(*) FROM control_room_item_events
                     WHERE workspace_id=$1 AND item_id=$2),
                   (SELECT COUNT(*) FROM control_room_lessons
@@ -114,7 +96,7 @@ async def test_live_success_audits_are_invisible_until_workflow_commit(
                   (SELECT COUNT(*) FROM audit_events
                     WHERE resource_id=$2 AND action=ANY($3::text[]))
                 """,
-                user["active_workspace_id"],
+                maker["active_workspace_id"],
                 item["id"],
                 list(AUDIT_ACTIONS),
             )
@@ -125,67 +107,49 @@ async def test_live_success_audits_are_invisible_until_workflow_commit(
     try:
         await _approve(
             pool,
-            user=user,
+            user=checker,
             item=item,
+            decision_id=item["decision_id"],
             audit_recorder=record_and_observe,
         )
     finally:
         await pool.close()
 
-    assert observations == [(0, 0, 0, 0), (0, 0, 0, 0)]
-    state = await _state(postgres_with_real_init_schema, user, item["id"])
+    assert observations == [(0, 0, 0)]
+    state = await _state(postgres_with_real_init_schema, maker, item["id"])
     assert state["status"] == "approved"
-    assert (
-        state["decisions"],
-        state["created_actions"],
-        state["approved_actions"],
-    ) == (
-        1,
-        1,
-        1,
-    )
+    assert (state["approved_actions"], state["lessons"]) == (1, 1)
     assert await _audit_counts(postgres_with_real_init_schema, item["id"]) == {
-        "control_room.decision.create": 1,
         "control_room.approve": 1,
     }
 
 
 @pytest.mark.asyncio
-async def test_live_concurrent_implicit_approvals_keep_one_audit_pair(
+async def test_live_denial_audit_failure_still_fails_closed(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ) -> None:
-    user, item = await _seed(postgres_with_real_init_schema, "p12-audit-concurrent")
-    pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=2, max_size=4)
-    barrier = asyncio.Barrier(2)
+    maker, _checker, item = await _seed_linked(
+        postgres_with_real_init_schema, "p12-denial-audit-failure"
+    )
+    pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=2)
 
-    async def run():
-        await barrier.wait()
-        try:
-            return await _approve(pool, user=user, item=item)
-        except HTTPException as exc:
-            return exc
+    async def fail_denial_audit(**kwargs):
+        if kwargs["action"] == DENIED_AUDIT_ACTION:
+            raise RuntimeError("failed denial audit")
+        await audit_service.record_event(**kwargs)
 
     try:
-        results = await asyncio.gather(run(), run())
+        with pytest.raises(RuntimeError, match="failed denial audit"):
+            await _approve(
+                pool,
+                user=maker,
+                item=item,
+                decision_id=item["decision_id"],
+                audit_recorder=fail_denial_audit,
+            )
     finally:
         await pool.close()
 
-    assert sorted(
-        result.status_code if isinstance(result, HTTPException) else 200
-        for result in results
-    ) == [200, 409]
-    state = await _state(postgres_with_real_init_schema, user, item["id"])
-    assert (
-        state["decisions"],
-        state["created_actions"],
-        state["approved_actions"],
-    ) == (
-        1,
-        1,
-        1,
-    )
-    assert await _audit_counts(postgres_with_real_init_schema, item["id"]) == {
-        "control_room.decision.create": 1,
-        "control_room.approve": 1,
-    }
+    _assert_not_approved(await _state(postgres_with_real_init_schema, maker, item["id"]))
+    assert await _audit_counts(postgres_with_real_init_schema, item["id"]) == {}

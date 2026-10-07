@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence, Set
 from typing import Any
 
@@ -63,6 +64,11 @@ async def load_overlay_state(
 
 
 def _mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return {}
     return dict(value) if isinstance(value, Mapping) else {}
 
 

@@ -137,7 +137,7 @@ async def test_live_approve_vs_dismiss_has_one_terminal_winner(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ) -> None:
-    tenant_id, workspace_id, item = await _linked_item(
+    tenant_id, workspace_id, item, checker = await _linked_item(
         postgres_with_real_init_schema,
         "terminal-dismiss-race",
     )
@@ -153,7 +153,7 @@ async def test_live_approve_vs_dismiss_has_one_terminal_winner(
             workspace_id=workspace_id,
             work=lambda conn: _approve(
                 conn,
-                user=user,
+                user=checker,
                 item=item,
                 workspace_id=workspace_id,
             ),
@@ -195,7 +195,7 @@ async def test_live_approved_item_cannot_be_dismissed_afterward(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ) -> None:
-    tenant_id, workspace_id, item = await _linked_item(
+    tenant_id, workspace_id, item, checker = await _linked_item(
         postgres_with_real_init_schema,
         "terminal-approved-then-dismiss",
     )
@@ -206,7 +206,7 @@ async def test_live_approved_item_cannot_be_dismissed_afterward(
         workspace_id,
         lambda conn: _approve(
             conn,
-            user=user,
+            user=checker,
             item=item,
             workspace_id=workspace_id,
         ),

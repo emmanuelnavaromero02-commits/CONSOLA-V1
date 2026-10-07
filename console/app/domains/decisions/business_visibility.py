@@ -16,6 +16,7 @@ from app.services.control_room.business_repository import fetch_lineage_rows
 
 MAX_VISIBLE_DECISIONS = 500
 DECISION_BATCH_SIZE = 500
+ORPHANED_KEY = "orphaned"
 
 
 def preserve_control_room_provenance(existing: Any, requested: Any) -> list[Any]:
@@ -44,8 +45,8 @@ async def _linked_rows(
         owner_clause = f"AND owner_user_id = ${len(params)}"
     linked = await conn.fetch(
         f"""
-        SELECT decision_id, item_id, item_kind, source_dataset, metadata,
-               tenant_id, workspace_id, owner_user_id
+        SELECT decision_id, item_id, item_kind, cartridge_id, source_dataset,
+               metadata, tenant_id, workspace_id, owner_user_id
           FROM control_room_items
          WHERE workspace_id = $1
            AND decision_id = ANY($2::bigint[])
@@ -84,6 +85,7 @@ async def filter_decision_rows(
     rows: Sequence[Mapping[str, Any]],
     tenant_id: str | None = None,
     owner_id: int | None = None,
+    include_orphans: bool = False,
 ) -> list[dict[str, Any]]:
     decisions = [dict(row) for row in rows]
     decision_ids = [int(row["id"]) for row in decisions if row.get("id") is not None]
@@ -108,7 +110,14 @@ async def filter_decision_rows(
     )
     for row in visible:
         row.pop("_control_room_origin", None)
-    return visible
+    if not include_orphans:
+        return visible
+    visible_ids = {row.get("id") for row in visible}
+    result = []
+    for row in candidates:
+        row.pop("_control_room_origin", None)
+        result.append({**row, ORPHANED_KEY: row.get("id") not in visible_ids})
+    return result
 
 
 async def fetch_business_decisions(
@@ -120,6 +129,7 @@ async def fetch_business_decisions(
     tenant_id: str | None = None,
     owner_id: int | None = None,
     limit: int = MAX_VISIBLE_DECISIONS,
+    include_orphans: bool = False,
 ) -> list[dict[str, Any]]:
     target = max(1, min(int(limit), MAX_VISIBLE_DECISIONS))
     visible: list[dict[str, Any]] = []
@@ -156,6 +166,7 @@ async def fetch_business_decisions(
                 rows=batch,
                 tenant_id=tenant_id,
                 owner_id=owner_id,
+                include_orphans=include_orphans,
             )
         )
         last = batch[-1]

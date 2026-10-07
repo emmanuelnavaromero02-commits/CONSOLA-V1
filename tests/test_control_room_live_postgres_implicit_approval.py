@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 import asyncpg
 import httpx
@@ -10,41 +11,97 @@ from fastapi import HTTPException
 from unittest.mock import AsyncMock, patch
 
 from app.routers import control_room as control_room_router
-from app.services import audit_service, control_room_service
+from app.services import audit_service, auth, control_room_service
 from app.services.control_room.business_approve_with_optional_decision import (
     approve_with_optional_decision,
 )
+from app.services.control_room.business_council_actors import SYSTEM_MAKER
+from app.services.control_room.business_decision_persistence import (
+    create_and_link_decision,
+)
+from app.services.control_room.business_item_approval_guard import (
+    APPROVER_PERMISSION,
+    DENIED_AUDIT_ACTION,
+    IMPLICIT_SELF_APPROVAL,
+    SELF_APPROVAL,
+)
 from app.services.control_room.business_item_persistence import persist_item_rows
 from app.services.db_scope import run_with_db_scope
-from tests.test_control_room_live_postgres_workflows import _item, _rows, _scope
+from tests.control_room_action_authority_live import _new_user
+from tests.test_control_room_live_postgres_workflows import AsyncNoop, _item, _rows
 from tests.test_operational_rls_console_refinement import (
     omega_console_live_dsn,
     postgres_with_real_init_schema,
 )
 
 
-def _user(tenant_id: str, workspace_id: str) -> dict:
-    return {
-        "id": 7,
-        "email": "workflow-owner@example.com",
-        "role": "user",
-        "workspace_role": "workspace_admin",
-        "active_tenant_id": tenant_id,
-        "active_workspace_id": workspace_id,
-    }
+async def _workspace(conn: asyncpg.Connection) -> tuple[str, str, str]:
+    suffix = uuid.uuid4().hex[:8]
+    tenant_id = str(
+        await conn.fetchval(
+            "INSERT INTO tenants(name, slug) VALUES ($1, $2) RETURNING id",
+            f"Four eyes {suffix}",
+            f"four-eyes-{suffix}",
+        )
+    )
+    workspace_id = str(
+        await conn.fetchval(
+            "INSERT INTO workspaces(tenant_id, name) VALUES ($1, 'Four eyes') RETURNING id",
+            tenant_id,
+        )
+    )
+    return tenant_id, workspace_id, suffix
+
+
+async def _admin(conn, tenant_id: str, workspace_id: str, suffix: str) -> dict:
+    return await _new_user(
+        conn,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        workspace_role="workspace_admin",
+        suffix=suffix,
+    )
 
 
 async def _seed(dsn: str, item_id: str) -> tuple[dict, dict]:
     conn = await asyncpg.connect(dsn)
     try:
-        tenant_id, workspace_id = await _scope(conn)
-        item = _item(item_id, tenant_id, workspace_id)
+        tenant_id, workspace_id, suffix = await _workspace(conn)
+        user = await _admin(conn, tenant_id, workspace_id, f"owner-{suffix}")
+        item = {**_item(item_id, tenant_id, workspace_id), "owner_user_id": user["id"]}
         await persist_item_rows(
             conn,
-            _rows([item], tenant_id, workspace_id),
-            owner_scope_id=7,
+            _rows([item], tenant_id, workspace_id, owner=user["id"]),
+            owner_scope_id=user["id"],
         )
-        return _user(tenant_id, workspace_id), {**item, "owner_user_id": 7}
+        return user, item
+    finally:
+        await conn.close()
+
+
+async def _seed_linked(
+    dsn: str, item_id: str, *, system_made: bool = False
+) -> tuple[dict, dict, dict]:
+    maker, item = await _seed(dsn, item_id)
+    conn = await asyncpg.connect(dsn)
+    try:
+        checker = await _admin(
+            conn,
+            maker["active_tenant_id"],
+            maker["active_workspace_id"],
+            f"checker-{uuid.uuid4().hex[:8]}",
+        )
+        decision = await create_and_link_decision(
+            conn,
+            user=maker,
+            item=item,
+            workspace_id=maker["active_workspace_id"],
+            ensure_item_row=AsyncNoop(),
+            record_item_event=AsyncNoop(),
+            system_maker=SYSTEM_MAKER if system_made else None,
+        )
+        linked = {**item, "decision_id": int(decision["id"]), "status": "decision_created"}
+        return maker, checker, linked
     finally:
         await conn.close()
 
@@ -54,26 +111,24 @@ async def _approve(
     *,
     user: dict,
     item: dict,
+    decision_id: int | None = None,
     audit_recorder=None,
-    post_link_hook=None,
 ):
-    return await approve_with_optional_decision(
-        pool,
-        user=user,
-        item=item,
-        decision_id=None,
-        lessons=("Keep measured controls",),
-        confidence=0.9,
-        run_scoped=run_with_db_scope,
-        ensure_item_row=control_room_service._ensure_item_row,
-        record_item_event=control_room_service._record_item_event,
-        create_and_link=control_room_service._create_and_link_business_decision,
-        approve_item=control_room_service._approve_business_item,
-        link_decision=control_room_service.link_control_room_decision,
-        approve_link=control_room_service.approve_control_room_decision,
-        record_audit_event=audit_recorder or audit_service.record_event,
-        post_link_hook=post_link_hook,
-    )
+    with patch.object(auth, "pool", AsyncMock(return_value=pool)):
+        return await approve_with_optional_decision(
+            pool,
+            user=user,
+            item=item,
+            decision_id=decision_id,
+            lessons=("Keep measured controls",),
+            confidence=0.9,
+            run_scoped=run_with_db_scope,
+            ensure_item_row=control_room_service._ensure_item_row,
+            approve_item=control_room_service._approve_business_item,
+            link_decision=control_room_service.link_control_room_decision,
+            approve_link=control_room_service.approve_control_room_decision,
+            record_audit_event=audit_recorder or audit_service.record_event,
+        )
 
 
 async def _state(dsn: str, user: dict, item_id: str) -> dict:
@@ -89,18 +144,13 @@ async def _state(dsn: str, user: dict, item_id: str) -> dict:
             "SELECT COUNT(*) FROM decisions WHERE workspace_id=$1",
             user["active_workspace_id"],
         )
-        actions = await conn.fetchrow(
+        approved = await conn.fetchval(
             """
-            SELECT
-                COUNT(*) FILTER (
-                    WHERE da.action_text='Decision creada desde Sala de Control'
-                ) AS created,
-                COUNT(*) FILTER (
-                    WHERE da.action_text LIKE 'Aprobacion de recomendacion OMEGA:%'
-                ) AS approved
+            SELECT COUNT(*)
               FROM decision_actions da
               JOIN decisions d ON d.id=da.decision_id
              WHERE d.workspace_id=$1
+               AND da.action_text LIKE 'Aprobacion de recomendacion OMEGA:%'
             """,
             user["active_workspace_id"],
         )
@@ -122,8 +172,7 @@ async def _state(dsn: str, user: dict, item_id: str) -> dict:
             "status": item["status"],
             "decision_id": item["decision_id"],
             "decisions": decision_count,
-            "created_actions": actions["created"],
-            "approved_actions": actions["approved"],
+            "approved_actions": approved,
             "events": {row["event_type"]: row["count"] for row in events},
             "lessons": lessons,
         }
@@ -131,13 +180,27 @@ async def _state(dsn: str, user: dict, item_id: str) -> dict:
         await conn.close()
 
 
-def _assert_single_workflow(state: dict, *, lessons: int) -> None:
-    assert state["status"] == "approved"
-    assert state["decision_id"] is not None
-    counts = state["decisions"], state["created_actions"], state["approved_actions"]
-    assert counts == (1, 1, 1)
-    assert state["events"] == dict(decision_created=1, approved=1, lesson_recorded=1)
-    assert state["lessons"] == lessons
+async def _audits(dsn: str, item_id: str) -> list[dict]:
+    conn = await asyncpg.connect(dsn)
+    try:
+        rows = await conn.fetch(
+            """SELECT user_id, action, status, metadata->>'reason' AS reason
+                 FROM audit_events
+                WHERE resource_type='control_room_item' AND resource_id=$1
+                ORDER BY id""",
+            item_id,
+        )
+        return [dict(row) for row in rows]
+    finally:
+        await conn.close()
+
+
+def _assert_not_approved(state: dict) -> None:
+    assert state["status"] == "decision_created"
+    assert state["decisions"] == 1
+    assert state["approved_actions"] == 0
+    assert "approved" not in state["events"]
+    assert state["lessons"] == 0
 
 
 def _app(user: dict) -> FastAPI:
@@ -188,51 +251,145 @@ async def test_live_empty_body_approval_is_rejected_without_writes(
 
     assert response.status_code == 422, response.text
     state = await _state(postgres_with_real_init_schema, user, item["id"])
-    assert list(state.values()) == ["open", None, 0, 0, 0, {}, 0]
+    assert list(state.values()) == ["open", None, 0, 0, {}, 0]
 
 
 @pytest.mark.asyncio
-async def test_live_post_link_failpoint_rolls_back_all_workflow_rows(
+async def test_live_implicit_create_and_approve_is_closed_and_audited(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ) -> None:
-    user, item = await _seed(postgres_with_real_init_schema, "p12-rollback")
+    user, item = await _seed(postgres_with_real_init_schema, "p12-implicit-closed")
     pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=2)
-
-    async def fail(_conn, _decision_id):
-        raise RuntimeError("post-link")
-
     try:
-        with pytest.raises(RuntimeError, match="post-link"):
-            await _approve(pool, user=user, item=item, post_link_hook=fail)
+        with pytest.raises(HTTPException) as exc:
+            await _approve(pool, user=user, item=item)
     finally:
         await pool.close()
 
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == IMPLICIT_SELF_APPROVAL
     state = await _state(postgres_with_real_init_schema, user, item["id"])
-    assert state == {
-        "status": "open",
-        "decision_id": None,
-        "decisions": 0,
-        "created_actions": 0,
-        "approved_actions": 0,
-        "events": {},
-        "lessons": 0,
-    }
+    assert list(state.values()) == ["open", None, 0, 0, {}, 0]
+    assert await _audits(postgres_with_real_init_schema, item["id"]) == [
+        {
+            "user_id": user["id"],
+            "action": DENIED_AUDIT_ACTION,
+            "status": "denied",
+            "reason": IMPLICIT_SELF_APPROVAL,
+        }
+    ]
 
 
 @pytest.mark.asyncio
-async def test_live_two_implicit_approvals_create_one_workflow(
+async def test_live_author_cannot_approve_own_decision(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ) -> None:
-    user, item = await _seed(postgres_with_real_init_schema, "p12-concurrent")
+    maker, _checker, item = await _seed_linked(
+        postgres_with_real_init_schema, "p12-self-approval"
+    )
+    pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=2)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await _approve(
+                pool, user=maker, item=item, decision_id=item["decision_id"]
+            )
+    finally:
+        await pool.close()
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == SELF_APPROVAL
+    _assert_not_approved(await _state(postgres_with_real_init_schema, maker, item["id"]))
+    assert await _audits(postgres_with_real_init_schema, item["id"]) == [
+        {
+            "user_id": maker["id"],
+            "action": DENIED_AUDIT_ACTION,
+            "status": "denied",
+            "reason": SELF_APPROVAL,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("system_made", [False, True])
+async def test_live_distinct_approver_approves_once(
+    system_made: bool,
+    postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
+) -> None:
+    maker, checker, item = await _seed_linked(
+        postgres_with_real_init_schema,
+        f"p12-distinct-{'system' if system_made else 'person'}",
+        system_made=system_made,
+    )
+    pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=2)
+    try:
+        approval = await _approve(
+            pool, user=checker, item=item, decision_id=item["decision_id"]
+        )
+    finally:
+        await pool.close()
+
+    assert approval.decision_id == item["decision_id"]
+    state = await _state(postgres_with_real_init_schema, maker, item["id"])
+    assert state["status"] == "approved"
+    assert (state["decisions"], state["approved_actions"], state["lessons"]) == (1, 1, 1)
+    assert await _audits(postgres_with_real_init_schema, item["id"]) == [
+        {
+            "user_id": checker["id"],
+            "action": "control_room.approve",
+            "status": "success",
+            "reason": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_live_revoked_checker_membership_is_denied(
+    postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
+) -> None:
+    maker, checker, item = await _seed_linked(
+        postgres_with_real_init_schema, "p12-revoked-checker"
+    )
+    admin = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        await admin.execute(
+            "DELETE FROM user_workspace_roles WHERE user_id=$1", checker["id"]
+        )
+    finally:
+        await admin.close()
+    pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=2)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await _approve(
+                pool, user=checker, item=item, decision_id=item["decision_id"]
+            )
+    finally:
+        await pool.close()
+
+    assert exc.value.detail["code"] == APPROVER_PERMISSION
+    _assert_not_approved(await _state(postgres_with_real_init_schema, maker, item["id"]))
+
+
+@pytest.mark.asyncio
+async def test_live_two_distinct_approvals_create_one_workflow(
+    postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
+) -> None:
+    maker, checker, item = await _seed_linked(
+        postgres_with_real_init_schema, "p12-concurrent"
+    )
     pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=2, max_size=4)
     barrier = asyncio.Barrier(2)
 
     async def run():
         await barrier.wait()
         try:
-            return await _approve(pool, user=user, item=item)
+            return await _approve(
+                pool, user=checker, item=item, decision_id=item["decision_id"]
+            )
         except HTTPException as exc:
             return exc
 
@@ -245,23 +402,36 @@ async def test_live_two_implicit_approvals_create_one_workflow(
         result.status_code if isinstance(result, HTTPException) else 200
         for result in results
     ) == [200, 409]
-    state = await _state(postgres_with_real_init_schema, user, item["id"])
-    _assert_single_workflow(state, lessons=1)
+    state = await _state(postgres_with_real_init_schema, maker, item["id"])
+    assert state["status"] == "approved"
+    assert (state["decisions"], state["approved_actions"], state["lessons"]) == (1, 1, 1)
+    assert state["events"] == {"approved": 1, "lesson_recorded": 1}
+    assert await _audits(postgres_with_real_init_schema, item["id"]) == [
+        {
+            "user_id": checker["id"],
+            "action": "control_room.approve",
+            "status": "success",
+            "reason": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio
-async def test_live_refresh_waits_for_atomic_implicit_approval(
+async def test_live_refresh_waits_for_atomic_approval(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
 ) -> None:
-    user, item = await _seed(postgres_with_real_init_schema, "p12-refresh-race")
+    maker, checker, item = await _seed_linked(
+        postgres_with_real_init_schema, "p12-refresh-race"
+    )
     pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=2, max_size=4)
-    linked = asyncio.Event()
+    approved = asyncio.Event()
     release = asyncio.Event()
     refresh_started = asyncio.Event()
 
-    async def hold_after_link(_conn, _decision_id):
-        linked.set()
+    async def hold_after_approval(**kwargs):
+        await audit_service.record_event(**kwargs)
+        approved.set()
         await release.wait()
 
     async def refresh():
@@ -270,16 +440,27 @@ async def test_live_refresh_waits_for_atomic_implicit_approval(
         async def write(conn, _tenant_id, _workspace_id):
             await persist_item_rows(
                 conn,
-                _rows([item], user["active_tenant_id"], user["active_workspace_id"]),
-                owner_scope_id=7,
+                _rows(
+                    [item],
+                    maker["active_tenant_id"],
+                    maker["active_workspace_id"],
+                    owner=maker["id"],
+                ),
+                owner_scope_id=maker["id"],
             )
 
-        await run_with_db_scope(pool, user, write)
+        await run_with_db_scope(pool, maker, write)
 
     approval_task = asyncio.create_task(
-        _approve(pool, user=user, item=item, post_link_hook=hold_after_link)
+        _approve(
+            pool,
+            user=checker,
+            item=item,
+            decision_id=item["decision_id"],
+            audit_recorder=hold_after_approval,
+        )
     )
-    await linked.wait()
+    await approved.wait()
     refresh_task = asyncio.create_task(refresh())
     await refresh_started.wait()
     await asyncio.sleep(0.1)
@@ -290,5 +471,15 @@ async def test_live_refresh_waits_for_atomic_implicit_approval(
     finally:
         await pool.close()
 
-    state = await _state(postgres_with_real_init_schema, user, item["id"])
-    _assert_single_workflow(state, lessons=1)
+    state = await _state(postgres_with_real_init_schema, maker, item["id"])
+    assert state["status"] == "approved"
+    assert (state["decisions"], state["approved_actions"], state["lessons"]) == (1, 1, 1)
+    assert state["events"] == {"approved": 1, "lesson_recorded": 1}
+    assert await _audits(postgres_with_real_init_schema, item["id"]) == [
+        {
+            "user_id": checker["id"],
+            "action": "control_room.approve",
+            "status": "success",
+            "reason": None,
+        }
+    ]
