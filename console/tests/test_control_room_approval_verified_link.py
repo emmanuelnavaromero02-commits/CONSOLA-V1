@@ -16,6 +16,7 @@ USER = {
     "id": 7,
     "email": "ops@example.com",
     "role": "user",
+    "workspace_role": "workspace_admin",
     "active_tenant_id": "tenant-A",
     "active_workspace_id": "workspace-A",
 }
@@ -47,7 +48,7 @@ async def _scoped(pool, _user, work):
 class LinkedDecisionConnection:
     async def fetchrow(self, sql: str, *_args):
         if "FROM decisions" in sql:
-            return {"id": 91, "created_by_id": 7, "kpis": []}
+            return {"id": 91, "created_by_id": 8, "kpis": []}
         if "item_id <> $3" in sql:
             return None
         if "FROM control_room_items" in sql:
@@ -110,6 +111,10 @@ async def test_approve_accepts_verified_decision_link_for_owned_item():
             side_effect=lambda item, _builder, **updates: {**item, **updates},
         ),
         patch.object(control_room_service.audit_service, "record_event", audit),
+        patch(
+            "app.services.control_room.business_item_approval_guard.actor_has_current_permission",
+            AsyncMock(return_value=True),
+        ),
     ):
         result = await control_room_service.approve_item("item-1", USER, decision_id=91)
 

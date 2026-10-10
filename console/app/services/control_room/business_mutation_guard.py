@@ -25,7 +25,11 @@ from app.services.control_room.business_workflow_provenance import (
     business_observation_fingerprint,
     workflow_has_eligible_provenance,
 )
+from app.services.control_room.business_observation_order import (
+    latest_observation_instant,
+)
 from app.services.control_room.business_workflow_quarantine import (
+    generation_applies,
     workflow_columns_unlinked,
 )
 
@@ -80,16 +84,19 @@ def _complete_item_scope(
 
 
 def _current_generation_quarantined(
-    metadata: Mapping[str, Any], fingerprint: str
+    metadata: Mapping[str, Any], item: Mapping[str, Any], fingerprint: str
 ) -> bool:
     quarantine = metadata.get(WORKFLOW_QUARANTINE_KEY)
     if not isinstance(quarantine, Mapping):
         return bool(quarantine)
     generations = quarantine.get("generations")
     if isinstance(generations, list):
+        observed_at = latest_observation_instant(item)
         return any(
             isinstance(value, Mapping)
-            and str(value.get("fingerprint") or "").strip() == fingerprint
+            and generation_applies(
+                value, fingerprint=fingerprint, observed_at=observed_at
+            )
             for value in generations
         )
     quarantined_fingerprint = str(
@@ -212,7 +219,7 @@ async def lock_authoritative_business_item(
         or business_observation_fingerprint(normalized) != current_fingerprint
     ):
         raise _changed()
-    if _current_generation_quarantined(metadata, current_fingerprint):
+    if _current_generation_quarantined(metadata, item, current_fingerprint):
         raise _changed()
     if metadata.get(DECISION_PROVENANCE_KEY) or decision_id is not None:
         _validate_workflow(

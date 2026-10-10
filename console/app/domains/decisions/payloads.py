@@ -4,6 +4,8 @@ import json
 from datetime import date, datetime
 from typing import Any
 
+from fastapi import HTTPException
+
 
 def coerce_date(value: Any) -> date | None:
     if value is None or value == "":
@@ -50,7 +52,23 @@ DECISION_UPDATE_FIELDS = {
 }
 
 
+DECISION_STATUSES = frozenset({"open", "closed"})
+DECISION_OUTCOMES = frozenset({"achieved", "not_achieved"})
+
+
+def require_valid_decision_state(body: dict[str, Any]) -> None:
+    status = body.get("status")
+    if "status" in body and not (isinstance(status, str) and status in DECISION_STATUSES):
+        raise HTTPException(400, "status must be 'open' or 'closed'")
+    outcome = body.get("outcome")
+    if outcome is not None and not (
+        isinstance(outcome, str) and outcome in DECISION_OUTCOMES
+    ):
+        raise HTTPException(400, "outcome must be 'achieved', 'not_achieved' or null")
+
+
 def decision_update_assignments(body: dict[str, Any]) -> tuple[list[str], list[Any]]:
+    require_valid_decision_state(body)
     sets: list[str] = []
     params: list[Any] = []
     for key, value in body.items():

@@ -12,9 +12,15 @@ from app.services.control_room.business_access import (
     can_read_workspace_wide,
     expected_item_owner,
 )
+from app.services.control_room.business_action_markers import (
+    RECOMMENDATION_APPROVAL_PREFIX,
+)
 from app.services.control_room.business_action_mutations import (
     command_count,
     _record_event,
+)
+from app.services.control_room.business_item_approval_guard import (
+    require_distinct_item_approver,
 )
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
@@ -49,7 +55,7 @@ async def require_approvable_decision(
 ) -> ApprovableDecision:
     decision = await conn.fetchrow(
         """
-        SELECT id, created_by_id
+        SELECT id, created_by_id, created_by
           FROM decisions
          WHERE id = $1 AND workspace_id = $2
         """,
@@ -193,6 +199,13 @@ async def approve_business_item(
         workspace_id=workspace_id,
         decision_id=decision_id,
     )
+    await require_distinct_item_approver(
+        conn,
+        user=user,
+        decision=approved.row,
+        item=item,
+        workspace_id=workspace_id,
+    )
     locked = await lock_authoritative_business_item(
         conn,
         user=user,
@@ -217,7 +230,7 @@ async def approve_business_item(
         RETURNING *
         """,
         decision_id,
-        f"Aprobacion de recomendacion OMEGA: {item['title']}",
+        f"{RECOMMENDATION_APPROVAL_PREFIX}{item['title']}",
         item["recommendation"],
         user.get("email") or "user",
     )

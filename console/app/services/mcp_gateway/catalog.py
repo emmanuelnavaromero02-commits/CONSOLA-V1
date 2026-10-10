@@ -190,8 +190,9 @@ ACTIONS: tuple[GatewayAction, ...] = (
         name="consultar_control_room_resumen",
         title="Consultar resumen del Control Room",
         description=(
-            "Resumen agregado del Control Room: anomalías por severidad y dominio, decisiones "
-            "abiertas, alertas, fuentes con datos y cifras financieras disponibles."
+            "Resumen agregado del Control Room: anomalías de fuentes listas por severidad y "
+            "dominio, señales de inteligencia abiertas por severidad (en un campo aparte), "
+            "decisiones abiertas, alertas, fuentes con datos y cifras financieras disponibles."
         ),
         scope=SCOPE_READ,
         permission="datasets.read",

@@ -13,6 +13,9 @@ from app.services.control_room.business_decision_persistence import (
 from app.services.control_room.business_command_item import (
     resolve_command_item,
 )
+from app.services.control_room.business_observation_order import (
+    business_observation_order,
+)
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
@@ -136,6 +139,7 @@ async def test_quarantine_is_bound_to_workflow_a_generation() -> None:
             "stage": "decision_created",
             "reason": "observation_changed",
             "quarantined_at": generations[0]["quarantined_at"],
+            "observation_order": business_observation_order(_item(1)),
         }
     ]
 

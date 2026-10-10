@@ -3737,8 +3737,6 @@ async def approve_item(
         confidence=float(_impact_for_item(item).get("confidence") or 0.7),
         run_scoped=_run_with_db_scope,
         ensure_item_row=_ensure_item_row,
-        record_item_event=_record_item_event,
-        create_and_link=_create_and_link_business_decision,
         approve_item=_approve_business_item,
         link_decision=link_control_room_decision,
         approve_link=approve_control_room_decision,

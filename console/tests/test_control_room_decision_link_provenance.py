@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -193,7 +193,7 @@ class QuarantineDuringApproval(DecisionLookup):
     async def fetchrow(self, sql: str, *_args):
         self.statements.append(" ".join(sql.split()))
         if "FROM decisions" in sql:
-            return {"id": 91, "created_by_id": 7, "kpis": []}
+            return {"id": 91, "created_by_id": 8, "kpis": []}
         if "item_id <> $3" in sql:
             return None
         if "FROM control_room_items" in sql:
@@ -230,10 +230,16 @@ async def test_approval_locks_and_revalidates_before_action_insert():
     )
     conn = QuarantineDuringApproval(provenance)
 
-    with pytest.raises(HTTPException) as exc:
+    with (
+        patch(
+            "app.services.control_room.business_item_approval_guard.actor_has_current_permission",
+            AsyncMock(return_value=True),
+        ),
+        pytest.raises(HTTPException) as exc,
+    ):
         await approve_business_item(
             conn,
-            user=USER,
+            user={**USER, "workspace_role": "workspace_admin"},
             item=item,
             workspace_id="workspace-a",
             decision_id=91,

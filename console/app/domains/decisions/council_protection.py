@@ -3,12 +3,25 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from app.services.control_room.business_action_markers import (
+    CONTROL_ROOM_ACTION_MARKERS,
+    RECOMMENDATION_APPROVAL_PREFIX,
+)
+
 COUNCIL_DELETE_PROTECTION = "decisions_council_delete_protection"
 COUNCIL_ACTION_PATTERNS = (
     "Aprobacion en el Consejo de Acciones: %",
     "Aprobación en el Consejo de Acciones: %",
     "Seguimiento operativo Control Room: %",
     "Propuesta descartada en el Consejo: %",
+)
+RESERVED_ACTION_PREFIXES = (
+    *(pattern.removesuffix("%") for pattern in COUNCIL_ACTION_PATTERNS),
+    RECOMMENDATION_APPROVAL_PREFIX,
+)
+RESERVED_ACTION_MESSAGE = (
+    "Ese texto está reservado para los registros del sistema; "
+    "escribe la nota con otras palabras."
 )
 PROTECTED_DECISION_MESSAGE = (
     "Esta decisión está ligada al Control Room o al Consejo de Acciones; "
@@ -48,10 +61,20 @@ async def protected_decision_ids(
     return {int(row["id"]) for row in rows}
 
 
+def is_reserved_action_text(text: str) -> bool:
+    value = text.strip()
+    return value in CONTROL_ROOM_ACTION_MARKERS or value.startswith(
+        RESERVED_ACTION_PREFIXES
+    )
+
+
 __all__ = (
     "COUNCIL_ACTION_PATTERNS",
     "COUNCIL_DELETE_PROTECTION",
     "PROTECTED_DECISIONS_SQL",
     "PROTECTED_DECISION_MESSAGE",
+    "RESERVED_ACTION_MESSAGE",
+    "RESERVED_ACTION_PREFIXES",
+    "is_reserved_action_text",
     "protected_decision_ids",
 )

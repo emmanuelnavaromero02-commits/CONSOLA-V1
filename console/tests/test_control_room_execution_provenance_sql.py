@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import inspect
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 import app.services.control_room.business_execution_provenance_sql as sql
+from app.services.control_room import business_action_followup_effect
 from app.services.control_room import business_execution_status
 from app.services.control_room import business_external_projection
 from app.services.control_room import execution
@@ -22,6 +25,10 @@ from app.services.control_room import execution
         (
             "COALESCE(metadata, '{}'::jsonb) || $4::jsonb",
             sql.EXECUTED_METADATA_ARG4_SQL,
+        ),
+        (
+            "COALESCE(metadata, '{}'::jsonb) || $5::jsonb",
+            sql.EXECUTED_METADATA_ARG5_SQL,
         ),
         (
             "COALESCE(metadata, '{}'::jsonb) "
@@ -44,7 +51,12 @@ def test_executed_metadata_fragment_preserves_atomic_provenance(
 
 @pytest.mark.parametrize(
     "writer",
-    (execution, business_execution_status, business_external_projection),
+    (
+        execution,
+        business_execution_status,
+        business_external_projection,
+        business_action_followup_effect,
+    ),
 )
 def test_all_execution_writers_use_shared_provenance_sql(writer: object) -> None:
     source = inspect.getsource(writer)
@@ -59,14 +71,18 @@ def test_all_execution_writers_use_shared_provenance_sql(writer: object) -> None
     (
         "app.services.control_room.business_execution_status",
         "app.services.control_room.business_external_projection",
+        "app.services.control_room.business_action_followup_effect",
     ),
 )
 def test_execution_writer_imports_are_clean_in_isolated_process(
     module_name: str,
 ) -> None:
+    console_root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
         [sys.executable, "-c", f"import {module_name}"],
         check=False,
+        cwd=console_root,
+        env={**os.environ, "PYTHONPATH": str(console_root)},
         capture_output=True,
         text=True,
         timeout=10,

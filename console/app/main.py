@@ -169,12 +169,20 @@ from app.domains.decisions.access import (
 from app.domains.decisions.council_protection import (
     COUNCIL_DELETE_PROTECTION as _COUNCIL_DELETE_PROTECTION,
     PROTECTED_DECISION_MESSAGE as _PROTECTED_DECISION_MESSAGE,
+    RESERVED_ACTION_MESSAGE as _RESERVED_ACTION_MESSAGE,
+    is_reserved_action_text as _is_reserved_action_text,
     protected_decision_ids as _protected_decision_ids,
 )
 from app.domains.decisions.business_visibility import (
     fetch_business_decisions as _fetch_business_decisions,
     filter_decision_rows as _filter_decision_rows,
     preserve_control_room_provenance as _preserve_control_room_provenance,
+)
+from app.domains.decisions.orphans import (
+    is_orphaned as _decision_is_orphaned,
+    record_decision_status_change as _record_decision_status_change,
+    require_orphan_not_deleted as _require_orphan_not_deleted,
+    require_orphan_update_allowed as _require_orphan_update_allowed,
 )
 from app.domains.decisions.payloads import (
     coerce_date as _coerce_date_impl,
@@ -7272,6 +7280,7 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
             user=user,
             workspace_id=workspace_id,
             tenant_id=_tenant_id,
+            include_orphans=_dec_is_workspace_admin(user),
         )
 
 
@@ -7283,6 +7292,7 @@ async def _dec_load_on_conn(
     workspace_id: str,
     tenant_id: str | None,
     for_update: bool = False,
+    include_orphans: bool = False,
 ) -> dict | None:
     sql, params = _dec_load_query(decision_id, user, workspace_id)
     if for_update:
@@ -7295,6 +7305,7 @@ async def _dec_load_on_conn(
         workspace_id=workspace_id,
         rows=[row],
         tenant_id=tenant_id,
+        include_orphans=include_orphans,
     )
     return visible[0] if visible else None
 
@@ -7336,6 +7347,7 @@ async def api_decisions_list(
             params=params,
             workspace_id=workspace_id,
             tenant_id=_tenant_id,
+            include_orphans=_dec_is_workspace_admin(user),
         )
         protected = await _protected_decision_ids(
             conn,
@@ -7344,7 +7356,11 @@ async def api_decisions_list(
         )
     return {
         "decisions": [
-            {**_dec_row_to_dict(r), "protected": r.get("id") in protected}
+            {
+                **_dec_row_to_dict(r),
+                "protected": r.get("id") in protected or _decision_is_orphaned(r),
+                "orphaned": _decision_is_orphaned(r),
+            }
             for r in rows
         ]
     }
@@ -7407,7 +7423,11 @@ async def api_decisions_get(
         protected = await _protected_decision_ids(
             conn, workspace_id=row["workspace_id"], decision_ids=[decision_id]
         )
-    out = {**_dec_row_to_dict(row), "protected": decision_id in protected}
+    out = {
+        **_dec_row_to_dict(row),
+        "protected": decision_id in protected or _decision_is_orphaned(row),
+        "orphaned": _decision_is_orphaned(row),
+    }
     out["actions"] = [
         {**dict(a), "ts": a["ts"].isoformat() if a["ts"] else None} for a in actions
     ]
@@ -7460,6 +7480,7 @@ async def api_decisions_update(
             workspace_id=workspace_id,
             tenant_id=tenant_id,
             for_update=True,
+            include_orphans=_dec_is_workspace_admin(user),
         )
         if not existing:
             raise HTTPException(404, f"Decision {decision_id} not found")
@@ -7467,6 +7488,7 @@ async def api_decisions_update(
             raise HTTPException(
                 403, "you can only edit decisions you created or are assigned to"
             )
+        _require_orphan_update_allowed(existing, normalized_body)
         if "kpis" in normalized_body:
             normalized_body = {
                 **normalized_body,
@@ -7491,6 +7513,10 @@ async def api_decisions_update(
             existing=existing,
         )
         row = await conn.fetchrow(sql, *params)
+        if row:
+            await _record_decision_status_change(
+                conn, user=user, existing=existing, updated=row
+            )
     if not row:
         raise HTTPException(404, f"Decision {decision_id} not found")
     return _dec_row_to_dict(row)
@@ -7515,11 +7541,13 @@ async def api_decisions_delete(
             workspace_id=workspace_id,
             tenant_id=tenant_id,
             for_update=True,
+            include_orphans=_dec_is_workspace_admin(user),
         )
         if not existing:
             raise HTTPException(404, f"Decision {decision_id} not found")
         if not _dec_can_delete(existing, user):
             raise HTTPException(403, "only the creator or an admin can delete a decision")
+        _require_orphan_not_deleted(existing)
         if await _protected_decision_ids(
             conn, workspace_id=existing["workspace_id"], decision_ids=[decision_id]
         ):
@@ -7554,6 +7582,8 @@ async def api_decisions_add_action(
     action_text = raw_action_text.strip()
     if not action_text:
         raise HTTPException(400, "action_text is required")
+    if _is_reserved_action_text(action_text):
+        raise HTTPException(400, _RESERVED_ACTION_MESSAGE)
     note = body.get("note")
     if note is not None and not isinstance(note, str):
         raise HTTPException(400, "note must be a string or null")
@@ -7571,6 +7601,7 @@ async def api_decisions_add_action(
             workspace_id=workspace_id,
             tenant_id=tenant_id,
             for_update=True,
+            include_orphans=_dec_is_workspace_admin(user),
         )
         if not existing:
             raise HTTPException(404, f"Decision {decision_id} not found")

@@ -448,14 +448,68 @@ def _financial(value: Any, clip: _Clip) -> dict[str, Any]:
     }
 
 
+def _signal_counts(value: Any) -> dict[str, Any]:
+    data = value if isinstance(value, Mapping) else {}
+    return {
+        "total": data.get("total"),
+        "criticas": data.get("critical"),
+        "altas": data.get("high"),
+        "medias": data.get("medium"),
+        "bajas": data.get("low"),
+    }
+
+
+def _whole(value: Any) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _count_phrase(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def _control_room_summary_text(anomalies: Any, decisions: Any, signals: Mapping[str, Any]) -> str:
+    anomaly_count = _whole(anomalies) or 0
+    decision_count = _whole(decisions) or 0
+    anomaly_text = _count_phrase(anomaly_count, "anomalía", "anomalías")
+    decision_text = _count_phrase(decision_count, "decisión abierta", "decisiones abiertas")
+    total = _whole(signals.get("total"))
+    if total is None:
+        return (
+            f"{anomaly_text} y {decision_text} en el Control Room. "
+            f"Señales de inteligencia abiertas: {SIN_INFORMACION.lower()}."
+        )
+    signal_text = _count_phrase(
+        total, "señal de inteligencia abierta", "señales de inteligencia abiertas"
+    )
+    if total == 0:
+        return f"{anomaly_text}, {signal_text} y {decision_text} en el Control Room."
+    breakdown = ", ".join(
+        _count_phrase(count, singular, plural)
+        for key, singular, plural in (
+            ("criticas", "crítica", "críticas"),
+            ("altas", "alta", "altas"),
+            ("medias", "media", "medias"),
+            ("bajas", "baja", "bajas"),
+        )
+        if (count := _whole(signals.get(key)))
+    )
+    detail = f" ({breakdown})" if breakdown else ""
+    text = f"{anomaly_text}, {signal_text}{detail} y {decision_text} en el Control Room."
+    if anomaly_count == 0:
+        text += " Que no haya anomalías no significa que no pase nada: hay señales abiertas por revisar."
+    return text
+
+
 async def consultar_control_room_resumen(user: dict[str, Any], args: BaseModel) -> ActionResult:
     _args(catalog.ConsultarControlRoomResumenArgs, args)
     payload = await adapters.control_room_summary(user)
     clip = _Clip()
     lessons = payload.get("lessons") if isinstance(payload.get("lessons"), Mapping) else {}
     thresholds = payload.get("thresholds") if isinstance(payload.get("thresholds"), Mapping) else {}
+    signals = _signal_counts(payload.get("intelligence_signals"))
     datos = {
         "anomalias_totales": payload.get("total_anomalies"),
+        "senales_inteligencia_abiertas": signals,
         "por_severidad": _counts(payload.get("by_severity")),
         "por_capacidad": _breakdown(payload.get("by_cartridge"), clip),
         "por_dominio": _breakdown(payload.get("by_domain"), clip),
@@ -470,9 +524,8 @@ async def consultar_control_room_resumen(user: dict[str, Any], args: BaseModel) 
         "alertas": _counts(payload.get("alerts")),
     }
     return ActionResult(
-        resumen=(
-            f"{payload.get('total_anomalies') or 0} anomalías y "
-            f"{payload.get('open_decisions') or 0} decisiones abiertas en el Control Room."
+        resumen=_control_room_summary_text(
+            payload.get("total_anomalies"), payload.get("open_decisions"), signals
         ),
         datos=datos,
         truncado=clip.truncated,

@@ -28,6 +28,9 @@ EXECUTED_METADATA_ARG3_SQL = _executed_metadata_sql(
 EXECUTED_METADATA_ARG4_SQL = _executed_metadata_sql(
     "COALESCE(metadata, '{}'::jsonb) || $4::jsonb"
 )
+EXECUTED_METADATA_ARG5_SQL = _executed_metadata_sql(
+    "COALESCE(metadata, '{}'::jsonb) || $5::jsonb"
+)
 EXECUTED_METADATA_STATUS_SQL = _executed_metadata_sql(
     "COALESCE(metadata, '{}'::jsonb) " '|| \'{"execution_status":"executed"}\'::jsonb'
 )
@@ -36,6 +39,7 @@ EXECUTED_METADATA_STATUS_SQL = _executed_metadata_sql(
 __all__ = (
     "EXECUTED_METADATA_ARG3_SQL",
     "EXECUTED_METADATA_ARG4_SQL",
+    "EXECUTED_METADATA_ARG5_SQL",
     "EXECUTED_METADATA_STATUS_SQL",
     "WorkflowStage",
 )

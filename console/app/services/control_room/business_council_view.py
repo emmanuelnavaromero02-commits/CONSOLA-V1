@@ -470,7 +470,6 @@ def system_suggestions(
                     viewer_id=viewer,
                     item_id=item_id,
                     fingerprint=fingerprint,
-                    evidence_digest=evidence,
                 ),
             )
         )

@@ -135,6 +135,16 @@ def _authoritative_item_row(
     }
 
 
+APPROVER = {**USER, "workspace_role": "workspace_admin"}
+
+
+def _current_approver():
+    return patch(
+        "app.services.control_room.business_item_approval_guard.actor_has_current_permission",
+        new=AsyncMock(return_value=True),
+    )
+
+
 def _approval_fetchrows(item: dict, action: dict) -> list[dict | None]:
     item_id = item["id"]
     provenance = workflow_eligibility_provenance(
@@ -143,7 +153,7 @@ def _approval_fetchrows(item: dict, action: dict) -> list[dict | None]:
         workspace_id="workspace-A",
         decision_id=42,
     )
-    decision = {"id": 42, "created_by_id": 7, "kpis": []}
+    decision = {"id": 42, "created_by_id": 8, "kpis": []}
     item_row = _authoritative_item_row(item, decision_id=42)
     item_row["metadata"][DECISION_PROVENANCE_KEY] = provenance
     return [
@@ -509,6 +519,12 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
     assert len(signal_items) == 1
     signal = signal_items[0]
     assert signal["module_id"] == "sap_successfactors_talent"
+    assert (signal["tenant_id"], signal["workspace_id"]) == (
+        USER["tenant_id"],
+        USER["active_workspace_id"],
+    )
+    assert signal["data_status"] == "gold_ready"
+    assert not signal.get("selected_option_id")
     assert signal["title"] == "Requisitos de rol pendientes"
     assert signal["control_origin"] == "sap_successfactors_talent_signal"
     assert signal["priority"]["score"] >= 55
@@ -3560,10 +3576,11 @@ async def test_approve_persists_lessons_to_lessons_table():
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
         ),
+        _current_approver(),
     ):
         await control_room_service.approve_anomaly(
             anomaly["id"],
-            USER,
+            APPROVER,
             decision_id=42,
             fetcher=sample_fetcher,
         )
@@ -3630,10 +3647,11 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
         ) as audit_event,
+        _current_approver(),
     ):
         result = await control_room_service.approve_anomaly(
             anomaly["id"],
-            USER,
+            APPROVER,
             decision_id=42,
             fetcher=sample_fetcher,
         )

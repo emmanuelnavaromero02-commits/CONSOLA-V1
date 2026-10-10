@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+import app.services.control_room.business_execution_provenance_sql as _exec_sql
 from app.services import audit_service, control_room_service
 from app.services.control_room.business_action_authority_policy import (
     EXECUTABLE_TEMPLATE_ID,
@@ -50,10 +51,10 @@ INSERT INTO decision_actions (decision_id, action_text, note, actor)
 VALUES ($1, $2, $3, $4)
 RETURNING id
 """
-MARK_EXECUTED_SQL = """
+MARK_EXECUTED_SQL = f"""
 UPDATE control_room_items
    SET execution_status = 'executed',
-       metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
+       metadata = {_exec_sql.EXECUTED_METADATA_ARG5_SQL},
        last_seen_at = NOW()
  WHERE workspace_id = $1
    AND item_id = $2

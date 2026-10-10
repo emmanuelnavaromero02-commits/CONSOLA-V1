@@ -2179,7 +2179,7 @@
     },
     {
       "path": "console/tests/test_control_room_approval_verified_link.py",
-      "sha256": "87380f5fe17426dc32150e0f64826103e940dad7f7df55dc0b5741f2f492b943"
+      "sha256": "92746fa542213167d3d0b722d90542a8acc498502af8d5bbb756edde528c6f9c"
     },
     {
       "path": "console/tests/test_control_room_authoritative_execution.py",
@@ -2251,7 +2251,7 @@
     },
     {
       "path": "console/tests/test_control_room_council_commands.py",
-      "sha256": "9732c1e1d30c485dfba66daff6bfe9b1f8a7e81e98d377a172920f446da60e80"
+      "sha256": "b70d5369519c00cc6ebebe76ce51e0df3e41cbb2de2f383b8f4f5522e4b54d45"
     },
     {
       "path": "console/tests/test_control_room_council_get_purity.py",
@@ -2291,7 +2291,7 @@
     },
     {
       "path": "console/tests/test_control_room_decision_link_provenance.py",
-      "sha256": "5eebbd36ccfdc15311acb6388ef4a901476f01d0cd0a2593d28c0f694309fe76"
+      "sha256": "83f9ac954311d2e9c85ec53950961a3d234eb0323f732e3407f483807a9b63b1"
     },
     {
       "path": "console/tests/test_control_room_decision_summary.py",
@@ -2419,7 +2419,7 @@
     },
     {
       "path": "console/tests/test_control_room_execution_provenance_sql.py",
-      "sha256": "cc7202db7f20c8e9407a6a47341962d7a593d6e16d1c7e285ec5f9357356ec88"
+      "sha256": "ba8260d9211865e9c3e1aa0afe60020b8ba8c33e2e56173a1dd59590b4aca55c"
     },
     {
       "path": "console/tests/test_control_room_execution_status_monotonic.py",
@@ -2599,7 +2599,11 @@
     },
     {
       "path": "console/tests/test_control_room_implicit_approval.py",
-      "sha256": "3abca4167539cfe0850d9dfbc29c2377bbcf5da0b37a76de5ca5b55d11c1aa1a"
+      "sha256": "5c570c220ea0909affde41afd1638b498f572c769b351bd2c29116da64709bc8"
+    },
+    {
+      "path": "console/tests/test_control_room_item_approval_four_eyes.py",
+      "sha256": "cdaaa9dd75c69a21246b38bd51eb7379ef7e92d386727ee39693235485d7abc0"
     },
     {
       "path": "console/tests/test_control_room_legacy_reservation_guard.py",
@@ -2616,6 +2620,10 @@
     {
       "path": "console/tests/test_control_room_live_generation_lookup.py",
       "sha256": "355dd0a656b650ada5cdaa39911813b4cfc1eab781dbe1300b3442d585656822"
+    },
+    {
+      "path": "console/tests/test_control_room_materialization_identity.py",
+      "sha256": "d8664a4f24ac3ef78de9eb0b7c009e6408d1455608aa6713a1caf8bcc3a30fcb"
     },
     {
       "path": "console/tests/test_control_room_mutation_http_projection.py",
@@ -2675,7 +2683,7 @@
     },
     {
       "path": "console/tests/test_control_room_p13_quarantine_generation.py",
-      "sha256": "f1906d1853db7b74eb6f52efc74641bc594df0ca6e87dfc1d0e51340eb0f2fa6"
+      "sha256": "d82fd32dd63adf4db1936e0ccb479b80df33e1c6329ac7a677a3c427dcb775cb"
     },
     {
       "path": "console/tests/test_control_room_p14_concurrent_state_boundaries.py",
@@ -2699,7 +2707,7 @@
     },
     {
       "path": "console/tests/test_control_room_p16_stage_cas.py",
-      "sha256": "a0d5c73f58d57fe4e0f20a38bd9aca54ca293148f3505c85c14f62ff1ec83d74"
+      "sha256": "d3263c32851da07bb839281852acb6481301cccbdcc92b43f658a04662809c50"
     },
     {
       "path": "console/tests/test_control_room_p1c_summary_gold_talent.py",
@@ -2839,7 +2847,11 @@
     },
     {
       "path": "console/tests/test_control_room_service.py",
-      "sha256": "fd862ef623394e1aaaaf627fd4a9f1c310390e65a9de903a8591f8ab290a2a23"
+      "sha256": "43f694c24613936befd3350c42a6a7ab44fb8ec793c8da6c32c9949c5e33d8c4"
+    },
+    {
+      "path": "console/tests/test_control_room_sf_talent_council_candidate.py",
+      "sha256": "a6efae0af94fe10317b8a472114359f6ca0cd0a25fad0c5d81778ee9c0bbdea3"
     },
     {
       "path": "console/tests/test_control_room_sql_business_instruction_boundaries.py",
@@ -2872,6 +2884,10 @@
     {
       "path": "console/tests/test_control_room_summary_gold_observation_truth.py",
       "sha256": "0f1233413f448c9bdb6d11ac710ef12ea606f7602aa7e68b2f80d78baa9346be"
+    },
+    {
+      "path": "console/tests/test_control_room_summary_intelligence_signals.py",
+      "sha256": "ac655bdc8ca56b327ccb6c7cfb1a3cdc1efbc80de2dd01a9ac7c11e67a3e50a4"
     },
     {
       "path": "console/tests/test_control_room_surface_identity_types.py",
@@ -2915,7 +2931,7 @@
     },
     {
       "path": "console/tests/test_control_room_terminal_approval_guard.py",
-      "sha256": "c9b177d8a82e4c3b52c5fbaf1d3c941e978e2ba26d1b552fb72c483e99dc15ef"
+      "sha256": "1b0995f420857e2a43bf45d0991a3430bb0e162420d6adf369e1a261ea2f63fe"
     },
     {
       "path": "console/tests/test_control_room_terminal_dismiss_guard.py",
@@ -3036,6 +3052,10 @@
     {
       "path": "console/tests/test_decision_orchestrator_owner_scope.py",
       "sha256": "e8250612d998e45b00411081e9a8d408b35d3ac31dedc28373b2a8af28227cf6"
+    },
+    {
+      "path": "console/tests/test_decision_registry_orphans.py",
+      "sha256": "3510e040bb4a16716d47fa50b1fb6c641c04daa74341e955a834218fcfc11fc9"
     },
     {
       "path": "console/tests/test_decision_visibility_boundaries.py",
@@ -3196,6 +3216,10 @@
     {
       "path": "console/tests/test_mcp_gateway_catalog.py",
       "sha256": "1478848b1d892d751dab73ba24a0c0cb2526aa7bb760bcda6b6c59ea5402056b"
+    },
+    {
+      "path": "console/tests/test_mcp_gateway_control_room_summary.py",
+      "sha256": "a772e882c66fe5f0c097e7c01ec4d2f33afbe0cd973343ae46ba0e5ff05121b0"
     },
     {
       "path": "console/tests/test_mcp_gateway_jsonrpc.py",
@@ -4771,7 +4795,7 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_council_effect.py",
-      "sha256": "006017ab2b1641787273b573b33927f9f3362c413262e81c66f9b6326ebd1002"
+      "sha256": "62138209db4add859d5cb6476f65bdd4faa3d1edd25a281d874a6c0615f9c0e2"
     },
     {
       "path": "tests/test_control_room_live_postgres_direct_actions.py",
@@ -4799,11 +4823,11 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_implicit_approval.py",
-      "sha256": "7166decba2c261293c94a6dbf7764a05b0b62154f5ed8fcb565677340697604d"
+      "sha256": "8d445336bc34ade3fd55ee86f6d54dff8a0f782b2f937eb707cceadb49480094"
     },
     {
       "path": "tests/test_control_room_live_postgres_implicit_approval_audit.py",
-      "sha256": "f4c001f3f4018aac5bc68ca8ee83514d03a820858e8de5feef9858a11ca191e6"
+      "sha256": "ff576acc8937e4a603b3e2696cf3e3e52f1ed65e72df4341224ede4e100ed5e9"
     },
     {
       "path": "tests/test_control_room_live_postgres_legacy_reservation.py",
@@ -4831,7 +4855,7 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_p16.py",
-      "sha256": "ad6ec370ce10f2d61d65d347e38fb656996da48c890c87c7d7981214e169df2e"
+      "sha256": "ade6174479830dbf917f28f63bc222ef5de4b710bdaa4e1dd3748b79fc8ab10b"
     },
     {
       "path": "tests/test_control_room_live_postgres_packaged_dataset_seed.py",
@@ -4895,7 +4919,7 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_terminal_dismiss.py",
-      "sha256": "41677f3848a9b5f53f137a92ed9be1374f7a1c3262aad812cbb2eba0c40b6ecd"
+      "sha256": "27a9effc86fadc62c99f38f62c43b90165e7ecc511bbe11785b1e74984add409"
     },
     {
       "path": "tests/test_control_room_live_postgres_transitions.py",
@@ -5108,6 +5132,10 @@
     {
       "path": "tests/test_decision_pr552_financial_truth.py",
       "sha256": "bb689ccbf1ece09f6e2fd20468de2c5ff0f9dce6c00c2e41af734d61551e1c88"
+    },
+    {
+      "path": "tests/test_decision_registry_live_postgres.py",
+      "sha256": "6c500d658d16618ce07da0eb52eb083327e5687d8dfc59777315d69c2ed146c0"
     },
     {
       "path": "tests/test_decision_wisdom_source.py",
