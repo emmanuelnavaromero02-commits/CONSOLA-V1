@@ -90,7 +90,7 @@ def _run(case: str, payload: bytes = b"") -> subprocess.CompletedProcess[bytes]:
 
 
 def test_runtime_uses_pypdf_6_16_1() -> None:
-    assert version("pypdf") == "6.16.1"
+    assert version("pypdf") == "6.19.0"
 
 
 def test_pdfreader_extract_text_finishes_for_valid_pdf() -> None:
