@@ -119,11 +119,16 @@ jobs:
             console-next/package-lock.json
             tests-e2e/package-lock.json
 
-      - name: Audit console-next dependencies
+      - name: Audit console-next production dependencies
         working-directory: console-next
         run: |
           npm ci
-          npm audit --audit-level=high
+          npm audit --omit=dev --audit-level=high
+
+      - name: Report console-next development dependencies
+        working-directory: console-next
+        run: |
+          npm audit --audit-level=high || echo "::warning title=npm audit (desarrollo)::Hay avisos en dependencias de desarrollo de console-next; no bloquean porque no llegan a producción (export estático)."
 
       - name: Audit E2E dependencies
         working-directory: tests-e2e

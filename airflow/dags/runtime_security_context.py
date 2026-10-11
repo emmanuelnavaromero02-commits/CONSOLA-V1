@@ -148,14 +148,16 @@ def build_scheduled_run_context(
     dag_id: str,
     dag_run_id: str,
     now: int | None = None,
+    issuer: str = "entity_scheduler",
 ) -> dict[str, Any]:
+    principal = _required(issuer, "issuer")
     context: dict[str, Any] = {
         "trusted": True,
         "source": "airflow",
-        "issuer": "entity_scheduler",
+        "issuer": principal,
         "audience": "airflow",
         "purpose": SCHEDULED_RUN_PURPOSE,
-        "user_id": "airflow:entity_scheduler",
+        "user_id": f"airflow:{principal}",
         "role": "service",
         "workspace_role": "service",
         "tenant_id": _required(tenant_id, "tenant_id"),

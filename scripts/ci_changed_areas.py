@@ -270,6 +270,7 @@ def _root_test_targets(files: list[str]) -> str:
         },
         "console/app/routers/operations.py": {
             "console/tests/test_agent_runner_scheduler_auth.py",
+            "console/tests/test_narrate_alerts_route_auth.py",
         },
         "console/app/services/scheduled_runtime.py": {
             "console/tests/test_agent_runner_scheduler_auth.py",
@@ -311,6 +312,50 @@ def _root_test_targets(files: list[str]) -> str:
         },
         "airflow/dags/file_ingest.py": {
             "tests/test_t2_file_ingest_accumulates.py",
+        },
+        "airflow/dags/dataset_refresh_chain.py": {
+            "tests/test_dataset_refresh_monitors.py",
+        },
+        "airflow/dags/dataset_refresh_monitors.py": {
+            "tests/test_dataset_refresh_monitors.py",
+        },
+        "airflow/dags/successfactors_daily_extract.py": {
+            "tests/test_successfactors_daily_extract.py",
+        },
+        "airflow/dags/successfactors_daily_schedule.py": {
+            "tests/test_successfactors_daily_extract.py",
+        },
+        "console/app/routers/scheduled_automation.py": {
+            "console/tests/test_scheduled_automation_routes.py",
+        },
+        "console/app/services/scheduled_automation.py": {
+            "console/tests/test_scheduled_automation_routes.py",
+            "tests/test_dataset_refresh_monitors.py",
+            "tests/test_control_room_live_postgres_refresh_monitors.py",
+        },
+        "console/app/services/pipeline_attention.py": {
+            "tests/test_copilot_pipeline_attention.py",
+            "tests/test_control_room_live_postgres_copilot_window.py",
+        },
+        "console/app/services/copilot_context_service.py": {
+            "tests/test_copilot_pipeline_attention.py",
+            "tests/test_control_room_live_postgres_copilot_window.py",
+        },
+        "console/app/services/copilot_context_persistence.py": {
+            "tests/test_control_room_live_postgres_copilot_window.py",
+        },
+        "console/app/services/copilot_context_authority.py": {
+            "tests/test_control_room_live_postgres_copilot_window.py",
+        },
+        "console/app/routers/copilot.py": {
+            "console/tests/test_copilot_briefing_live_cards.py",
+        },
+        "console/app/services/proactive_service.py": {
+            "tests/test_proactive_copilot.py",
+            "tests/test_control_room_live_postgres_copilot_window.py",
+        },
+        "console/app/services/intelligence/narrative_job.py": {
+            "console/tests/test_narrative_job.py",
         },
         ".github/workflows/release.yml": {
             "tests/test_release_root_target_partition.py",

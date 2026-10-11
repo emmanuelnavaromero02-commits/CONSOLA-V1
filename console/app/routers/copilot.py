@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -30,6 +31,39 @@ def _forensic(request: Request) -> tuple[str | None, str | None]:
         request.client.host if request.client else None,
         request.headers.get("user-agent"),
     )
+
+
+def _active_workspace_id(user: dict) -> str | None:
+    value = str(user.get("active_workspace_id") or user.get("workspace_id") or "")
+    return value.strip() or None
+
+
+def _dismissed_this_episode(item: dict, dismissed_at: object) -> bool:
+    if not isinstance(dismissed_at, datetime):
+        return False
+    try:
+        episode = datetime.fromisoformat(str(item.get("first_seen_at") or ""))
+    except ValueError:
+        return True
+    if episode.tzinfo is None or dismissed_at.tzinfo is None:
+        return True
+    return dismissed_at >= episode
+
+
+def _briefing_copy_ids(recommendations: object) -> set[str]:
+    copies: set[str] = set()
+    for row in recommendations if isinstance(recommendations, list) else []:
+        if not isinstance(row, dict):
+            continue
+        evidence = row.get("evidence")
+        if isinstance(evidence, str):
+            try:
+                evidence = json.loads(evidence)
+            except ValueError:
+                evidence = None
+        if isinstance(evidence, dict) and isinstance(evidence.get("highlight"), dict):
+            copies.add(str(row.get("fingerprint") or ""))
+    return copies
 
 
 def _sse(event: str, data: dict | None = None) -> str:
@@ -294,8 +328,25 @@ async def get_briefing(
         user["id"], user_context=user
     )
     try:
-        live = copilot_context_service.project_operator_recommendations(
-            await copilot_context_service.list_recommendations(user, limit=6)
+        raw = await copilot_context_service.list_recommendations(user, limit=12)
+        copies = _briefing_copy_ids(raw.get("recommendations"))
+        live = copilot_context_service.project_operator_recommendations(raw)
+        active = [
+            item
+            for item in live.get("recommendations", [])
+            if isinstance(item, dict)
+            and item.get("status") == "active"
+            and str(item.get("id")) not in copies
+        ]
+        workspace_id = _active_workspace_id(user)
+        keys = {
+            str(item.get("id")): proactive_service.live_dismissal_key(
+                str(item.get("id")), workspace_id
+            )
+            for item in active
+        }
+        dismissed = await proactive_service.live_dismissals(
+            int(user["id"]), sorted(set(keys.values()))
         )
         live_highlights = [
             {
@@ -307,8 +358,10 @@ async def get_briefing(
                 "action_label": item.get("action_label"),
                 "action_href": item.get("action_href"),
             }
-            for item in live.get("recommendations", [])
-            if isinstance(item, dict) and item.get("status") != "dismissed"
+            for item in active
+            if not _dismissed_this_episode(
+                item, dismissed.get(keys[str(item.get("id"))])
+            )
         ]
         seen: set[str] = set()
         merged = []
@@ -415,7 +468,15 @@ async def dismiss_briefing(
     highlight_id = (highlight_id or "").strip()
     if not highlight_id or len(highlight_id) > 200:
         raise HTTPException(400, "Invalid highlight_id")
-    await proactive_service.dismiss_highlight(user["id"], highlight_id)
+    if highlight_id.startswith("live:"):
+        await proactive_service.dismiss_live_highlight(
+            user["id"],
+            proactive_service.live_dismissal_key(
+                highlight_id, _active_workspace_id(user)
+            ),
+        )
+    else:
+        await proactive_service.dismiss_highlight(user["id"], highlight_id)
     await audit_service.record_event(
         user_id=user["id"],
         email=user.get("email"),

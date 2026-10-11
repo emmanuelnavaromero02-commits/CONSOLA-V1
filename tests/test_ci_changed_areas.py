@@ -138,6 +138,27 @@ def test_file_ingest_runtime_change_selects_accumulation_and_gcs_contract():
     assert "tests/test_t2_file_ingest_accumulates.py" in _root_targets(flags)
 
 
+def test_scheduled_extraction_monitor_and_sync_alert_changes_select_their_regressions():
+    expected = {
+        "airflow/dags/dataset_refresh_chain.py": "tests/test_dataset_refresh_monitors.py",
+        "airflow/dags/dataset_refresh_monitors.py": "tests/test_dataset_refresh_monitors.py",
+        "airflow/dags/successfactors_daily_extract.py": "tests/test_successfactors_daily_extract.py",
+        "airflow/dags/successfactors_daily_schedule.py": "tests/test_successfactors_daily_extract.py",
+        "console/app/routers/scheduled_automation.py": "console/tests/test_scheduled_automation_routes.py",
+        "console/app/services/scheduled_automation.py": "tests/test_control_room_live_postgres_refresh_monitors.py",
+        "console/app/services/pipeline_attention.py": "tests/test_control_room_live_postgres_copilot_window.py",
+        "console/app/services/copilot_context_service.py": "tests/test_copilot_pipeline_attention.py",
+        "console/app/services/copilot_context_persistence.py": "tests/test_control_room_live_postgres_copilot_window.py",
+        "console/app/services/copilot_context_authority.py": "tests/test_control_room_live_postgres_copilot_window.py",
+        "console/app/routers/copilot.py": "console/tests/test_copilot_briefing_live_cards.py",
+        "console/app/services/proactive_service.py": "tests/test_control_room_live_postgres_copilot_window.py",
+        "console/app/services/intelligence/narrative_job.py": "console/tests/test_narrative_job.py",
+        "console/app/routers/operations.py": "console/tests/test_narrate_alerts_route_auth.py",
+    }
+    for changed_file, target in expected.items():
+        assert target in _root_targets(_flags(changed_file)), changed_file
+
+
 def test_console_storage_generators_select_their_exact_regressions():
     expected = {
         "console/app/services/s3_client.py": "console/tests/test_console_s3_iam_client.py",

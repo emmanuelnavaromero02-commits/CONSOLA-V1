@@ -388,6 +388,7 @@ async def narrate_pending_alerts(
     llm_caller_factory: Callable[[str, str], Callable[[str], Any] | None]
     | None = None,
     now: datetime | None = None,
+    scope: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     counts: dict[str, Any] = {
         "status": "ready",
@@ -411,6 +412,20 @@ async def narrate_pending_alerts(
         counts["status"] = "unavailable"
         counts["failures"].append(_failure("", exc))
         return counts
+    if scope is not None:
+        wanted = (
+            str(scope.get("tenant_id") or "").lower(),
+            str(scope.get("workspace_id") or "").lower(),
+        )
+        scopes = [
+            item
+            for item in scopes
+            if (
+                str(item.get("tenant_id") or "").lower(),
+                str(item.get("workspace_id") or "").lower(),
+            )
+            == wanted
+        ]
     counts["workspaces"] = len(scopes)
     if not scopes:
         counts["status"] = "no_eligible_workspaces"

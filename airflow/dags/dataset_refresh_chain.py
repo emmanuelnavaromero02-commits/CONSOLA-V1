@@ -23,6 +23,7 @@ from dataset_refresh_outcome import (
 )
 from runtime_security_context import build_pipeline_run_context
 from dataset_refresh_admission import validate_dataset_refresh_admission
+from dataset_refresh_monitors import record_refresh_monitors, run_refresh_monitors
 
 
 CARTRIDGE_ID = "platform"
@@ -37,6 +38,8 @@ POSTGRES_DSN = os.environ.get(
     "postgresql://postgres:postgres@postgres:5432/modecissions",
 ).replace("postgresql+psycopg2://", "postgresql://")
 
+
+MONITORS_TASK_TIMEOUT = timedelta(minutes=35)
 
 default_args = {
     "owner": "platform",
@@ -270,6 +273,37 @@ def record_run(**ctx):
         raise RuntimeError("dataset_refresh_chain recorded a failed run")
 
 
+def run_monitors_after_refresh(**ctx) -> dict[str, Any]:
+    conf = _admitted_conf(ctx)
+    tenant_id, workspace_id = _required_scope(conf)
+    cartridge = str(
+        ctx["ti"].xcom_pull(task_ids="resolve_chain", key="cartridge_id")
+        or conf.get("cartridge_id")
+        or ""
+    )
+    started_at = datetime.now(timezone.utc)
+    outcome = run_refresh_monitors(
+        console_url=CONSOLE_URL,
+        headers=lambda: _internal_headers("CONSOLE", ctx),
+        runner_token=os.environ.get("AGENT_RUNNER_TOKEN", ""),
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        refresh_run_id=f"dataset_refresh_chain:{ctx['run_id']}",
+        airflow_dag_run_id=ctx["run_id"],
+    )
+    record_refresh_monitors(
+        outcome,
+        mcp_url=MCP_INFRA_URL,
+        headers=_internal_headers("MCP_INFRA", ctx),
+        cartridge_id=cartridge,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        airflow_run_id=ctx["run_id"],
+        started_at=started_at,
+    )
+    return {key: outcome.get(key) for key in ("status", "total", "completed", "failed")}
+
+
 t_admit = PythonOperator(
     task_id="admit_dataset_refresh", python_callable=admit_dataset_refresh, dag=dag
 )
@@ -286,4 +320,13 @@ t_rec = PythonOperator(
     dag=dag,
 )
 
+t_mon = PythonOperator(
+    task_id="run_refresh_monitors",
+    python_callable=run_monitors_after_refresh,
+    retries=0,
+    execution_timeout=MONITORS_TASK_TIMEOUT,
+    dag=dag,
+)
+
 t_admit >> t_resolve >> t_mat >> t_rec
+t_rec >> t_mon

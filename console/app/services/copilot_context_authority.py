@@ -12,6 +12,7 @@ from app.services.db_scope import scoped_db, workspace_scope_from_user
 
 SNAPSHOT_TABLE = "copilot_context_snapshots"
 RECOMMENDATIONS_TABLE = "copilot_recommendations"
+VISIBLE_STATUSES = ("active", "seen")
 
 
 def _require(user: dict[str, Any], *required: str) -> None:
@@ -73,11 +74,13 @@ async def list_recommendations(
             "recommendations": [],
         }
     bounded_limit = max(1, min(int(limit or 20), 100))
-    status_filter = "" if include_dismissed else "AND status <> 'dismissed'"
+    statuses = list(VISIBLE_STATUSES)
+    if include_dismissed:
+        statuses.append("dismissed")
     effective = sorted(permissions.get_effective_permissions(user))
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         rows = await conn.fetch(
-            f"""
+            """
             SELECT id::text, snapshot_id::text, fingerprint, severity, category,
                    title, body, evidence, action_label, action_href, action_kind,
                    required_permission, status, first_seen_at, last_seen_at,
@@ -85,7 +88,7 @@ async def list_recommendations(
               FROM copilot_recommendations
              WHERE workspace_id = $1::uuid
                AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               {status_filter}
+               AND status = ANY($5::text[])
                AND (
                     required_permission IS NULL
                     OR required_permission = ''
@@ -105,6 +108,7 @@ async def list_recommendations(
             tenant_id,
             effective,
             bounded_limit,
+            statuses,
         )
     visible = []
     for row in rows:

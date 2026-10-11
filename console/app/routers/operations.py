@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -118,15 +119,28 @@ async def scheduled_agent_fanout(
         raise HTTPException(422, "invalid scheduler window") from exc
 
 
+class _NarrationScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: UUID
+    workspace_id: UUID
+
+
 @router.post("/internal/control-room/narrate-alerts")
 async def narrate_control_room_alerts(
+    body: _NarrationScope | None = None,
     internal_service: str = Depends(verify_internal_api_key),
 ):
     """Deferred, advisory narration of open monitor alerts (Airflow only)."""
     if internal_service != "airflow":
         raise HTTPException(403, "only airflow can narrate monitor alerts")
     pool = await auth.pool()
-    return await narrative_job.narrate_pending_alerts(pool)
+    if body is None:
+        return await narrative_job.narrate_pending_alerts(pool)
+    return await narrative_job.narrate_pending_alerts(
+        pool,
+        scope={"tenant_id": str(body.tenant_id), "workspace_id": str(body.workspace_id)},
+    )
 
 
 @router.get("/migrations")

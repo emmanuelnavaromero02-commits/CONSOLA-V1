@@ -8022,6 +8022,7 @@ from app.routers import pipeline_automations as pipeline_automations_router
 from app.routers import catalog_copilot as catalog_copilot_router
 from app.routers import access_tokens as access_tokens_router
 from app.routers import mcp_gateway as mcp_gateway_router
+from app.routers import scheduled_automation as scheduled_automation_router
 from app.routers import (
     control_room,
     data_explorer,
@@ -8071,6 +8072,7 @@ app.include_router(catalog_copilot_router.router)
 app.include_router(data_explorer.router)
 app.include_router(access_tokens_router.router)
 app.include_router(mcp_gateway_router.router)
+app.include_router(scheduled_automation_router.router)
 
 
 app.add_middleware(RequestIDMiddleware)

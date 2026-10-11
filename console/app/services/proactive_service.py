@@ -7,6 +7,10 @@ from urllib.parse import quote
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence.operations_aggregates import CONSOLE_SCOPE_PREDICATE
+from app.services.pipeline_attention import (
+    NON_EXTRACTION_ENTITIES,
+    mirror_duplicate_predicate,
+)
 from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
@@ -258,11 +262,18 @@ async def analyze_pending_actions(user_context: dict | None = None) -> list[High
     return out
 
 
+_MIRROR_DUPLICATE = mirror_duplicate_predicate("pipeline_runs")
+
+
+def _failed_extractions(count: int) -> str:
+    return f"{count} extracción fallida" if count == 1 else f"{count} extracciones fallidas"
+
+
 async def analyze_extraction_failures(user_context: dict | None = None) -> list[Highlight]:
     _tenant_id, workspace_id, visible = _scope_values(user_context)
     if not workspace_id:
         return []
-    cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
+    cart_sql, cart_args = _cartridge_filter_sql(visible, 4)
     async with scoped_db_for_user(await auth.pool(), user_context) as (conn, tenant_id, workspace_id):
         rows = await conn.fetch(
             f"""
@@ -272,10 +283,35 @@ async def analyze_extraction_failures(user_context: dict | None = None) -> list[
                AND finished_at >= NOW() - INTERVAL '24 hours'
                AND {CONSOLE_SCOPE_PREDICATE}
                {cart_sql}
+               AND NOT (pipeline_runs.entity = ANY($3::text[]))
+               AND NOT ({_MIRROR_DUPLICATE})
+               AND NOT EXISTS (
+                    SELECT 1
+                      FROM entity_config ec
+                     WHERE ec.cartridge_id = pipeline_runs.cartridge_id
+                       AND ec.entity = pipeline_runs.entity
+                       AND ec.enabled IS FALSE
+               )
+               AND NOT (
+                    left(pipeline_runs.entity, 2) = '__'
+                    AND EXISTS (
+                        SELECT 1
+                          FROM pipeline_runs c
+                         WHERE c.workspace_id = pipeline_runs.workspace_id
+                           AND c.status = 'failed'
+                           AND c.airflow_dag_run_id IS NOT NULL
+                           AND c.airflow_dag_run_id IN (
+                               pipeline_runs.airflow_dag_run_id, pipeline_runs.run_id
+                           )
+                           AND left(c.entity, 2) <> '__'
+                           AND NOT (c.entity = ANY($3::text[]))
+                    )
+               )
              GROUP BY cartridge_id
             """,
             workspace_id,
             tenant_id or None,
+            list(NON_EXTRACTION_ENTITIES),
             *cart_args,
         )
     out: list[Highlight] = []
@@ -288,10 +324,10 @@ async def analyze_extraction_failures(user_context: dict | None = None) -> list[
         out.append(_make_highlight(
             highlight_id=f"failures:{cart}",
             severity=severity,
-            title=f"{failures} extracciones fallidas en {cart}",
+            title=f"{_failed_extractions(failures)} en {cart}",
             body=(
-                f"Hubo {failures} extracciones con status='failed' en "
-                f"{cart} en las últimas 24 horas."
+                f"Hubo {_failed_extractions(failures)} en {cart} "
+                "en las últimas 24 horas."
             ),
             action_label="Ver logs",
             action_href=_cartridge_href(cart),
@@ -299,6 +335,30 @@ async def analyze_extraction_failures(user_context: dict | None = None) -> list[
             category="failures",
         ))
     return out
+
+
+async def workspace_briefing(
+    user_context: dict | None = None, *, limit: int = 6
+) -> dict[str, Any]:
+    highlights: list[Highlight] = []
+    unevaluated: list[str] = []
+    for category, analyzer in (
+        ("freshness", analyze_freshness),
+        ("volume", analyze_volume_anomaly),
+        ("pending", analyze_pending_actions),
+        ("failures", analyze_extraction_failures),
+    ):
+        try:
+            highlights.extend(await analyzer(user_context=user_context))
+        except Exception:
+            logger.warning("workspace briefing: %s analyzer failed", category, exc_info=True)
+            unevaluated.append(category)
+    highlights = _filter_visible_highlights(highlights, user_context)
+    highlights.sort(key=lambda h: _SEVERITY_ORDER.get(h["severity"], 99))
+    result: dict[str, Any] = {"highlights": highlights[:limit]}
+    if unevaluated:
+        result["unevaluated_categories"] = unevaluated
+    return result
 
 
 async def briefing_for_user(
@@ -349,3 +409,36 @@ async def dismiss_highlight(user_id: int, highlight_id: str) -> bool:
         user_id, highlight_id,
     )
     return True
+
+
+def live_dismissal_key(highlight_id: str, workspace_id: str | None) -> str:
+    return f"{highlight_id}@{str(workspace_id or '').strip() or 'none'}"
+
+
+async def dismiss_live_highlight(user_id: int, key: str) -> bool:
+    pool = await auth.pool()
+    await pool.execute(
+        """
+        INSERT INTO copilot_briefing_dismissed (user_id, highlight_id, dismissed_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (user_id, highlight_id) DO UPDATE SET dismissed_at = NOW()
+        """,
+        user_id, key,
+    )
+    return True
+
+
+async def live_dismissals(user_id: int, keys: list[str]) -> dict[str, Any]:
+    if not keys:
+        return {}
+    pool = await auth.pool()
+    rows = await pool.fetch(
+        """
+        SELECT highlight_id, dismissed_at
+          FROM copilot_briefing_dismissed
+         WHERE user_id = $1
+           AND highlight_id = ANY($2::text[])
+        """,
+        user_id, keys,
+    )
+    return {str(row["highlight_id"]): row["dismissed_at"] for row in rows}
