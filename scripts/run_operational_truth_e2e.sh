@@ -127,6 +127,7 @@ dag_modules=(
   dataset_refresh_admission.py cartridge_run_admission.py
   dataset_refresh_finalization.py
   dataset_refresh_idempotency.py dataset_refresh_materialize.py
+  dataset_refresh_monitors.py agent_runner_outcome.py
   dataset_refresh_outcome.py runtime_security_context.py
   service_job_client.py
 )

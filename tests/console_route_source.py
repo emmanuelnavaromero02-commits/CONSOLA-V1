@@ -18,6 +18,7 @@ CONSOLE_ROUTER_MODULES = (
     CONSOLE_ROUTERS / "data_explorer.py",
     CONSOLE_ROUTERS / "access_tokens.py",
     CONSOLE_ROUTERS / "mcp_gateway.py",
+    CONSOLE_ROUTERS / "scheduled_automation.py",
 )
 
 

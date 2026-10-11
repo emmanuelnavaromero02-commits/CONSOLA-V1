@@ -32,7 +32,7 @@ def test_live_context_recommends_control_room_and_pipeline_actions():
 
     titles = {item["title"] for item in recommendations}
     assert "Revisar señales prioritarias" in titles
-    assert "Revisar sincronización parcial" in titles
+    assert "Revisar sincronización con fallas" in titles
     assert recommendations[0]["severity"] == "critical"
 
 

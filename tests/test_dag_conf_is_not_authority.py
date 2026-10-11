@@ -17,6 +17,7 @@ PLATFORM_DAGS = {
     "airflow/dags/agent_runner.py": "agent schedules are read and scoped from the database",
     "airflow/dags/entity_scheduler.py": "issues run authority; never consumes it",
     "airflow/dags/dataset_refresh_chain.py": "admitted by its own conf-bound, single-use envelope",
+    "airflow/dags/successfactors_daily_extract.py": "issues run authority; never consumes it",
 }
 ADMISSION_CALLS = {"admit_run", "service_run"}
 # Wrappers a DAG may call instead of admit_run/service_run, with the module that owns them.

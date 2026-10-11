@@ -924,6 +924,36 @@ async def test_one_workspace_failing_does_not_stop_the_others(db):
 
 
 @pytest.mark.asyncio
+async def test_scoped_narration_touches_only_the_refreshed_workspace(db):
+    db.scopes = [
+        {"tenant_id": OTHER_TENANT, "workspace_id": OTHER_WORKSPACE},
+        {"tenant_id": TENANT, "workspace_id": WORKSPACE},
+    ]
+    db.fail_candidates_for = {OTHER_WORKSPACE}
+    db.add_alert("alert-1")
+    caller = _Caller(db)
+
+    result = await narrative_job.narrate_pending_alerts(
+        _FakePool(db),
+        llm_caller_factory=caller.factory,
+        now=NOW,
+        scope={"tenant_id": TENANT, "workspace_id": WORKSPACE.upper()},
+    )
+
+    assert result["status"] == "ready"
+    assert (result["workspaces"], result["narrated_ready"]) == (1, 1)
+    assert result["failures"] == []
+
+    unknown = await narrative_job.narrate_pending_alerts(
+        _FakePool(db),
+        llm_caller_factory=caller.factory,
+        now=NOW,
+        scope={"tenant_id": OTHER_TENANT, "workspace_id": WORKSPACE},
+    )
+    assert unknown["status"] == "no_eligible_workspaces"
+
+
+@pytest.mark.asyncio
 async def test_one_alert_failing_does_not_stop_the_next(db):
     db.add_alert("alert-bad", metadata=_metadata(signal_count=2))
     db.add_alert("alert-good", metadata=_metadata(signal_count=4))

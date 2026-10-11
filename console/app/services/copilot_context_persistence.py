@@ -76,6 +76,7 @@ async def _upsert_recommendations(
     workspace_id: str,
     snapshot_id: str,
     recommendations: list[dict[str, Any]],
+    retained_categories: list[str] | tuple[str, ...] = (),
 ) -> None:
     emitted: list[str] = []
     for item in recommendations:
@@ -107,8 +108,17 @@ async def _upsert_recommendations(
                 action_kind = EXCLUDED.action_kind,
                 required_permission = EXCLUDED.required_permission,
                 last_seen_at = NOW(),
+                first_seen_at = CASE
+                    WHEN copilot_recommendations.status IN ('superseded', 'resolved')
+                      OR (CASE EXCLUDED.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 WHEN 'info' THEN 1 ELSE 0 END)
+                        > (CASE copilot_recommendations.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 WHEN 'info' THEN 1 ELSE 0 END)
+                    THEN NOW()
+                    ELSE copilot_recommendations.first_seen_at
+                END,
                 status = CASE
                     WHEN copilot_recommendations.status = 'dismissed'
+                     AND NOT (CASE EXCLUDED.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 WHEN 'info' THEN 1 ELSE 0 END)
+                        > (CASE copilot_recommendations.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 WHEN 'info' THEN 1 ELSE 0 END)
                     THEN 'dismissed'
                     ELSE 'active'
                 END,
@@ -135,11 +145,13 @@ async def _upsert_recommendations(
                SET status = 'superseded',
                    resolved_at = NOW()
              WHERE workspace_id = $1::uuid
-               AND status = 'active'
+               AND status IN ('active', 'seen', 'dismissed')
                AND NOT (fingerprint = ANY($2::text[]))
+               AND NOT (category = ANY($3::text[]))
             """,
             workspace_id,
             emitted,
+            sorted({str(item) for item in retained_categories if str(item).strip()}),
         )
 
 
@@ -151,6 +163,7 @@ async def persist_refresh(
     *,
     ip: str | None = None,
     user_agent: str | None = None,
+    retained_categories: list[str] | tuple[str, ...] = (),
 ) -> str | None:
 
     if not await copilot_context_authority.tables_ready(pool):
@@ -164,6 +177,7 @@ async def persist_refresh(
             workspace_id=workspace_id,
             snapshot_id=snapshot_id,
             recommendations=recommendations,
+            retained_categories=retained_categories,
         )
         await audit_service.record_event(
             connection=conn,

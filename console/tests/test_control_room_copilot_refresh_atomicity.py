@@ -86,6 +86,7 @@ async def test_refresh_persistence_uses_one_scoped_connection_for_critical_audit
         workspace_id=WORKSPACE_A,
         snapshot_id=snapshot_id,
         recommendations=recommendations,
+        retained_categories=(),
     )
     audit.assert_awaited_once()
     kwargs = audit.await_args.kwargs

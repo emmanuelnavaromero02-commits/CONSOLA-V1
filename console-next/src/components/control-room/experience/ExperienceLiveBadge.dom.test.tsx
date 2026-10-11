@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { formatObservedAt } from "@/lib/control-room/experience-presenter";
 
-import { ExperienceLiveBadge, formatCheckedAgo } from "./ExperienceLiveBadge";
+import { ExperienceLiveBadge, formatCheckedAgo, formatSourceAge } from "./ExperienceLiveBadge";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,7 +50,7 @@ describe("ExperienceLiveBadge", () => {
     expect(container.querySelector('[role="status"]')).toBeNull();
   });
 
-  it("keeps source age separate from query time and warns after 30 days", async () => {
+  it("keeps source age separate from query time and warns when the source is old", async () => {
     await renderBadge({
       checkedAt: NOW,
       offline: false,
@@ -67,16 +67,44 @@ describe("ExperienceLiveBadge", () => {
     expect(container.textContent).toContain("hace un momento");
   });
 
-  it("does not warn for recent source data", async () => {
+  it("does not warn for source data from the last day and a half", async () => {
     await renderBadge({
       checkedAt: NOW,
       offline: false,
-      sourceObservedAt: "2026-09-10T00:00:00Z",
+      sourceObservedAt: "2026-09-25T06:00:00Z",
     });
     const source = [...container.querySelectorAll("p")].find((node) =>
       node.textContent?.startsWith("Datos del origen al"),
     );
     expect(source?.className).not.toContain("text-warning");
+    expect(container.querySelector('[data-testid="control-room-source-stale"]')).toBeNull();
+    expect(container.querySelector(".bg-success")).not.toBeNull();
+  });
+
+  it("makes week-old source data obvious next to the live check", async () => {
+    await renderBadge({
+      checkedAt: NOW - 5_000,
+      offline: false,
+      sourceObservedAt: "2026-09-19T09:00:00Z",
+    });
+
+    const stale = container.querySelector('[data-testid="control-room-source-stale"]');
+    expect(stale?.textContent).toBe("Datos de hace 7 días");
+    expect(stale?.className).toContain("text-warning");
+    expect(container.textContent).toContain("En vivo · consultado hace 5 s");
+    expect(container.querySelector(".bg-warning")).not.toBeNull();
+    expect(container.querySelector(".bg-success")).toBeNull();
+  });
+
+  it("flags data older than 36 hours in hours before it reaches two days", async () => {
+    await renderBadge({
+      checkedAt: NOW,
+      offline: false,
+      sourceObservedAt: "2026-09-24T20:00:00Z",
+    });
+    expect(
+      container.querySelector('[data-testid="control-room-source-stale"]')?.textContent,
+    ).toBe("Datos de hace 40 h");
   });
 
   it("announces the offline state and keeps showing the last information", async () => {
@@ -96,6 +124,17 @@ describe("ExperienceLiveBadge", () => {
   it("renders nothing invented before the first check", async () => {
     await renderBadge({ checkedAt: null, offline: false, sourceObservedAt: null });
     expect(container.textContent).toBe("");
+  });
+});
+
+describe("formatSourceAge", () => {
+  it.each([
+    [37 * 3_600_000, "Datos de hace 37 h"],
+    [47 * 3_600_000, "Datos de hace 47 h"],
+    [48 * 3_600_000, "Datos de hace 2 días"],
+    [7 * 24 * 3_600_000 + 1, "Datos de hace 7 días"],
+  ])("formats %i ms", (elapsed, expected) => {
+    expect(formatSourceAge(NOW - elapsed, NOW)).toBe(expected);
   });
 });
 

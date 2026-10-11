@@ -41,6 +41,10 @@ CSRF_EXEMPT_BY_DESIGN = frozenset({
     ("/api/auth/login",     "POST"),
     ("/auth/activate",      "POST"),
     ("/api/agents/{agent_id}/invoke/scheduled", "POST"),
+    # Airflow-only service calls: internal API key (plus runner token), no browser session.
+    ("/internal/automation/successfactors/daily-targets", "POST"),
+    ("/internal/automation/refresh-monitors/due", "POST"),
+    ("/internal/automation/refresh-monitors/invoke", "POST"),
 })
 
 

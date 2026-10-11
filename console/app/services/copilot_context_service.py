@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app import dependencies as request_dependencies
 from app.schemas.control_room_operational_responses import (
     ControlRoomAgentsOpsResponse,
     ControlRoomOpsSummaryResponse,
@@ -28,6 +29,7 @@ from app.services import (
     copilot_context_authority,
     copilot_context_persistence,
     permissions,
+    pipeline_attention,
     proactive_service,
 )
 from app.services.control_room.business_copy_sensitivity import (
@@ -49,6 +51,36 @@ RECOMMENDATIONS_TABLE = copilot_context_authority.RECOMMENDATIONS_TABLE
 DEFAULT_INTERVAL_SECONDS = 3600
 DEFAULT_WORKSPACE_LIMIT = 200
 DEFAULT_RETENTION_DAYS = copilot_context_persistence.DEFAULT_RETENTION_DAYS
+PIPELINE_ALERT_WINDOW_DAYS = pipeline_attention.ALERT_WINDOW_DAYS
+PIPELINE_ROLLUP_ENTITIES = pipeline_attention.ROLLUP_ENTITIES
+_PIPELINE_ROLLUP_LABELS = {
+    "__extract_all__": "Extracción completa",
+    "__sync_now__": "Sincronización manual",
+    "DatasetRefreshChain": "Actualización de datasets",
+    "SuccessFactorsDailyExtract": "Extracción diaria de SuccessFactors",
+}
+_PIPELINE_PROCESS_LABELS = {"AgentOpsMonitors": "Monitores tras la actualización"}
+_PIPELINE_NAME_LIMIT = 6
+_PIPELINE_ENTITY_NAME_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+)
+_BRIEFING_RECOMMENDATION_CATEGORIES = (
+    "briefing",
+    "failures",
+    "freshness",
+    "pending",
+    "volume",
+)
+_SOURCE_RECOMMENDATION_CATEGORIES = {
+    "copilot.proactive_briefing": _BRIEFING_RECOMMENDATION_CATEGORIES,
+    "database.operational_counts": ("pipeline", "datasets"),
+    "control_room.ops_summary": ("control_room",),
+    "control_room.agents_ops": ("agentops",),
+    "control_room.sap_successfactors_talent_kpis": ("sap_successfactors",),
+    "control_room.sap_successfactors_talent_metadata_readiness": (
+        "sap_successfactors",
+    ),
+}
 _SOURCE_LABELS = {
     "database.operational_counts": ("platform_operations", "Operación de plataforma"),
     "control_room.ops_summary": (
@@ -215,8 +247,18 @@ def _project_operational_counts(value: Any) -> dict[str, Any]:
     datasets = datasets if isinstance(datasets, Mapping) else {}
     watermarks = source.get("watermarks")
     watermark_groups = len(watermarks) if isinstance(watermarks, list) else 0
+    projected_pipeline: dict[str, Any] = {"by_status": safe_counts}
+    window_days = _int(pipeline.get("window_days"))
+    if window_days > 0:
+        projected_pipeline["window_days"] = window_days
+    attention = pipeline.get("attention")
+    if isinstance(attention, Mapping):
+        projected_pipeline["attention"] = {
+            status: _int(attention.get(status))
+            for status in ("failed", "blocked", "partial")
+        }
     return {
-        "pipeline": {"by_status": safe_counts},
+        "pipeline": projected_pipeline,
         "datasets": {"total": _int(datasets.get("total"))},
         "watermarks": {"groups": watermark_groups},
     }
@@ -385,6 +427,151 @@ def _recommendation(
     }
 
 
+def _plural(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def _pipeline_entity_label(entity: Any, *, rollup: bool) -> str | None:
+    name = str(entity or "").strip()
+    if rollup:
+        return _PIPELINE_ROLLUP_LABELS.get(name, "Proceso de extracción")
+    if name in _PIPELINE_PROCESS_LABELS:
+        return _PIPELINE_PROCESS_LABELS[name]
+    if (
+        not name
+        or len(name) > 64
+        or not set(name) <= _PIPELINE_ENTITY_NAME_CHARS
+        or contains_sensitive_copy(name)
+    ):
+        return None
+    return name
+
+
+def _pipeline_attention_items(pipeline: Mapping[str, Any]) -> list[dict[str, Any]]:
+    attention = pipeline.get("attention")
+    affected = attention.get("affected") if isinstance(attention, Mapping) else None
+    return [item for item in affected or [] if isinstance(item, Mapping)]
+
+
+def _pipeline_attention_counts(pipeline: Mapping[str, Any]) -> tuple[int, int, int]:
+    attention = pipeline.get("attention")
+    if isinstance(attention, Mapping):
+        return (
+            _int(attention.get("failed")),
+            _int(attention.get("blocked")),
+            _int(attention.get("partial")),
+        )
+    by_status = pipeline.get("by_status")
+    by_status = by_status if isinstance(by_status, Mapping) else {}
+    return (
+        _int(by_status.get("failed")) + _int(by_status.get("error")),
+        _int(by_status.get("blocked")),
+        _int(by_status.get("partial")),
+    )
+
+
+def _pipeline_attention_title(
+    items: list[Mapping[str, Any]], *, failed: int, blocked: int
+) -> str:
+    if failed:
+        failed_items = [item for item in items if item.get("status") == "failed"]
+        if failed_items and all(
+            str(item.get("entity") or "") in _PIPELINE_PROCESS_LABELS
+            for item in failed_items
+        ):
+            return "Revisar monitores tras la actualización"
+        return "Revisar sincronización con fallas"
+    if blocked:
+        return "Revisar sincronización bloqueada"
+    return "Revisar sincronización parcial"
+
+
+def _pipeline_attention_recommendation(
+    pipeline: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    failed, blocked, partial = _pipeline_attention_counts(pipeline)
+    if not (failed or blocked or partial):
+        return None
+    window_days = _int(pipeline.get("window_days")) or PIPELINE_ALERT_WINDOW_DAYS
+    rank = {"failed": 0, "blocked": 1, "partial": 2}
+    items = sorted(
+        _pipeline_attention_items(pipeline),
+        key=lambda item: (
+            rank.get(str(item.get("status") or ""), 3),
+            str(item.get("entity") or ""),
+        ),
+    )
+    names: list[str] = []
+    cartridges: set[str] = set()
+    for item in items:
+        label = _pipeline_entity_label(
+            item.get("entity"), rollup=item.get("rollup") is True
+        )
+        if label and label not in names:
+            names.append(label)
+        cartridge = _safe_identifier(item.get("cartridge_id"))
+        if cartridge and cartridge != "platform":
+            cartridges.add(cartridge)
+    parts = [
+        text
+        for count, text in (
+            (failed, _plural(failed, "ejecución fallida", "ejecuciones fallidas")),
+            (blocked, _plural(blocked, "ejecución bloqueada", "ejecuciones bloqueadas")),
+            (partial, _plural(partial, "ejecución parcial", "ejecuciones parciales")),
+        )
+        if count
+    ]
+    summary = parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} y {parts[-1]}"
+    body = f"Últimos {window_days} días: {summary}."
+    if names:
+        shown = names[:_PIPELINE_NAME_LIMIT]
+        hidden = len(names) - len(shown)
+        listed = ", ".join(shown) + (f" y {hidden} más" if hidden else "")
+        body = f"{body} Con incidencias: {listed}."
+    href = "/viewer?type=pipeline"
+    if len(cartridges) == 1:
+        href = f"{href}&cartridge={next(iter(cartridges))}"
+    return _recommendation(
+        fingerprint=_fingerprint("pipeline", "attention_window"),
+        severity="critical" if failed else "warning",
+        category="pipeline",
+        title=_pipeline_attention_title(items, failed=failed, blocked=blocked),
+        body=body,
+        evidence={
+            "window_days": window_days,
+            "counts": {"failed": failed, "blocked": blocked, "partial": partial},
+            "entities": names,
+            "cartridges": sorted(cartridges),
+        },
+        action_label="Abrir Flujo de Datos",
+        action_href=href,
+        required_permission="pipelines.read",
+    )
+
+
+def _source_evaluated(item: Mapping[str, Any]) -> bool:
+    data = item.get("data")
+    return item.get("status") == "ready" and not (
+        isinstance(data, Mapping) and data.get("evaluated") is False
+    )
+
+
+def retained_recommendation_categories(snapshot: Mapping[str, Any]) -> list[str]:
+    retained: set[str] = set()
+    for item in snapshot.get("sources") or []:
+        if not isinstance(item, Mapping):
+            continue
+        categories = _SOURCE_RECOMMENDATION_CATEGORIES.get(str(item.get("name")), ())
+        if not _source_evaluated(item):
+            retained.update(categories)
+            continue
+        data = item.get("data")
+        partial = data.get("unevaluated_categories") if isinstance(data, Mapping) else None
+        if isinstance(partial, list):
+            retained.update(str(c) for c in partial if str(c) in categories)
+    return sorted(retained)
+
+
 def _source_lookup(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
         str(item.get("name")): item
@@ -550,29 +737,11 @@ def build_recommendations_from_snapshot(
     )
     if isinstance(operational, dict):
         pipeline = operational.get("pipeline") or {}
-        by_status = pipeline.get("by_status") or {}
-        partial = _int(by_status.get("partial"))
-        failed = _int(by_status.get("failed")) + _int(by_status.get("error"))
-        blocked = _int(by_status.get("blocked"))
-        if failed or blocked or partial:
-            recommendations.append(
-                _recommendation(
-                    fingerprint=_fingerprint(
-                        "pipeline", "non_success", failed, blocked, partial
-                    ),
-                    severity="critical" if failed else "warning",
-                    category="pipeline",
-                    title="Revisar sincronización parcial",
-                    body=(
-                        f"Pipeline tiene {failed} fallidas, {blocked} bloqueadas y "
-                        f"{partial} parciales en el workspace."
-                    ),
-                    evidence={"by_status": by_status, "latest": pipeline.get("latest")},
-                    action_label="Abrir Pipeline",
-                    action_href="/viewer?type=pipeline",
-                    required_permission="pipelines.read",
-                )
-            )
+        pipeline_recommendation = _pipeline_attention_recommendation(
+            pipeline if isinstance(pipeline, dict) else {}
+        )
+        if pipeline_recommendation is not None:
+            recommendations.append(pipeline_recommendation)
 
         datasets = operational.get("datasets") or {}
         datasets_total = _int(datasets.get("total"))
@@ -668,10 +837,16 @@ async def _load_operational_counts(
               FROM pipeline_runs
              WHERE workspace_id = $1::uuid
                AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
+               AND COALESCE(finished_at, started_at)
+                   >= NOW() - make_interval(days => $3::int)
              GROUP BY status
             """,
             workspace_id,
             tenant_id,
+            PIPELINE_ALERT_WINDOW_DAYS,
+        )
+        attention = await pipeline_attention.load_attention(
+            conn, workspace_id, tenant_id, days=PIPELINE_ALERT_WINDOW_DAYS
         )
         latest_rows = await conn.fetch(
             """
@@ -687,10 +862,12 @@ async def _load_operational_counts(
             tenant_id,
         )
         counts["pipeline"] = {
+            "window_days": PIPELINE_ALERT_WINDOW_DAYS,
             "by_status": {
                 str(row["status"] or "unknown"): int(row["total"] or 0)
                 for row in status_rows
             },
+            "attention": attention,
             "latest": [_row_public(row) for row in latest_rows],
         }
     if await conn.fetchval("SELECT to_regclass('public.datasets')"):
@@ -829,6 +1006,7 @@ async def collect_workspace_context(
             recommendations,
             ip=ip,
             user_agent=user_agent,
+            retained_categories=retained_recommendation_categories(snapshot),
         )
         if snapshot_id is None:
             snapshot["persisted"] = False
@@ -839,14 +1017,18 @@ async def collect_workspace_context(
     return snapshot
 
 
+async def _workspace_briefing_cartridges(workspace_id: str) -> list[str]:
+    return await request_dependencies._workspace_cartridges(workspace_id)
+
+
 async def _proactive_briefing_for_context(user: dict[str, Any]) -> dict[str, Any]:
-    user_id = int(user.get("id") or 0)
-    if user_id <= 0:
-        return {"highlights": []}
-    highlights = await proactive_service.briefing_for_user(
-        user_id, limit=6, user_context=user
-    )
-    return {"highlights": highlights}
+    tenant_id, workspace_id = workspace_scope_from_user(user)
+    scope = {
+        **_system_user(tenant_id, workspace_id),
+        "role": "system",
+        "allowed_cartridges": await _workspace_briefing_cartridges(workspace_id),
+    }
+    return await proactive_service.workspace_briefing(scope, limit=6)
 
 
 def _summary_metrics(sources: list[dict[str, Any]]) -> dict[str, Any]:

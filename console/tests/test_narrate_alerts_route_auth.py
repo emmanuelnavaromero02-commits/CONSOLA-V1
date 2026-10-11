@@ -92,6 +92,30 @@ def test_airflow_pair_key_reaches_narrate_alerts_router(narrate_http):
     assert narrate.await_args.args == (pool,)
 
 
+def test_narration_can_be_scoped_to_one_workspace(narrate_http):
+    client, pool, narrate, _ = narrate_http
+    headers = {"X-Api-Key": _AIRFLOW_KEY, "X-Internal-Service": "airflow"}
+    tenant = "11111111-1111-4111-8111-111111111111"
+    workspace = "22222222-2222-4222-8222-222222222222"
+
+    response = client.post(
+        _PATH, headers=headers, json={"tenant_id": tenant, "workspace_id": workspace}
+    )
+
+    assert response.status_code == 200, response.text
+    assert narrate.await_args.args == (pool,)
+    assert narrate.await_args.kwargs == {
+        "scope": {"tenant_id": tenant, "workspace_id": workspace}
+    }
+    for bad in (
+        {"tenant_id": tenant},
+        {"tenant_id": tenant, "workspace_id": "not-a-uuid"},
+        {"tenant_id": tenant, "workspace_id": workspace, "extra": "x"},
+    ):
+        assert client.post(_PATH, headers=headers, json=bad).status_code == 422
+    assert narrate.await_count == 1
+
+
 @pytest.mark.parametrize(
     "headers",
     [
